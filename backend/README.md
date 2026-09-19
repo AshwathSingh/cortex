@@ -1,5 +1,7 @@
 # Cortex backend — local dev setup
-
+Note: 
+1. Use python 3.13 or lower, some packages in the requirements.txt are not supported in 3.14
+2. Rust is required for watchfile installation
 ## 1. Start Docker
 
 ```
