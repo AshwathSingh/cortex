@@ -30,7 +30,7 @@ docker compose ps            # confirm both are "Up"
 ```
 
 Stop everything with `docker compose down` (data persists in named volumes; add
-`-v` to also wipe them).
+`-v` to also wipe them, you need to wipe your auth credentials from the docker everytime you changes the username and passwords in .env since docker will save these data from the very first instance).
 
 ## 4. Install backend Python deps
 
