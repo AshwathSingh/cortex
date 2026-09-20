@@ -13,5 +13,9 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "cortexgraph"
 
+    # Optional server-side token; raises the GitHub rate limit. Never accepted from
+    # requests or returned in responses. Replaced by per-user OAuth tokens (US-1).
+    github_token: str | None = None
+
 
 settings = Settings()

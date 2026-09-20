@@ -3,9 +3,9 @@
 Python interface for fetching a repository's pull requests and issues from the
 GitHub REST API. Source: [client.py](client.py). Tests: [../../tests/test_github_client.py](../../tests/test_github_client.py).
 
-> **Status:** this is an in-process Python client, not an HTTP endpoint. There is
-> no FastAPI route for it yet — the trigger endpoint is T-7.5. Until then, call it
-> from Python as shown below.
+> **Status:** this is an in-process Python client. The HTTP trigger is
+> `POST /api/ingest/github` (T-7.5, [../api/ingest.py](../api/ingest.py)); see
+> "HTTP endpoint" at the bottom.
 
 It returns **raw GitHub JSON** (`dict`s). Pydantic normalization and Cypher
 mapping happen downstream (T-7.4); nothing here writes to Neo4j.
@@ -109,6 +109,29 @@ Commonly needed: `number`, `title`, `state`, `body`, `user` (`id`, `login`),
 `created_at`, `updated_at`, `html_url` (provenance link to the source). PRs
 additionally have `merged_at`, `head`, and `base`.
 
+## HTTP endpoint (T-7.5)
+
+```
+cd backend && uvicorn app.main:app --reload
+curl -X POST localhost:8000/api/ingest/github \
+  -H 'Content-Type: application/json' \
+  -d '{"repo_url": "https://github.com/octocat/Hello-World"}'
+# {"repo":"octocat/Hello-World","pull_requests":N,"issues":M}
+```
+
+| Status | Cause |
+|---|---|
+| 200 | Fetched, validated and written. Body: `repo`, `pull_requests`, `issues` counts. |
+| 422 | Invalid repo URL or missing `repo_url`. Nothing fetched or written. |
+| 404 | Repo not found or not accessible. |
+| 429 | GitHub rate limit; `Retry-After` header set. |
+| 502 | GitHub error or unexpected payload shape. Nothing written. |
+| 503 | Neo4j unavailable. |
+
+The GitHub token is optional server config (`GITHUB_TOKEN` in `.env`) and is never
+read from the request or returned. Interactive docs: http://localhost:8000/docs.
+The call is synchronous: it returns after the whole repo is ingested.
+
 ## Running the tests
 
 ```
@@ -120,8 +143,8 @@ Tests use `httpx.MockTransport`, so no network or token is needed.
 
 ## Not yet built
 
-- HTTP endpoint to trigger ingestion (T-7.5).
-- Pydantic normalization and Cypher mapping (T-7.4).
+- Auto-populating new issues during a live session (US-7 acceptance criterion).
+- Workspace scoping of ingested nodes.
 - Token handling: `GITHUB_CLIENT_ID`/`SECRET` are in `.env.example`, but the
   client takes a plain token argument. OAuth (US-1) must supply it, and tokens
   must be decrypted only in-process and never returned in API responses.

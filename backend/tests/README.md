@@ -13,11 +13,12 @@ source .venv/bin/activate      # first-time setup: see ../README.md
 pytest                                    # everything
 pytest tests/test_github_client.py        # GitHub REST client (T-7.3)
 pytest tests/test_github_mapper.py        # payload validation + Cypher mapping (T-7.4)
+pytest tests/test_ingest_api.py           # POST /api/ingest/github endpoint (T-7.5)
 pytest -k rate_limit                      # only tests whose name matches
 pytest -v                                 # list each test
 ```
 
-These use `httpx.MockTransport` and a fake Neo4j driver, so they need no token,
+The endpoint tests use FastAPI's `TestClient` with dependency overrides. All of them use `httpx.MockTransport` and a fake Neo4j driver, so they need no token,
 internet or running database. They check the statements and parameters the
 mapper builds, not the Cypher itself. For that, use the live check below.
 
@@ -97,3 +98,71 @@ local dev container. The script aborts if the database is not empty.
 
 To inspect the graph yourself, open http://localhost:7474 (credentials from
 `.env`) and run `MATCH (n) RETURN n` before the cleanup line.
+
+## End-to-end check of the ingest endpoint (manual, T-7.5)
+
+Runs the real server against real GitHub and your local Neo4j. Use it to confirm
+the whole pipeline (fetch, validate, write) with real data.
+
+**Before you start**
+- Docker up, Neo4j running, schema applied (steps 1 and 2 of the live check above).
+- Unauthenticated GitHub allows only **60 requests/hour** (100 items per request).
+  Pick a small public repo (under about 100 PRs/issues). A huge repo such as
+  `octocat/Hello-World` exhausts the limit and the request will hang waiting for
+  the reset. For larger repos, set `GITHUB_TOKEN=<personal access token>` in the
+  repo-root `.env` (5,000 requests/hour). Check what you have left with:
+  `curl -s https://api.github.com/rate_limit | grep -m1 remaining`
+- Check the database is empty, or that you don't mind extra nodes. Ingest does
+  not delete anything.
+
+**1. Start the server** (from `backend/`, venv active)
+
+```
+uvicorn app.main:app --port 8000
+curl localhost:8000/health              # {"status":"ok"}
+```
+
+**2. Call the endpoint** (in a second terminal)
+
+```
+curl -X POST localhost:8000/api/ingest/github \
+  -H 'Content-Type: application/json' \
+  -d '{"repo_url": "https://github.com/Vasu7389/react-project-ideas"}'
+```
+
+Expected: HTTP 200 and `{"repo":"Vasu7389/react-project-ideas","pull_requests":30,"issues":6}`
+(counts reflect the repo at the time). Interactive docs: http://localhost:8000/docs.
+
+**3. Inspect the graph**
+
+In http://localhost:7474 (credentials from `.env`):
+
+```
+MATCH (n) RETURN n                                             // see it
+MATCH (n) RETURN labels(n)[0] AS label, count(n)               // counts per label
+MATCH ()-[r:AUTHORED]->() RETURN count(r)                      // edges
+MATCH (n) WHERE (n:PullRequest OR n:Issue)
+  AND NOT ()-[:AUTHORED]->(n) RETURN count(n)                  // should be 0
+```
+
+Expected for the repo above: 28 Authors, 30 PullRequests, 6 Issues, 36 edges.
+
+**4. Check the failure paths**
+
+| Request | Expected | Nodes created |
+|---|---|---|
+| Same repo again | 200, same counts (idempotent) | none new |
+| `{"repo_url": "https://gitlab.com/a/b"}` | 422 | none |
+| `{}` (no `repo_url`) | 422 | none |
+| `{"repo_url": "https://github.com/ranadep/does-not-exist-xyz"}` | 404 | none |
+| Stop Neo4j (`docker compose stop neo4j`), then a valid repo | 503 | none |
+
+A repo with zero PRs and issues returns 200 with zeros and writes nothing.
+
+**5. Clean up**
+
+Stop the server with Ctrl+C. To empty the local graph (dev database only):
+
+```
+docker compose exec -T neo4j cypher-shell -u neo4j -p <password> "MATCH (n) DETACH DELETE n"
+```
