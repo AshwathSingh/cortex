@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cortex Graph Database</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 30px; background-color: #f4f6f9; color: #333; }
+        .container { display: flex; gap: 20px; flex-wrap: wrap; }
+        .card { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); flex: 1; min-width: 300px; }
+        h1, h2 { color: #2c3e50; }
+        form label { display: block; margin-top: 10px; font-weight: bold; }
+        form input, form button { width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box; }
+        form button { background-color: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-top: 15px; }
+        form button:hover { background-color: #2980b9; }
+        #network-container {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ccc;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Cortex Graph Visualizer</h1>
+
+    <div class="container">
+        <div class="card">
+            <h2>Add Node</h2>
+            <form method="POST">
+                <input type="hidden" name="add_node" value="1">
+                <label for="node_label">Node Label:</label>
+                <input type="text" id="node_label" name="node_label" placeholder="e.g. Person, Concept" required>
+                
+                <label for="node_property_name">Property Key & Value:</label>
+                <input type="text" name="node_property_name" placeholder="Enter name or title value..." required>
+                
+                <button type="submit">Create Node</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h2>Add Relationship (Edge)</h2>
+            <form method="POST">
+                <input type="hidden" name="add_edge" value="1">
+                <label for="node1_label">From Node Label:</label>
+                <input type="text" id="node1_label" name="node1_label" placeholder="e.g. Person" required>
+                
+                <label for="node1_key">From Property Key (e.g. name):</label>
+                <input type="text" id="node1_key" name="node1_key" value="name" required>
+
+                <label for="node1_value">From Property Value:</label>
+                <input type="text" id="node1_value" name="node1_value" placeholder="e.g. Alice" required>
+
+                <label for="node2_label">To Node Label:</label>
+                <input type="text" id="node2_label" name="node2_label" placeholder="e.g. Concept" required>
+
+                <label for="node2_key">To Property Key (e.g. name):</label>
+                <input type="text" id="node2_key" name="node2_key" value="name" required>
+
+                <label for="node2_value">To Property Value:</label>
+                <input type="text" id="node2_value" name="node2_value" placeholder="e.g. Graph Theory" required>
+
+                <label for="edge_label">Relationship Type:</label>
+                <input type="text" id="edge_label" name="edge_label" placeholder="e.g. KNOWS, STUDIES" required>
+                
+                <button type="submit">Create Relationship</button>
+            </form>
+        </div>
+    </div>
+
+    <h2>Graph View</h2>
+    <div id="network-container"></div>
+
+    <script type="text/javascript">
+        const nodesData = {{ nodes | tojson }};
+        const edgesData = {{ edges | tojson }};
+
+        const nodes = new vis.DataSet(nodesData);
+        const edges = new vis.DataSet(edgesData);
+
+        const container = document.getElementById('network-container');
+        const data = { nodes: nodes, edges: edges };
+        const options = {
+            edges: {
+                arrows: 'to',
+                font: { align: 'middle' },
+                color: { color: '#95a5a6' }
+            },
+            nodes: {
+                shape: 'box',
+                margin: 12,
+                color: { background: '#ecf0f1', border: '#bdc3c7' },
+                font: { color: '#2c3e50' }
+            },
+            physics: {
+                barnesHut: { gravitationalConstant: -3000, centralGravity: 0.3, springLength: 95 }
+            }
+        };
+
+        const network = new vis.Network(container, data, options);
+    </script>
+
+</body>
+</html>
