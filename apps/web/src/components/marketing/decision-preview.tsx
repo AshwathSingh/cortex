@@ -8,7 +8,7 @@ export function DecisionPreview() {
     return (
         <aside
             aria-labelledby="decision-preview-title"
-            className="flex h-full w-full max-w-[34rem] flex-col justify-self-end"
+            className="w-full max-w-[34rem] justify-self-end lg:-mt-8"
         >
             <article className="rounded-[1.75rem] border border-border/60 bg-[linear-gradient(145deg,rgb(18_29_46/96%),rgb(10_17_29/94%))] p-7 shadow-[0_28px_80px_rgb(0_0_0/24%)] backdrop-blur-xl sm:p-9">
                 <header className="flex items-center justify-between gap-4">
@@ -110,7 +110,7 @@ export function DecisionPreview() {
 
                 <footer className="mt-7 flex justify-end border-t border-border/40 pt-4">
                     <Link
-                        href="/signup"
+                        href="/graph"
                         className="flex min-h-11 items-center gap-2 rounded-md text-sm font-semibold text-foreground transition-colors hover:text-accent-bright"
                     >
                         View in graph
@@ -132,8 +132,8 @@ export function DecisionPreview() {
                 </footer>
 
                 <Link
-                    href="/signup"
-                    aria-label="Create an account to ask a follow-up question"
+                    href="/chat"
+                    aria-label="Open Cortex chat to ask a follow-up question"
                     className="mt-5 flex min-h-12 items-center justify-between gap-4 rounded-control border border-border/60 bg-background/55 py-2 pl-4 pr-2 text-sm font-medium text-subtle transition-colors hover:border-border hover:bg-background/75 hover:text-foreground"
                 >
                     <span>Ask a follow-up…</span>
@@ -146,12 +146,19 @@ export function DecisionPreview() {
                 </Link>
             </article>
 
-            <div className="mt-auto px-2 pt-6 sm:px-3">
+            <div className="mt-6 flex flex-wrap items-center gap-x-7 gap-y-4 px-2 sm:px-3">
                 <Link
                     href="/signup"
                     className="flex min-h-12 min-w-44 items-center justify-center rounded-control bg-accent px-6 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover"
                 >
-                    Ask Cortex
+                    Try Cortex
+                </Link>
+                <Link
+                    href="#how-it-works"
+                    className="flex min-h-11 items-center gap-2 rounded-md px-1 text-sm font-semibold text-muted transition-colors hover:text-foreground"
+                >
+                    See how it works
+                    <span aria-hidden="true">→</span>
                 </Link>
             </div>
         </aside>
