@@ -143,6 +143,15 @@ Tests use `httpx.MockTransport`, so no network or token is needed.
 
 ## Not yet built
 
+- **Background ingestion job.** `POST /api/ingest/github` is synchronous: it holds the
+  HTTP request open until the whole repo is fetched and written. Large repos, or
+  unauthenticated calls that hit GitHub's 60 requests/hour limit, can keep the request
+  waiting for many minutes (the client waits up to 15 minutes for a rate-limit reset),
+  which risks browser and proxy timeouts. Planned fix: return `202 Accepted` with a job
+  id, run the ingestion in the background, and add a status endpoint (for example
+  `GET /api/ingest/jobs/{id}` with `pending`/`running`/`done`/`failed`, counts and any
+  error) that the frontend form polls. Until then, set `GITHUB_TOKEN` and ingest small
+  repos.
 - Auto-populating new issues during a live session (US-7 acceptance criterion).
 - Workspace scoping of ingested nodes.
 - Token handling: `GITHUB_CLIENT_ID`/`SECRET` are in `.env.example`, but the
