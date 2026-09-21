@@ -1,5 +1,6 @@
 import { DecisionPreview } from "@/components/marketing/decision-preview";
 import { HeroIntro } from "@/components/marketing/hero-intro";
+import { HeroPrinciples } from "@/components/marketing/hero-principles";
 import { SiteHeader } from "@/components/marketing/site-header";
 
 export default function Home() {
@@ -11,7 +12,10 @@ export default function Home() {
         aria-labelledby="hero-title"
         className="mx-auto grid max-w-[var(--cortex-content-width)] gap-16 px-[var(--cortex-page-gutter)] pb-24 pt-16 sm:pt-20 lg:grid-cols-[minmax(0,1.08fr)_minmax(26rem,0.92fr)] lg:pt-24"
       >
-        <HeroIntro />
+        <div>
+          <HeroIntro />
+          <HeroPrinciples />
+        </div>
         <DecisionPreview />
       </section>
     </main>
