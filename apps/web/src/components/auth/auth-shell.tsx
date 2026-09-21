@@ -14,28 +14,26 @@ type AuthShellProps = {
 export function AuthShell({ children }: AuthShellProps) {
   return (
     <main className="min-h-screen">
-      <div className="relative min-h-screen w-full">
-        <header className="absolute inset-x-0 top-0 z-20 mx-auto max-w-[var(--cortex-content-width)] px-[var(--cortex-page-gutter)] pt-3 sm:pt-4">
-          <nav className="flex h-16 items-center justify-between gap-4">
-            <Link
-              href="/"
-              aria-label="Cortex home"
-              className="flex min-h-11 items-center rounded-md text-[1.35rem] font-semibold tracking-[-0.025em] text-foreground transition-colors hover:text-accent-bright"
-            >
-              Cortex
-            </Link>
-            <Link
-              href="/"
-              className="flex min-h-11 items-center gap-2 rounded-md text-sm font-medium text-muted transition-colors hover:text-foreground"
-            >
-              <span aria-hidden="true">←</span>
-              Back to home
-            </Link>
-          </nav>
+      <div className="mx-auto min-h-screen max-w-[var(--cortex-content-width)]">
+        <header className="flex h-20 items-center justify-between px-[var(--cortex-page-gutter)]">
+          <Link
+            href="/"
+            aria-label="Cortex home"
+            className="rounded-md text-xl font-semibold tracking-[-0.025em] text-foreground transition-colors hover:text-accent-bright"
+          >
+            Cortex
+          </Link>
+          <Link
+            href="/"
+            className="flex min-h-11 items-center gap-2 rounded-md text-sm font-medium text-muted transition-colors hover:text-foreground"
+          >
+            <span aria-hidden="true">←</span>
+            Back to home
+          </Link>
         </header>
 
-        <div className="grid min-h-screen lg:grid-cols-[minmax(0,58fr)_minmax(30rem,42fr)]">
-          <div className="auth-form-column flex items-center justify-center px-6 pb-14 pt-32 sm:px-10 lg:py-32">
+        <div className="grid gap-10 px-[var(--cortex-page-gutter)] pb-8 lg:min-h-[calc(100vh-6.5rem)] lg:grid-cols-[minmax(22rem,0.82fr)_minmax(32rem,1.18fr)] lg:items-stretch lg:gap-12">
+          <div className="flex items-center justify-center py-10 lg:py-12">
             {children}
           </div>
           <AuthProductPreview />
