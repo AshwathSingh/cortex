@@ -1,26 +1,83 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+
+  /* Cortex foundations: the shared visual language for marketing surfaces. */
+  --cortex-background: #070a0f;
+  --cortex-surface: #0e1626;
+  --cortex-surface-raised: #121d2e;
+  --cortex-border: #55709a;
+  --cortex-border-strong: #6288ca;
+  --cortex-text: #f4f6fb;
+  --cortex-text-muted: #a4adbd;
+  --cortex-text-subtle: #7e899e;
+  --cortex-accent: #3b67dc;
+  --cortex-accent-hover: #315bc9;
+  --cortex-accent-bright: #78a0ff;
+  --cortex-page-gutter: clamp(1.25rem, 4vw, 5.75rem);
+  --cortex-content-width: 87.5rem;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--cortex-background);
+  --color-surface: var(--cortex-surface);
+  --color-surface-raised: var(--cortex-surface-raised);
+  --color-border: var(--cortex-border);
+  --color-border-strong: var(--cortex-border-strong);
+  --color-foreground: var(--cortex-text);
+  --color-muted: var(--cortex-text-muted);
+  --color-subtle: var(--cortex-text-subtle);
+  --color-accent: var(--cortex-accent);
+  --color-accent-hover: var(--cortex-accent-hover);
+  --color-accent-bright: var(--cortex-accent-bright);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --radius-panel: 1.5rem;
+  --radius-control: 0.875rem;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  min-width: 20rem;
+  min-height: 100%;
+  background: var(--cortex-background);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  margin: 0;
+  background-color: var(--cortex-background);
+  background-image:
+    radial-gradient(
+      ellipse 58% 72% at 89% 5%,
+      rgb(31 67 132 / 32%) 0%,
+      rgb(16 35 70 / 17%) 44%,
+      transparent 76%
+    ),
+    linear-gradient(115deg, #070a0f 0%, #070a0f 42%, #080d16 100%);
+  background-attachment: fixed;
+  color: var(--cortex-text);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible {
+  outline: 3px solid var(--cortex-accent-bright);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: rgb(59 103 220 / 45%);
+  color: var(--cortex-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
