@@ -15,7 +15,7 @@
   --cortex-accent: #3b67dc;
   --cortex-accent-hover: #315bc9;
   --cortex-accent-bright: #78a0ff;
-  --cortex-page-gutter: clamp(1.25rem, 4vw, 5.75rem);
+  --cortex-page-gutter: clamp(1.25rem, 5vw, 5.75rem);
   --cortex-content-width: 87.5rem;
 }
 
