@@ -15,7 +15,7 @@
   --cortex-accent: #3b67dc;
   --cortex-accent-hover: #315bc9;
   --cortex-accent-bright: #78a0ff;
-  --cortex-page-gutter: clamp(1.25rem, 5vw, 5.75rem);
+  --cortex-page-gutter: clamp(1.25rem, 4vw, 5.75rem);
   --cortex-content-width: 87.5rem;
 }
 
@@ -32,6 +32,7 @@
   --color-accent-hover: var(--cortex-accent-hover);
   --color-accent-bright: var(--cortex-accent-bright);
   --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
   --radius-panel: 1.5rem;
   --radius-control: 0.875rem;
 }
