@@ -22,6 +22,22 @@ The endpoint tests use FastAPI's `TestClient` with dependency overrides. All of 
 internet or running database. They check the statements and parameters the
 mapper builds, not the Cypher itself. For that, use the live check below.
 
+### About the `StarletteDeprecationWarning`
+
+Running the endpoint/integration tests prints:
+
+```
+StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+```
+
+`httpx2` is Pydantic's maintained continuation of `httpx` (a separate package —
+`import httpx2` — that can be installed alongside plain `httpx`). Starlette's
+`TestClient` now prefers it when present and only falls back to `httpx` with this
+warning. Nothing is broken; the tests are fine to ignore this for now. Migrating would
+mean adding `httpx2` to `requirements.txt` and swapping the `httpx.MockTransport` /
+`httpx.Response` usages in `test_ingest_api.py` and `test_ingest_integration.py` to
+their `httpx2` equivalents — not done yet, tracked as a follow-up.
+
 ## Integration tests (automated, needs Neo4j; T-7.7)
 
 `tests/test_ingest_integration.py` runs mock GitHub payloads through the real
@@ -188,5 +204,5 @@ A repo with zero PRs and issues returns 200 with zeros and writes nothing.
 Stop the server with Ctrl+C. To empty the local graph (dev database only):
 
 ```
-docker compose exec -T neo4j cypher-shell -u neo4j -p <password> "MATCH (n) DETACH DELETE n"
+docker compose exec -T neo4j sh -c 'cypher-shell -u "$NEO4J_USER" -p "$NEO4J_PASSWORD" "MATCH (n) DETACH DELETE n"'
 ```
