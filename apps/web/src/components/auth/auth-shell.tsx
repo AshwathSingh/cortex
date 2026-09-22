@@ -35,7 +35,7 @@ export function AuthShell({ children }: AuthShellProps) {
         </header>
 
         <div className="grid min-h-screen lg:grid-cols-[minmax(0,58fr)_minmax(30rem,42fr)]">
-          <div className="flex items-center justify-center px-6 pb-14 pt-32 sm:px-10 lg:px-16 lg:py-32 xl:px-24">
+          <div className="auth-form-column flex items-center justify-center px-6 pb-14 pt-32 sm:px-10 lg:py-32">
             {children}
           </div>
           <AuthProductPreview />
