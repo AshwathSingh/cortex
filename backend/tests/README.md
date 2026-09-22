@@ -22,6 +22,30 @@ The endpoint tests use FastAPI's `TestClient` with dependency overrides. All of 
 internet or running database. They check the statements and parameters the
 mapper builds, not the Cypher itself. For that, use the live check below.
 
+## Integration tests (automated, needs Neo4j; T-7.7)
+
+`tests/test_ingest_integration.py` runs mock GitHub payloads through the real
+FastAPI endpoint, mapper and a real Neo4j. Only GitHub is mocked.
+
+```
+docker compose up -d neo4j          # from the repo root
+pytest -m integration               # only these
+pytest -m "not integration"         # everything except these (no Docker needed)
+pytest                              # all; integration tests skip if Neo4j is down
+```
+
+They cover the US-7 acceptance criteria that exist today: valid repo builds the graph
+(including pagination and PRs echoed by the issues API), invalid URL / 404 / rate limit /
+malformed payload create **zero nodes**, re-ingest is idempotent and updates changed
+fields, a failed re-ingest leaves the graph intact, and the T-7.2 uniqueness constraints
+reject duplicate ids.
+
+**Your data is safe.** Neo4j Community has a single database, so there is no separate
+test database. Tests only create nodes with ids >= 9,000,000,000,000 and repos starting
+with `cortex-test/`, and delete only those, before and after each test. Anything else in
+the graph is never touched. Payload factories are in `tests/payloads.py`; the graph
+fixtures are in `tests/conftest.py`.
+
 ## Live check against a real Neo4j (manual)
 
 Verifies the Cypher, the `AUTHORED` edges, idempotency and that invalid payloads
