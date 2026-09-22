@@ -15,8 +15,8 @@ export function AuthShell({ children }: AuthShellProps) {
   return (
     <main className="min-h-screen">
       <div className="relative min-h-screen w-full">
-        <header className="absolute inset-x-0 top-0 z-20 mx-auto max-w-[var(--cortex-content-width)] px-[var(--cortex-page-gutter)] pt-5 sm:pt-6">
-          <nav className="-mx-5 flex h-[4.5rem] items-center justify-between gap-4 px-4 sm:px-7 lg:w-[calc(58%+1.25rem)]">
+        <header className="absolute inset-x-0 top-0 z-20 mx-auto max-w-[var(--cortex-content-width)] px-[var(--cortex-page-gutter)] pt-3 sm:pt-4">
+          <nav className="flex h-16 items-center justify-between gap-4 lg:w-[58%]">
             <Link
               href="/"
               aria-label="Cortex home"

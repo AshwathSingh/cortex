@@ -10,9 +10,9 @@ export default function Home() {
       <section
         id="product"
         aria-labelledby="hero-title"
-        className="mx-auto grid max-w-[var(--cortex-content-width)] gap-16 px-[var(--cortex-page-gutter)] pb-24 pt-16 sm:pt-20 lg:grid-cols-[minmax(0,1.08fr)_minmax(26rem,0.92fr)] lg:pt-24"
+        className="mx-auto grid max-w-[var(--cortex-content-width)] gap-16 px-[var(--cortex-page-gutter)] pb-24 pt-16 sm:pt-20 lg:grid-cols-[minmax(0,1.08fr)_minmax(26rem,0.92fr)] lg:items-stretch lg:pt-24"
       >
-        <div>
+        <div className="flex h-full flex-col">
           <HeroIntro />
           <HeroPrinciples />
         </div>

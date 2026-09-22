@@ -12,10 +12,10 @@ const primaryLinks = [
  */
 export function SiteHeader() {
   return (
-    <header className="mx-auto max-w-[var(--cortex-content-width)] px-[var(--cortex-page-gutter)] pt-5 sm:pt-6">
+    <header className="mx-auto max-w-[var(--cortex-content-width)] px-[var(--cortex-page-gutter)] pt-3 sm:pt-4">
       <nav
         aria-label="Primary navigation"
-        className="-mx-5 flex h-[4.5rem] w-[calc(100%+2.5rem)] items-center justify-between gap-4 rounded-[1.25rem] border border-border bg-surface/90 px-4 shadow-[0_18px_60px_rgb(0_0_0/18%)] backdrop-blur-xl sm:px-7"
+        className="grid h-16 grid-cols-[auto_1fr] items-center gap-5 border-b border-border/30 lg:grid-cols-[1fr_auto_1fr]"
       >
         <Link
           href="/"
@@ -25,7 +25,7 @@ export function SiteHeader() {
           Cortex
         </Link>
 
-        <div className="ml-auto hidden items-center gap-1 lg:flex">
+        <div className="hidden items-center justify-center gap-1 lg:flex">
           {primaryLinks.map((link) => (
             <Link
               key={link.href}
@@ -37,24 +37,19 @@ export function SiteHeader() {
           ))}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2 sm:gap-3 lg:ml-0 lg:justify-self-end">
           <Link
             href="/login"
-            className="hidden min-h-11 items-center justify-center rounded-control border border-border px-5 text-[0.95rem] font-medium text-foreground transition-colors hover:bg-surface-raised md:flex"
+            className="flex min-h-11 items-center justify-center rounded-md px-2 text-sm font-medium text-muted transition-colors hover:text-foreground sm:px-4 sm:text-[0.95rem]"
           >
             Log in
           </Link>
           <Link
             href="/signup"
-            aria-label="Start building memory"
-            className="flex min-h-11 items-center justify-center rounded-control bg-accent px-5 text-[0.95rem] font-semibold text-foreground transition-colors hover:bg-accent-hover sm:px-6"
+            aria-label="Ask Cortex"
+            className="flex min-h-11 items-center justify-center rounded-control bg-accent px-4 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover sm:px-5 sm:text-[0.95rem]"
           >
-            <span aria-hidden="true" className="sm:hidden">
-              Start
-            </span>
-            <span aria-hidden="true" className="hidden sm:inline">
-              Start building memory
-            </span>
+            Ask Cortex
           </Link>
         </div>
       </nav>

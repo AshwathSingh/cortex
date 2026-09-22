@@ -19,7 +19,7 @@ const principles = [
  */
 export function HeroPrinciples() {
   return (
-    <dl className="mt-12 grid max-w-[42rem] gap-7 border-t border-border/40 pt-7 sm:grid-cols-3 sm:gap-6 lg:mt-14">
+    <dl className="mt-12 grid max-w-[42rem] gap-7 border-t border-border/40 pt-7 sm:grid-cols-3 sm:gap-6 lg:mt-auto">
       {principles.map((principle) => (
         <div key={principle.title}>
           <dt className="text-sm font-semibold text-foreground">
