@@ -204,5 +204,5 @@ A repo with zero PRs and issues returns 200 with zeros and writes nothing.
 Stop the server with Ctrl+C. To empty the local graph (dev database only):
 
 ```
-docker compose exec -T neo4j sh -c 'cypher-shell -u "$NEO4J_USER" -p "$NEO4J_PASSWORD" "MATCH (n) DETACH DELETE n"'
+docker compose exec -T neo4j cypher-shell -u neo4j -p <password> "MATCH (n) DETACH DELETE n"
 ```
