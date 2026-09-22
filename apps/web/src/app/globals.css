@@ -88,17 +88,6 @@ body {
   transform-origin: center;
 }
 
-@media (min-width: 64rem) {
-  .auth-form-column {
-    justify-content: flex-start;
-    padding-left: calc(
-      max(0px, (100vw - var(--cortex-content-width)) / 2) +
-        var(--cortex-page-gutter)
-    );
-    padding-right: 3rem;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
