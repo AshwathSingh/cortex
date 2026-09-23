@@ -6,3 +6,5 @@ neo4j
 python-dotenv
 httpx
 pytest
+sqlalchemy
+psycopg[binary]
