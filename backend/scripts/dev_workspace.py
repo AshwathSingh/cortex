@@ -4,7 +4,7 @@ Usage:
     python -m scripts.dev_workspace trial             # ADD the whole check scenario
     python -m scripts.dev_workspace --reset           # DELETE everything, add nothing
     python -m scripts.dev_workspace list
-    python -m scripts.dev_workspace create-user      --github-id 12345 --name "Aryan" --email a@b.com
+    python -m scripts.dev_workspace create-user      --github-id 12345 --name "Aryan" --email a@b.com --password "local-development-password"
     python -m scripts.dev_workspace create-workspace --owner <user-id> --name "Cortex"
     python -m scripts.dev_workspace add-member       --workspace <ws-id> --user <user-id> --role VIEWER
 
@@ -19,8 +19,7 @@ API, so it works whether or not uvicorn is running.
 NOTE: This is a developer convenience, not a fixture loader and not part of the API.
 Creating a workspace through the product is a separate user story; until that
 endpoint exists this script is how a workspace comes into being locally. Each
-command prints the id it created, which is what you paste into the
-``X-Cortex-User`` header when calling the API.
+command prints the id it created. API access still requires signing in normally.
 """
 
 import argparse
@@ -31,6 +30,9 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.postgres import dispose_engine, get_session_factory
 from app.models import Role, User, Workspace, WorkspaceMembership
+from app.security import hash_password
+
+TRIAL_PASSWORD = "local-development-password"
 
 
 def _user_name(user: User) -> str:
@@ -39,7 +41,10 @@ def _user_name(user: User) -> str:
 
 def _create_user(session, args: argparse.Namespace) -> None:
     user = User(
-        github_id=int(args.github_id), display_name=args.name, email=args.email
+        github_id=int(args.github_id),
+        display_name=args.name,
+        email=args.email,
+        password_hash=hash_password(args.password),
     )
     session.add(user)
     session.commit()
@@ -127,11 +132,13 @@ def _trial(session, args: argparse.Namespace) -> None:
         github_id=900001,
         display_name="Aryan Jumani",
         email="trial-owner@cortex.test",
+        password_hash=hash_password(TRIAL_PASSWORD),
     )
     outsider = User(
         github_id=900002,
         display_name="Outsider",
         email="trial-outsider@cortex.test",
+        password_hash=hash_password(TRIAL_PASSWORD),
     )
     session.add_all([owner, outsider])
     session.flush()
@@ -159,7 +166,7 @@ def _trial(session, args: argparse.Namespace) -> None:
     session.commit()
 
     print("users")
-    print(f"  {owner.id}  {_user_name(owner)}  <- put this id in the X-Cortex-User header")
+    print(f"  {owner.id}  {_user_name(owner)}")
     print(
         f"  {outsider.id}  {_user_name(outsider)}  "
         "<- a second user, to prove access is enforced"
@@ -177,18 +184,24 @@ def _trial(session, args: argparse.Namespace) -> None:
     )
 
     base = "http://127.0.0.1:8000"
-    print("\nstart the API, then check it:\n")
+    print("\nstart the API, sign in, then check it:\n")
+    print("  # create a cookie jar for the trial owner")
+    print(
+        f"  curl -c /tmp/cortex.cookies -H 'Content-Type: application/json' "
+        f"-d '{{\"email\":\"{owner.email}\",\"password\":\"{TRIAL_PASSWORD}\"}}' "
+        f"{base}/api/auth/login\n"
+    )
     print("  # the workspace list: Apollo, Cortex and Shared.")
     print("  # Private Project must NOT appear -- this user has no role on it.")
-    print(f'  curl -H "X-Cortex-User: {owner.id}" {base}/api/workspaces\n')
+    print(f"  curl -b /tmp/cortex.cookies {base}/api/workspaces\n")
     print("  # open a workspace held only as VIEWER, not owned -> 200")
-    print(f'  curl -H "X-Cortex-User: {owner.id}" {base}/api/workspaces/{shared.id}\n')
+    print(f"  curl -b /tmp/cortex.cookies {base}/api/workspaces/{shared.id}\n")
     print("  # open a workspace with no role on it -> 403")
-    print(f'  curl -i -H "X-Cortex-User: {owner.id}" {base}/api/workspaces/{private.id}\n')
+    print(f"  curl -i -b /tmp/cortex.cookies {base}/api/workspaces/{private.id}\n")
     print("  # a workspace id that does not exist -> the same 403, so nobody")
     print("  # can probe which workspace ids are real")
-    print(f'  curl -i -H "X-Cortex-User: {owner.id}" {base}/api/workspaces/{uuid.uuid4()}\n')
-    print("  # no user header at all -> 401")
+    print(f"  curl -i -b /tmp/cortex.cookies {base}/api/workspaces/{uuid.uuid4()}\n")
+    print("  # no session cookie at all -> 401")
     print(f'  curl -i {base}/api/workspaces')
 
 
@@ -205,6 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--github-id", required=True)
     p.add_argument("--name", required=True)
     p.add_argument("--email", required=True)
+    p.add_argument("--password", required=True)
     p.set_defaults(func=_create_user)
 
     p = sub.add_parser("create-workspace")
