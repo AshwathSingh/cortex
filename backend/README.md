@@ -1,7 +1,10 @@
 # Cortex backend — local dev setup
-Note: 
+
+Note:
+
 1. Use python 3.13 or lower, some packages in the requirements.txt are not supported in 3.14
 2. Rust is required for watchfile installation
+
 ## 1. Start Docker
 
 ```
@@ -65,7 +68,7 @@ instead run `cypher-shell -u "$NEO4J_USER" ...` directly (outside `sh -c '...'`)
 variables come from *your own shell's* environment, not `.env`, and will be empty
 unless you've separately exported them (e.g. `set -a && source .env && set +a`).
 
-Neo4j browser UI: http://localhost:7474 (user/password from `.env`).
+Neo4j browser UI: <http://localhost:7474> (user/password from `.env`).
 
 ## 6. Test Postgres connectivity
 
@@ -90,6 +93,81 @@ docker compose exec postgres psql -U cortex -d cortex
 From Python/FastAPI, connect using `DATABASE_URL` from `.env`
 (`postgresql://cortex:cortex@localhost:5432/cortex`).
 
-There's no schema yet — that's T-1.3 (Postgres schema for user profiles + GitHub
-IDs, coordinated with Kuanyu on T-1.2) — so connectivity is all there is to test
-for now.
+The user/workspace half of the schema now exists — see step 7. Ingestion-side
+tables (T-1.3, coordinated with Kuanyu on T-1.2) are still outstanding.
+
+## 7. Initialize the Postgres schema (T-41.3)
+
+```
+python -m scripts.init_postgres_schema
+```
+
+Creates `users`, `workspaces` and `workspace_memberships` — the tables behind
+the Workspace Selector. Safe to re-run; it creates missing tables and does not
+alter existing ones.
+
+Verify:
+
+```
+docker compose exec -T postgres psql -U cortex -d cortex -c "\dt"
+```
+
+## 8. Create workspaces locally (US-41)
+
+Creating a workspace through the API is a separate user story (US 2 and US 38), so until that
+lands this script is how workspaces come into being. It talks to Postgres
+directly, so it works whether or not the API is running.
+
+`trial` adds the scenario that exercises every US-41 acceptance criterion --
+two users, four workspaces, five memberships -- and prints the curl commands
+to check them, with the ids already filled in:
+
+```
+python -m scripts.dev_workspace trial
+```
+
+**`trial` only adds. `--reset` only deletes.** They are separate operations and
+neither does the other's job. To start from empty:
+
+```
+python -m scripts.dev_workspace --reset     # deletes all users, workspaces, memberships
+python -m scripts.dev_workspace trial       # adds the scenario back (2 users, 4 workspaces and 5 memberships)
+```
+
+Running `trial` on top of an existing trial is refused by the unique constraint
+on the trial users -- nothing is deleted or half-written, so re-run `--reset`
+first.
+
+Building rows by hand instead:
+
+```
+python -m scripts.dev_workspace create-user --github-id 1001 --name "You" --email you@example.com
+python -m scripts.dev_workspace create-workspace --owner <user-id> --name "Cortex"
+python -m scripts.dev_workspace add-member --workspace <ws-id> --user <user-id> --role VIEWER
+python -m scripts.dev_workspace list
+```
+
+## 9. Run the API
+
+Once you have initialized the postgres schema, created some users (either via `trial` or you did it yourself), you can run:
+
+```
+uvicorn app.main:app --reload
+```
+
+to start the server.
+
+Authentication does not exist yet (US 2 and US-38). Until it does, the caller states who
+it is with an `X-Cortex-User` header holding its user id — see
+`app/api/deps.py`. **This is a development seam, not security.**
+
+```
+curl -H "X-Cortex-User: <user-id>" http://127.0.0.1:8000/api/workspaces
+curl -H "X-Cortex-User: <user-id>" http://127.0.0.1:8000/api/workspaces/<workspace-id>
+```
+
+The curl commands after running `trial` will give you a more detailed breakdown.
+
+A workspace the caller holds no role on returns `403`, and so does a workspace
+id that does not exist — the two are deliberately indistinguishable so nobody
+can probe which ids are real.
