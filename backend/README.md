@@ -177,3 +177,5 @@ The curl commands after running `trial` will give you a more detailed breakdown.
 A workspace the caller holds no role on returns `403`, and so does a workspace
 id that does not exist — the two are deliberately indistinguishable so nobody
 can probe which ids are real.
+
+Verify the Postgres connection at <http://localhost:8000/api/health/database>.
