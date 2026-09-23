@@ -55,8 +55,15 @@ Safe to re-run (`IF NOT EXISTS`).
 Verify:
 
 ```
-docker compose exec -T neo4j cypher-shell -u neo4j -p cortexgraph "SHOW CONSTRAINTS"
+docker compose exec -T neo4j sh -c 'cypher-shell -u "$NEO4J_USER" -p "$NEO4J_PASSWORD" "SHOW CONSTRAINTS"'
 ```
+
+This reads the credentials from inside the `neo4j` container (which Compose fills in
+from your `.env`), so it works with whatever user/password you set — no need to type
+them, and no need to hardcode `neo4j`/`cortexgraph`. Note it's single-quoted: if you
+instead run `cypher-shell -u "$NEO4J_USER" ...` directly (outside `sh -c '...'`), those
+variables come from *your own shell's* environment, not `.env`, and will be empty
+unless you've separately exported them (e.g. `set -a && source .env && set +a`).
 
 Neo4j browser UI: http://localhost:7474 (user/password from `.env`).
 

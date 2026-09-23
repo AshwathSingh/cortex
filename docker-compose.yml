@@ -16,6 +16,10 @@ services:
     restart: unless-stopped
     environment:
       NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-cortexgraph}
+      # Exposed separately (not just via NEO4J_AUTH) so `docker compose exec` commands
+      # can read the container's own credentials instead of hardcoding them.
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-cortexgraph}
     ports:
       - "7474:7474" # browser UI
       - "7687:7687" # bolt driver

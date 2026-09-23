@@ -4,3 +4,5 @@ pydantic
 pydantic-settings
 neo4j
 python-dotenv
+httpx
+pytest
