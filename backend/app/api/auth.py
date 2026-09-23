@@ -12,14 +12,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import CurrentUser
 from app.config import settings
 from app.db.postgres import get_session
-from app.models import User, UserSession
+from app.models import Role, User, UserSession, Workspace, WorkspaceMembership
 from app.security import (
     hash_password,
     hash_session_token,
     new_session_token,
     verify_password,
 )
-from app.services.workspaces import create_workspace
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 DbSession = Annotated[Session, Depends(get_session)]
@@ -88,10 +87,16 @@ def signup(payload: SignupRequest, response: Response, session: DbSession) -> Us
 
     try:
         session.flush()
-        create_workspace(
-            session,
+        workspace = Workspace(
             name=f"{display_name}'s Workspace" if display_name else "My Workspace",
-            owner=user,
+            owner_id=user.id,
+        )
+        session.add(workspace)
+        session.flush()
+        session.add(
+            WorkspaceMembership(
+                user_id=user.id, workspace_id=workspace.id, role=Role.OWNER
+            )
         )
         token, expires_at = _create_session(user, session)
         session.commit()

@@ -147,7 +147,7 @@ first.
 Building rows by hand instead:
 
 ```
-python -m scripts.dev_workspace create-user --github-id 1001 --name "You" --email you@example.com
+python -m scripts.dev_workspace create-user --github-id 1001 --name "You" --email you@example.com --password "local-development-password"
 python -m scripts.dev_workspace create-workspace --owner <user-id> --name "Cortex"
 python -m scripts.dev_workspace add-member --workspace <ws-id> --user <user-id> --role VIEWER
 python -m scripts.dev_workspace list
@@ -163,13 +163,15 @@ uvicorn app.main:app --reload
 
 to start the server.
 
-Authentication does not exist yet (US 2 and US-38). Until it does, the caller states who
-it is with an `X-Cortex-User` header holding its user id — see
-`app/api/deps.py`. **This is a development seam, not security.**
+Email/password authentication uses an HttpOnly, SameSite session cookie. Session
+tokens are hashed in Postgres and can be revoked through logout. Set
+`SECURE_COOKIES=true` outside local HTTP development.
 
 ```
-curl -H "X-Cortex-User: <user-id>" http://127.0.0.1:8000/api/workspaces
-curl -H "X-Cortex-User: <user-id>" http://127.0.0.1:8000/api/workspaces/<workspace-id>
+curl -c /tmp/cortex.cookies -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"local-development-password"}' \
+  http://127.0.0.1:8000/api/auth/login
+curl -b /tmp/cortex.cookies http://127.0.0.1:8000/api/workspaces
 ```
 
 The curl commands after running `trial` will give you a more detailed breakdown.
