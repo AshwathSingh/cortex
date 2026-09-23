@@ -31,6 +31,12 @@ docker compose up -d postgres neo4j
 docker compose ps            # confirm both are "Up"
 ```
 
+In the case where you already have an neo4j container, run this command instead.
+
+```
+docker compose up -d --force-recreate neo4j
+```
+
 Stop everything with `docker compose down` (data persists in named volumes; add
 `-v` to also wipe them, you need to wipe your auth credentials from the docker everytime you changes the username and passwords in .env since docker will save these data from the very first instance).
 
@@ -55,15 +61,12 @@ Safe to re-run (`IF NOT EXISTS`).
 Verify:
 
 ```
-docker compose exec -T neo4j sh -c 'cypher-shell -u "$NEO4J_USER" -p "$NEO4J_PASSWORD" "SHOW CONSTRAINTS"'
+set -a
+source ../.env
+set +a
+docker compose exec -T neo4j /var/lib/neo4j/bin/cypher-shell \
+  -u "$NEO4J_USER" -p "$NEO4J_PASSWORD" "SHOW CONSTRAINTS"
 ```
-
-This reads the credentials from inside the `neo4j` container (which Compose fills in
-from your `.env`), so it works with whatever user/password you set — no need to type
-them, and no need to hardcode `neo4j`/`cortexgraph`. Note it's single-quoted: if you
-instead run `cypher-shell -u "$NEO4J_USER" ...` directly (outside `sh -c '...'`), those
-variables come from *your own shell's* environment, not `.env`, and will be empty
-unless you've separately exported them (e.g. `set -a && source .env && set +a`).
 
 Neo4j browser UI: http://localhost:7474 (user/password from `.env`).
 
@@ -88,8 +91,17 @@ docker compose exec postgres psql -U cortex -d cortex
 ```
 
 From Python/FastAPI, connect using `DATABASE_URL` from `.env`
-(`postgresql://cortex:cortex@localhost:5432/cortex`).
+(`postgresql+psycopg://cortex:cortex@localhost:5432/cortex`).
 
-There's no schema yet — that's T-1.3 (Postgres schema for user profiles + GitHub
-IDs, coordinated with Kuanyu on T-1.2) — so connectivity is all there is to test
-for now.
+Apply the relational schema:
+
+```
+alembic upgrade head
+```
+
+`alembic upgrade head` applies all pending migrations so your local Postgres
+schema matches the latest application models.
+
+The first migration creates `users` for email/password and GitHub-linked
+accounts. Passwords must only be stored as hashes; sessions and OAuth tokens
+will use separate tables when those workflows are implemented.
