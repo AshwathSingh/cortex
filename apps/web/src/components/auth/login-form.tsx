@@ -1,16 +1,52 @@
 "use client";
 
-import type { FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import { type FormEvent, useState } from "react";
 
 import {
   AuthFormLayout,
+  AuthFormError,
   AuthSubmitButton,
   FormField,
 } from "@/components/auth/auth-form-primitives";
+import { ApiError, apiRequest } from "@/lib/api";
+
+type AuthenticatedUser = {
+  id: string;
+  email: string;
+  display_name: string | null;
+};
 
 export function LoginForm() {
-  function preventPrototypeSubmission(event: FormEvent<HTMLFormElement>) {
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setError(null);
+    setIsSubmitting(true);
+
+    const formData = new FormData(event.currentTarget);
+    try {
+      await apiRequest<AuthenticatedUser>("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: formData.get("email"),
+          password: formData.get("password"),
+        }),
+      });
+      router.replace("/workspaces");
+      router.refresh();
+    } catch (requestError) {
+      setError(
+        requestError instanceof ApiError
+          ? requestError.message
+          : "Unable to reach Cortex. Please try again.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -22,7 +58,7 @@ export function LoginForm() {
       switchHref="/signup"
       switchLabel="Create an account"
     >
-      <form onSubmit={preventPrototypeSubmission}>
+      <form onSubmit={handleSubmit}>
         <fieldset className="space-y-6">
           <legend className="sr-only">Login details</legend>
           <FormField
@@ -45,7 +81,10 @@ export function LoginForm() {
             required
           />
         </fieldset>
-        <AuthSubmitButton>Log in</AuthSubmitButton>
+        <AuthFormError message={error} />
+        <AuthSubmitButton disabled={isSubmitting}>
+          {isSubmitting ? "Logging in…" : "Log in"}
+        </AuthSubmitButton>
       </form>
     </AuthFormLayout>
   );
