@@ -146,19 +146,12 @@ export function DecisionPreview() {
                 </Link>
             </article>
 
-            <div className="mt-auto flex flex-wrap items-center gap-x-7 gap-y-4 px-2 pt-6 sm:px-3">
+            <div className="mt-auto px-2 pt-6 sm:px-3">
                 <Link
                     href="/signup"
                     className="flex min-h-12 min-w-44 items-center justify-center rounded-control bg-accent px-6 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover"
                 >
                     Ask Cortex
-                </Link>
-                <Link
-                    href="#how-it-works"
-                    className="flex min-h-11 items-center gap-2 rounded-md px-1 text-sm font-semibold text-muted transition-colors hover:text-foreground"
-                >
-                    See how it works
-                    <span aria-hidden="true">→</span>
                 </Link>
             </div>
         </aside>

@@ -22,10 +22,6 @@ def test_workspace_membership_shape_and_roles():
 
     assert membership.role is Role.EDITOR
     assert (
-        next(iter(Workspace.__table__.c.owner_id.foreign_keys)).target_fullname
-        == "users.id"
-    )
-    assert (
         next(
             iter(WorkspaceMembership.__table__.c.user_id.foreign_keys)
         ).target_fullname

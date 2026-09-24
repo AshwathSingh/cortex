@@ -31,6 +31,7 @@ from sqlalchemy.exc import IntegrityError
 from app.db.postgres import dispose_engine, get_session_factory
 from app.models import Role, User, Workspace, WorkspaceMembership
 from app.security import hash_password
+from app.services.workspaces import create_workspace
 
 TRIAL_PASSWORD = "local-development-password"
 
@@ -56,16 +57,7 @@ def _create_workspace(session, args: argparse.Namespace) -> None:
     if owner is None:
         raise SystemExit(f"no user with id {args.owner}")
 
-    workspace = Workspace(name=args.name, owner_id=owner.id)
-    session.add(workspace)
-    session.flush()  # assign workspace.id before the membership references it
-
-    # The owner is a member like anyone else; every access check reads this table.
-    session.add(
-        WorkspaceMembership(
-            user_id=owner.id, workspace_id=workspace.id, role=Role.OWNER
-        )
-    )
+    workspace = create_workspace(session, name=args.name, owner=owner)
     session.commit()
     print(f"workspace {workspace.id}  {workspace.name}  owner={owner.id}")
 
@@ -143,14 +135,8 @@ def _trial(session, args: argparse.Namespace) -> None:
     session.add_all([owner, outsider])
     session.flush()
 
-    def workspace(name: str, holder: User, role: Role = Role.OWNER) -> Workspace:
-        ws = Workspace(name=name, owner_id=holder.id)
-        session.add(ws)
-        session.flush()
-        session.add(
-            WorkspaceMembership(user_id=holder.id, workspace_id=ws.id, role=role)
-        )
-        return ws
+    def workspace(name: str, holder: User) -> Workspace:
+        return create_workspace(session, name=name, owner=holder)
 
     apollo = workspace("Apollo", owner)
     cortex = workspace("Cortex", owner)
