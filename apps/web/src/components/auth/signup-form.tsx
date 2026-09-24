@@ -1,17 +1,54 @@
 "use client";
 
-import type { FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import { type FormEvent, useState } from "react";
 
 import {
   AuthFormLayout,
+  AuthFormError,
   AuthSubmitButton,
   FormField,
 } from "@/components/auth/auth-form-primitives";
+import { ApiError, apiRequest } from "@/lib/api";
+
+type AuthenticatedUser = {
+  id: string;
+  email: string;
+  display_name: string | null;
+};
 
 /** Developer-focused account flow with GitHub and email options. */
 export function SignupForm() {
-  function preventPrototypeSubmission(event: FormEvent<HTMLFormElement>) {
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setError(null);
+    setIsSubmitting(true);
+
+    const formData = new FormData(event.currentTarget);
+    try {
+      await apiRequest<AuthenticatedUser>("/api/auth/signup", {
+        method: "POST",
+        body: JSON.stringify({
+          display_name: formData.get("display_name") || null,
+          email: formData.get("email"),
+          password: formData.get("password"),
+        }),
+      });
+      router.replace("/workspaces");
+      router.refresh();
+    } catch (requestError) {
+      setError(
+        requestError instanceof ApiError
+          ? requestError.message
+          : "Unable to reach Cortex. Please try again.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -23,9 +60,18 @@ export function SignupForm() {
       switchHref="/login"
       switchLabel="Log in"
     >
-      <form onSubmit={preventPrototypeSubmission}>
+      <form onSubmit={handleSubmit}>
         <fieldset className="space-y-6">
           <legend className="sr-only">Account details</legend>
+          <FormField
+            id="signup-name"
+            label="Name"
+            name="display_name"
+            type="text"
+            autoComplete="name"
+            maxLength={100}
+            placeholder="Your name"
+          />
           <FormField
             id="signup-email"
             label="Email"
@@ -49,7 +95,10 @@ export function SignupForm() {
             required
           />
         </fieldset>
-        <AuthSubmitButton>Create account</AuthSubmitButton>
+        <AuthFormError message={error} />
+        <AuthSubmitButton disabled={isSubmitting}>
+          {isSubmitting ? "Creating account…" : "Create account"}
+        </AuthSubmitButton>
       </form>
     </AuthFormLayout>
   );

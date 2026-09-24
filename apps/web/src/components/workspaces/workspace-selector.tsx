@@ -4,9 +4,20 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
-import type { AuthenticatedUser, WorkspaceSummary } from "@/lib/api-types";
+
+type AuthenticatedUser = {
+  id: string;
+  email: string;
+  display_name: string | null;
+};
+
+type WorkspaceSummary = {
+  id: string;
+  name: string;
+  role: "OWNER" | "EDITOR" | "VIEWER";
+  created_at: string;
+};
 
 export function WorkspaceSelector() {
   const router = useRouter();
@@ -106,16 +117,22 @@ export function WorkspaceSelector() {
             Open a project context you own or collaborate on.
           </p>
 
-          <FeedbackAlert message={error} />
+          {error ? (
+            <p
+              role="alert"
+              className="mt-8 rounded-control border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200"
+            >
+              {error}
+            </p>
+          ) : null}
 
           {isLoading ? (
             <p className="mt-10 text-sm text-muted">Loading workspaces…</p>
           ) : (
             <div className="mt-10 grid gap-4 sm:grid-cols-2">
               {workspaces.map((workspace) => (
-                <Link
+                <article
                   key={workspace.id}
-                  href={`/workspaces/${workspace.id}`}
                   className="rounded-panel border border-border/40 bg-surface/70 p-6 transition-colors hover:border-border-strong/70 hover:bg-surface-raised"
                 >
                   <div className="flex items-start justify-between gap-4">
@@ -129,7 +146,7 @@ export function WorkspaceSelector() {
                   <p className="mt-8 text-xs text-subtle">
                     Created {new Date(workspace.created_at).toLocaleDateString()}
                   </p>
-                </Link>
+                </article>
               ))}
             </div>
           )}
