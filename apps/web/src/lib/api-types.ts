@@ -9,6 +9,7 @@ export type WorkspaceRole = "OWNER" | "EDITOR" | "VIEWER";
 export type WorkspaceSummary = {
   id: string;
   name: string;
+  description: string | null;
   role: WorkspaceRole;
   created_at: string;
 };
