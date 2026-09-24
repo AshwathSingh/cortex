@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Postgres holds users, workspaces and membership (US-41). The graph DB holds
     # nodes/edges/evidence; who may see a workspace is a relational question.
     database_url: str = "postgresql+psycopg://cortex:cortex@localhost:5432/cortex"
+    session_cookie_name: str = "cortex_session"
+    session_ttl_days: int = 30
+    secure_cookies: bool = False
 
     @field_validator("database_url")
     @classmethod

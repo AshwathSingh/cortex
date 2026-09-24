@@ -2,8 +2,8 @@
     GET /api/workspaces        every workspace the caller can access
     GET /api/workspaces/{id}   does the user have some access on this workspace
 
-A VIEWER is authorised to open a workspace they do not own, so both endpoints read
-``workspace_memberships`` rather than ``workspaces.owner_id``.
+Ownership and access roles both live in ``workspace_memberships``, so every
+authorization decision reads the same source of truth.
 """
 
 import uuid
@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
-from app.db.models import Role, Workspace, WorkspaceMembership
+from app.models import Role, Workspace, WorkspaceMembership
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 
@@ -42,7 +42,7 @@ def _summarise(workspace: Workspace, role: Role) -> WorkspaceSummary:
 @router.get("", response_model=list[WorkspaceSummary])
 def list_workspaces(user: CurrentUser, session: DbSession) -> list[WorkspaceSummary]:
     """Every workspace the caller holds any role on, ordered by name.
-    Returns empty if user has access to no workspaces. 
+    Returns empty if user has access to no workspaces.
     """
     rows = session.execute(
         select(Workspace, WorkspaceMembership.role)
@@ -61,7 +61,7 @@ def get_workspace(
     """One workspace, or 403 if the caller holds no role on it.
 
     Note: a non-existent workspace and a workspace the caller doesn't have access
-    to return the same 403 (to prevent anyone knowing which workspaces exist and 
+        to return the same 403 (to prevent anyone knowing which workspaces exist and
     which don't)
     """
     row = session.execute(

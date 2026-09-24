@@ -4,7 +4,7 @@ Usage:
     python -m scripts.dev_workspace trial             # ADD the whole check scenario
     python -m scripts.dev_workspace --reset           # DELETE everything, add nothing
     python -m scripts.dev_workspace list
-    python -m scripts.dev_workspace create-user      --github-id 12345 --name "Aryan" --email a@b.com
+    python -m scripts.dev_workspace create-user      --github-id 12345 --name "Aryan" --email a@b.com --password "local-development-password"
     python -m scripts.dev_workspace create-workspace --owner <user-id> --name "Cortex"
     python -m scripts.dev_workspace add-member       --workspace <ws-id> --user <user-id> --role VIEWER
 
@@ -19,8 +19,7 @@ API, so it works whether or not uvicorn is running.
 NOTE: This is a developer convenience, not a fixture loader and not part of the API.
 Creating a workspace through the product is a separate user story; until that
 endpoint exists this script is how a workspace comes into being locally. Each
-command prints the id it created, which is what you paste into the
-``X-Cortex-User`` header when calling the API.
+command prints the id it created. API access still requires signing in normally.
 """
 
 import argparse
@@ -29,15 +28,28 @@ import uuid
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
-from app.db.models import Role, User, Workspace, WorkspaceMembership
 from app.db.postgres import dispose_engine, get_session_factory
+from app.models import Role, User, Workspace, WorkspaceMembership
+from app.security import hash_password
+from app.services.workspaces import create_workspace
+
+TRIAL_PASSWORD = "local-development-password"
+
+
+def _user_name(user: User) -> str:
+    return user.display_name or user.email
 
 
 def _create_user(session, args: argparse.Namespace) -> None:
-    user = User(github_id=args.github_id, name=args.name, email=args.email)
+    user = User(
+        github_id=int(args.github_id),
+        display_name=args.name,
+        email=args.email,
+        password_hash=hash_password(args.password),
+    )
     session.add(user)
     session.commit()
-    print(f"user {user.id}  {user.name} <{user.email}>")
+    print(f"user {user.id}  {_user_name(user)} <{user.email}>")
 
 
 def _create_workspace(session, args: argparse.Namespace) -> None:
@@ -45,16 +57,7 @@ def _create_workspace(session, args: argparse.Namespace) -> None:
     if owner is None:
         raise SystemExit(f"no user with id {args.owner}")
 
-    workspace = Workspace(name=args.name, owner_id=owner.id)
-    session.add(workspace)
-    session.flush()  # assign workspace.id before the membership references it
-
-    # The owner is a member like anyone else; every access check reads this table.
-    session.add(
-        WorkspaceMembership(
-            user_id=owner.id, workspace_id=workspace.id, role=Role.OWNER
-        )
-    )
+    workspace = create_workspace(session, name=args.name, owner=owner)
     session.commit()
     print(f"workspace {workspace.id}  {workspace.name}  owner={owner.id}")
 
@@ -72,14 +75,17 @@ def _add_member(session, args: argparse.Namespace) -> None:
     )
     session.add(membership)
     session.commit()
-    print(f"membership {membership.id}  {user.name} -> {workspace.name} as {args.role}")
+    print(
+        f"membership {membership.id}  {_user_name(user)} -> "
+        f"{workspace.name} as {args.role}"
+    )
 
 
 def _list(session, args: argparse.Namespace) -> None:
     users = session.scalars(select(User).order_by(User.created_at)).all()
     print("users:")
     for user in users:
-        print(f"  {user.id}  {user.name} <{user.email}>")
+        print(f"  {user.id}  {_user_name(user)} <{user.email}>")
 
     print("workspaces:")
     rows = session.execute(
@@ -89,7 +95,10 @@ def _list(session, args: argparse.Namespace) -> None:
         .order_by(Workspace.name)
     ).all()
     for workspace, membership, user in rows:
-        print(f"  {workspace.id}  {workspace.name:<20} {user.name} = {membership.role.value}")
+        print(
+            f"  {workspace.id}  {workspace.name:<20} "
+            f"{_user_name(user)} = {membership.role.value}"
+        )
 
 
 def _reset(session, args: argparse.Namespace) -> None:
@@ -112,22 +121,22 @@ def _trial(session, args: argparse.Namespace) -> None:
     Two users, four workspaces, five memberships.
     """
     owner = User(
-        github_id="900001", name="Aryan Jumani", email="trial-owner@cortex.test"
+        github_id=900001,
+        display_name="Aryan Jumani",
+        email="trial-owner@cortex.test",
+        password_hash=hash_password(TRIAL_PASSWORD),
     )
     outsider = User(
-        github_id="900002", name="Outsider", email="trial-outsider@cortex.test"
+        github_id=900002,
+        display_name="Outsider",
+        email="trial-outsider@cortex.test",
+        password_hash=hash_password(TRIAL_PASSWORD),
     )
     session.add_all([owner, outsider])
     session.flush()
 
-    def workspace(name: str, holder: User, role: Role = Role.OWNER) -> Workspace:
-        ws = Workspace(name=name, owner_id=holder.id)
-        session.add(ws)
-        session.flush()
-        session.add(
-            WorkspaceMembership(user_id=holder.id, workspace_id=ws.id, role=role)
-        )
-        return ws
+    def workspace(name: str, holder: User) -> Workspace:
+        return create_workspace(session, name=name, owner=holder)
 
     apollo = workspace("Apollo", owner)
     cortex = workspace("Cortex", owner)
@@ -143,33 +152,42 @@ def _trial(session, args: argparse.Namespace) -> None:
     session.commit()
 
     print("users")
-    print(f"  {owner.id}  {owner.name}  <- put this id in the X-Cortex-User header")
-    print(f"  {outsider.id}  {outsider.name}  <- a second user, to prove access is enforced")
-    print("\nworkspaces, and who can see each one")
-    print(f"  {apollo.id}  {'Apollo':<16} {owner.name} = OWNER")
-    print(f"  {cortex.id}  {'Cortex':<16} {owner.name} = OWNER")
+    print(f"  {owner.id}  {_user_name(owner)}")
     print(
-        f"  {shared.id}  {'Shared':<16} {outsider.name} = OWNER, "
-        f"{owner.name} = VIEWER"
+        f"  {outsider.id}  {_user_name(outsider)}  "
+        "<- a second user, to prove access is enforced"
+    )
+    print("\nworkspaces, and who can see each one")
+    print(f"  {apollo.id}  {'Apollo':<16} {_user_name(owner)} = OWNER")
+    print(f"  {cortex.id}  {'Cortex':<16} {_user_name(owner)} = OWNER")
+    print(
+        f"  {shared.id}  {'Shared':<16} {_user_name(outsider)} = OWNER, "
+        f"{_user_name(owner)} = VIEWER"
     )
     print(
-        f"  {private.id}  {'Private Project':<16} {outsider.name} = OWNER  "
-        f"({owner.name} has no access to this one)"
+        f"  {private.id}  {'Private Project':<16} {_user_name(outsider)} = OWNER  "
+        f"({_user_name(owner)} has no access to this one)"
     )
 
     base = "http://127.0.0.1:8000"
-    print("\nstart the API, then check it:\n")
+    print("\nstart the API, sign in, then check it:\n")
+    print("  # create a cookie jar for the trial owner")
+    print(
+        f"  curl -c /tmp/cortex.cookies -H 'Content-Type: application/json' "
+        f"-d '{{\"email\":\"{owner.email}\",\"password\":\"{TRIAL_PASSWORD}\"}}' "
+        f"{base}/api/auth/login\n"
+    )
     print("  # the workspace list: Apollo, Cortex and Shared.")
     print("  # Private Project must NOT appear -- this user has no role on it.")
-    print(f'  curl -H "X-Cortex-User: {owner.id}" {base}/api/workspaces\n')
+    print(f"  curl -b /tmp/cortex.cookies {base}/api/workspaces\n")
     print("  # open a workspace held only as VIEWER, not owned -> 200")
-    print(f'  curl -H "X-Cortex-User: {owner.id}" {base}/api/workspaces/{shared.id}\n')
+    print(f"  curl -b /tmp/cortex.cookies {base}/api/workspaces/{shared.id}\n")
     print("  # open a workspace with no role on it -> 403")
-    print(f'  curl -i -H "X-Cortex-User: {owner.id}" {base}/api/workspaces/{private.id}\n')
+    print(f"  curl -i -b /tmp/cortex.cookies {base}/api/workspaces/{private.id}\n")
     print("  # a workspace id that does not exist -> the same 403, so nobody")
     print("  # can probe which workspace ids are real")
-    print(f'  curl -i -H "X-Cortex-User: {owner.id}" {base}/api/workspaces/{uuid.uuid4()}\n')
-    print("  # no user header at all -> 401")
+    print(f"  curl -i -b /tmp/cortex.cookies {base}/api/workspaces/{uuid.uuid4()}\n")
+    print("  # no session cookie at all -> 401")
     print(f'  curl -i {base}/api/workspaces')
 
 
@@ -186,6 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--github-id", required=True)
     p.add_argument("--name", required=True)
     p.add_argument("--email", required=True)
+    p.add_argument("--password", required=True)
     p.set_defaults(func=_create_user)
 
     p = sub.add_parser("create-workspace")

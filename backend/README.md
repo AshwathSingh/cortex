@@ -34,6 +34,12 @@ docker compose up -d postgres neo4j
 docker compose ps            # confirm both are "Up"
 ```
 
+In the case where you already have an neo4j container, run this command instead.
+
+```
+docker compose up -d --force-recreate neo4j
+```
+
 Stop everything with `docker compose down` (data persists in named volumes; add
 `-v` to also wipe them, you need to wipe your auth credentials from the docker everytime you changes the username and passwords in .env since docker will save these data from the very first instance).
 
@@ -91,20 +97,26 @@ docker compose exec postgres psql -U cortex -d cortex
 ```
 
 From Python/FastAPI, connect using `DATABASE_URL` from `.env`
-(`postgresql://cortex:cortex@localhost:5432/cortex`).
+(`postgresql+psycopg://cortex:cortex@localhost:5432/cortex`).
 
-The user/workspace half of the schema now exists — see step 7. Ingestion-side
-tables (T-1.3, coordinated with Kuanyu on T-1.2) are still outstanding.
-
-## 7. Initialize the Postgres schema (T-41.3)
+Apply the relational schema through the project preflight wrapper:
 
 ```
 python -m scripts.init_postgres_schema
 ```
 
-Creates `users`, `workspaces` and `workspace_memberships` — the tables behind
-the Workspace Selector. Safe to re-run; it creates missing tables and does not
-alter existing ones.
+The wrapper detects databases created by the older `create_all` bootstrap before
+running Alembic. If it reports a legacy schema, back up anything you need and reset
+only the local Postgres schema before retrying:
+
+```
+docker compose exec -T postgres psql -U cortex -d cortex \
+  -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+python -m scripts.init_postgres_schema
+```
+
+The migrations create `users`, `workspaces`, `workspace_memberships`, and
+`user_sessions`. Passwords and session tokens are stored only as hashes.
 
 Verify:
 
@@ -141,7 +153,7 @@ first.
 Building rows by hand instead:
 
 ```
-python -m scripts.dev_workspace create-user --github-id 1001 --name "You" --email you@example.com
+python -m scripts.dev_workspace create-user --github-id 1001 --name "You" --email you@example.com --password "local-development-password"
 python -m scripts.dev_workspace create-workspace --owner <user-id> --name "Cortex"
 python -m scripts.dev_workspace add-member --workspace <ws-id> --user <user-id> --role VIEWER
 python -m scripts.dev_workspace list
@@ -157,13 +169,15 @@ uvicorn app.main:app --reload
 
 to start the server.
 
-Authentication does not exist yet (US 2 and US-38). Until it does, the caller states who
-it is with an `X-Cortex-User` header holding its user id — see
-`app/api/deps.py`. **This is a development seam, not security.**
+Email/password authentication uses an HttpOnly, SameSite session cookie. Session
+tokens are hashed in Postgres and can be revoked through logout. Set
+`SECURE_COOKIES=true` outside local HTTP development.
 
 ```
-curl -H "X-Cortex-User: <user-id>" http://127.0.0.1:8000/api/workspaces
-curl -H "X-Cortex-User: <user-id>" http://127.0.0.1:8000/api/workspaces/<workspace-id>
+curl -c /tmp/cortex.cookies -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"local-development-password"}' \
+  http://127.0.0.1:8000/api/auth/login
+curl -b /tmp/cortex.cookies http://127.0.0.1:8000/api/workspaces
 ```
 
 The curl commands after running `trial` will give you a more detailed breakdown.
@@ -171,3 +185,5 @@ The curl commands after running `trial` will give you a more detailed breakdown.
 A workspace the caller holds no role on returns `403`, and so does a workspace
 id that does not exist — the two are deliberately indistinguishable so nobody
 can probe which ids are real.
+
+Verify the Postgres connection at <http://localhost:8000/api/health/database>.
