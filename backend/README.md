@@ -99,18 +99,24 @@ docker compose exec postgres psql -U cortex -d cortex
 From Python/FastAPI, connect using `DATABASE_URL` from `.env`
 (`postgresql+psycopg://cortex:cortex@localhost:5432/cortex`).
 
-Apply the relational schema:
+Apply the relational schema through the project preflight wrapper:
 
 ```
-alembic upgrade head
+python -m scripts.init_postgres_schema
 ```
 
-`alembic upgrade head` applies all pending migrations so your local Postgres
-schema matches the latest application models.
+The wrapper detects databases created by the older `create_all` bootstrap before
+running Alembic. If it reports a legacy schema, back up anything you need and reset
+only the local Postgres schema before retrying:
 
-The migrations create `users`, `workspaces`, and `workspace_memberships`.
-Passwords are stored only as hashes; sessions and OAuth tokens will use separate
-tables when those workflows are implemented.
+```
+docker compose exec -T postgres psql -U cortex -d cortex \
+  -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+python -m scripts.init_postgres_schema
+```
+
+The migrations create `users`, `workspaces`, `workspace_memberships`, and
+`user_sessions`. Passwords and session tokens are stored only as hashes.
 
 Verify:
 

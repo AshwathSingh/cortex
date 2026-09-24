@@ -32,7 +32,6 @@
   --color-accent-hover: var(--cortex-accent-hover);
   --color-accent-bright: var(--cortex-accent-bright);
   --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
   --radius-panel: 1.5rem;
   --radius-control: 0.875rem;
 }

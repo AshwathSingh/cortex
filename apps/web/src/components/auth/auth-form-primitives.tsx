@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { InputHTMLAttributes, ReactNode } from "react";
 
+import { FeedbackAlert } from "@/components/ui/feedback-alert";
+
 const fieldClassName =
   "mt-2 h-12 w-full rounded-control border border-border/60 bg-surface/70 px-4 text-[0.95rem] text-foreground outline-none transition placeholder:text-subtle hover:border-border focus:border-accent-bright focus:ring-2 focus:ring-accent-bright/20";
 
@@ -133,18 +135,7 @@ export function FormField({ hint, id, label, ...inputProps }: FormFieldProps) {
 }
 
 export function AuthFormError({ message }: { message: string | null }) {
-  if (!message) {
-    return null;
-  }
-
-  return (
-    <p
-      role="alert"
-      className="mt-5 rounded-control border border-red-400/30 bg-red-500/10 px-4 py-3 text-sm text-red-200"
-    >
-      {message}
-    </p>
-  );
+  return <FeedbackAlert message={message} />;
 }
 
 export function AuthSubmitButton({

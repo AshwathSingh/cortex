@@ -10,12 +10,7 @@ import {
   FormField,
 } from "@/components/auth/auth-form-primitives";
 import { ApiError, apiRequest } from "@/lib/api";
-
-type AuthenticatedUser = {
-  id: string;
-  email: string;
-  display_name: string | null;
-};
+import type { AuthenticatedUser } from "@/lib/api-types";
 
 export function LoginForm() {
   const router = useRouter();
