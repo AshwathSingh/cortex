@@ -71,7 +71,7 @@ This reads the credentials from inside the `neo4j` container (which Compose fill
 from your `.env`), so it works with whatever user/password you set — no need to type
 them, and no need to hardcode `neo4j`/`cortexgraph`. Note it's single-quoted: if you
 instead run `cypher-shell -u "$NEO4J_USER" ...` directly (outside `sh -c '...'`), those
-variables come from *your own shell's* environment, not `.env`, and will be empty
+variables come from _your own shell's_ environment, not `.env`, and will be empty
 unless you've separately exported them (e.g. `set -a && source .env && set +a`).
 
 Neo4j browser UI: <http://localhost:7474> (user/password from `.env`).
@@ -126,9 +126,10 @@ docker compose exec -T postgres psql -U cortex -d cortex -c "\dt"
 
 ## 8. Create workspaces locally (US-41)
 
-Creating a workspace through the API is a separate user story (US 2 and US 38), so until that
-lands this script is how workspaces come into being. It talks to Postgres
-directly, so it works whether or not the API is running.
+Signed-in users create workspaces through the API (`POST /api/workspaces`,
+US-2; see step 9) or the web app's **New workspace** page. This script is for
+seeding test data: it talks to Postgres directly, so it works whether or not the
+API is running.
 
 `trial` adds the scenario that exercises every US-41 acceptance criterion --
 two users, four workspaces, five memberships -- and prints the curl commands
@@ -181,6 +182,16 @@ curl -b /tmp/cortex.cookies http://127.0.0.1:8000/api/workspaces
 ```
 
 The curl commands after running `trial` will give you a more detailed breakdown.
+
+Create a workspace (US-2). The caller becomes its `OWNER`; `description` is
+optional. Names are 1–100 characters, descriptions up to 1000. A name the caller
+already owns (case-insensitive) returns `409`, and invalid input returns `422`.
+
+```
+curl -b /tmp/cortex.cookies -H "Content-Type: application/json" \
+  -d '{"name":"Apollo","description":"Launch plans"}' \
+  http://127.0.0.1:8000/api/workspaces
+```
 
 A workspace the caller holds no role on returns `403`, and so does a workspace
 id that does not exist — the two are deliberately indistinguishable so nobody

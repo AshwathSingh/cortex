@@ -102,9 +102,17 @@ export function WorkspaceSelector() {
           >
             Choose a workspace
           </h1>
-          <p className="mt-4 max-w-2xl text-base leading-7 text-muted">
-            Open a project context you own or collaborate on.
-          </p>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+            <p className="max-w-2xl text-base leading-7 text-muted">
+              Open a project context you own or collaborate on.
+            </p>
+            <Link
+              href="/workspaces/new"
+              className="inline-flex min-h-11 items-center rounded-control bg-accent px-5 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover"
+            >
+              New workspace
+            </Link>
+          </div>
 
           <FeedbackAlert message={error} />
 
@@ -126,6 +134,11 @@ export function WorkspaceSelector() {
                       {workspace.role}
                     </span>
                   </div>
+                  {workspace.description ? (
+                    <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted">
+                      {workspace.description}
+                    </p>
+                  ) : null}
                   <p className="mt-8 text-xs text-subtle">
                     Created {new Date(workspace.created_at).toLocaleDateString()}
                   </p>
@@ -136,7 +149,14 @@ export function WorkspaceSelector() {
 
           {!isLoading && !error && workspaces.length === 0 ? (
             <p className="mt-10 rounded-panel border border-border/40 bg-surface/60 p-6 text-muted">
-              You do not have access to any workspaces yet.
+              You do not have access to any workspaces yet.{" "}
+              <Link
+                href="/workspaces/new"
+                className="font-semibold text-accent-bright transition-colors hover:text-foreground"
+              >
+                Create one
+              </Link>
+              .
             </p>
           ) : null}
         </section>
