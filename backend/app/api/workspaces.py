@@ -2,8 +2,8 @@
     GET /api/workspaces        every workspace the caller can access
     GET /api/workspaces/{id}   does the user have some access on this workspace
 
-A VIEWER is authorised to open a workspace they do not own, so both endpoints read
-``workspace_memberships`` rather than ``workspaces.owner_id``.
+Ownership and access roles both live in ``workspace_memberships``, so every
+authorization decision reads the same source of truth.
 """
 
 import uuid
