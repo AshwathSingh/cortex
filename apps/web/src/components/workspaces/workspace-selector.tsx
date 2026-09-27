@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { AuthenticatedUser, WorkspaceSummary } from "@/lib/api-types";
+import { routes } from "@/lib/routes";
 
 export function WorkspaceSelector() {
   const router = useRouter();
@@ -115,7 +116,7 @@ export function WorkspaceSelector() {
               {workspaces.map((workspace) => (
                 <Link
                   key={workspace.id}
-                  href={`/workspaces/${workspace.id}`}
+                  href={routes.workspace.home(workspace.id)}
                   className="rounded-panel border border-border/40 bg-surface/70 p-6 transition-colors hover:border-border-strong/70 hover:bg-surface-raised"
                 >
                   <div className="flex items-start justify-between gap-4">
