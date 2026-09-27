@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
+import { RoleBadge } from "@/components/workspaces/role-badge";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { WorkspaceSummary } from "@/lib/api-types";
 
@@ -56,9 +57,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
         ) : null}
         {workspace ? (
           <section className="mt-10" aria-labelledby="workspace-title">
-            <p className="text-sm font-medium text-accent-bright">
-              {workspace.role}
-            </p>
+            <RoleBadge role={workspace.role} />
             <h1
               id="workspace-title"
               className="mt-3 text-[clamp(2.25rem,6vw,4rem)] font-semibold leading-none tracking-[-0.05em]"
