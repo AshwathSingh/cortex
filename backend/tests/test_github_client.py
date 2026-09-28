@@ -21,6 +21,9 @@ def make_client(handler, **kwargs):
         ("https://github.com/octo/cat/", ("octo", "cat")),
         ("https://github.com/octo/cat.git", ("octo", "cat")),
         ("https://github.com/octo/cat/pulls", ("octo", "cat")),
+        ("github.com/octo/cat", ("octo", "cat")),
+        ("www.github.com/octo/cat", ("octo", "cat")),
+        ("  github.com/octo/cat.git  ", ("octo", "cat")),
     ],
 )
 def test_parse_valid(url, expected):
@@ -29,7 +32,7 @@ def test_parse_valid(url, expected):
 
 @pytest.mark.parametrize(
     "url",
-    ["", "not a url", "https://gitlab.com/a/b", "https://github.com/onlyowner", "ftp://github.com/a/b"],
+    ["", "not a url", "https://gitlab.com/a/b", "gitlab.com/a/b", "https://github.com/onlyowner", "github.com/onlyowner", "ftp://github.com/a/b"],
 )
 def test_parse_invalid(url):
     with pytest.raises(InvalidRepoURL):

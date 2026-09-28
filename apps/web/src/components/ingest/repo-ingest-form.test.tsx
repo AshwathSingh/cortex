@@ -43,6 +43,19 @@ describe("RepoIngestForm", () => {
     });
   });
 
+  it("adds https:// to a scheme-less GitHub URL", async () => {
+    const fetchFn = mockFetch(200, { repo: "o/r", pull_requests: 0, issues: 0 });
+    await submit("github.com/o/r");
+
+    expect(await screen.findByRole("status")).toBeInTheDocument();
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toEqual({
+      repo_url: "https://github.com/o/r",
+    });
+    expect(screen.getByLabelText(/repository url/i)).toHaveValue(
+      "https://github.com/o/r",
+    );
+  });
+
   it("shows the server message for an invalid URL", async () => {
     mockFetch(422, { detail: "Not a GitHub repository URL" });
     await submit("https://gitlab.com/a/b");
