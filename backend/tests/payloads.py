@@ -2,12 +2,21 @@
 
 All ids live in a reserved range (>= TEST_ID_BASE) and all repos use TEST_REPO_PREFIX,
 so test data can be found and deleted without touching real ingested data.
+
+Graph cleanup keys off the reserved workspace ids below rather than ``repo``:
+``workspace_id`` is on every node including Author, so one predicate finds
+everything a test wrote. TEST_WORKSPACE_ID_B exists to prove that the same
+GitHub id in a second workspace is a separate node.
 """
 
 TEST_ID_BASE = 9_000_000_000_000
 TEST_REPO_PREFIX = "cortex-test/"
 TEST_REPO = TEST_REPO_PREFIX + "repo"
 TEST_REPO_URL = "https://github.com/" + TEST_REPO
+
+TEST_WORKSPACE_ID = "ccccccc0-0000-4000-8000-00000000c0de"
+TEST_WORKSPACE_ID_B = "ccccccc0-0000-4000-8000-00000000c0df"
+TEST_WORKSPACE_IDS = (TEST_WORKSPACE_ID, TEST_WORKSPACE_ID_B)
 
 
 def user(n: int, login: str | None = None) -> dict:

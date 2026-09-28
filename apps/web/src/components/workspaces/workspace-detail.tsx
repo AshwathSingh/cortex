@@ -68,7 +68,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
               Created {new Date(workspace.created_at).toLocaleDateString()}
             </p>
             <Link
-              href="/ingest"
+              href={`/workspaces/${workspaceId}/ingest`}
               className="mt-10 inline-flex min-h-11 items-center rounded-control bg-accent px-5 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover"
             >
               Add a GitHub repository

@@ -8,6 +8,7 @@ import { ApiError, apiRequest } from "@/lib/api";
 import type { IngestResult } from "@/lib/api-types";
 
 const fallbackMessages: Record<number, string> = {
+  403: "You need edit access to this workspace to add a repository.",
   404: "Repository not found or not accessible.",
   429: "GitHub rate limit reached. Try again later.",
   502: "GitHub returned an unexpected response.",
@@ -20,7 +21,7 @@ type Status =
   | { kind: "success"; result: IngestResult }
   | { kind: "error"; message: string };
 
-export function RepoIngestForm() {
+export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
   const [repoUrl, setRepoUrl] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
@@ -36,7 +37,7 @@ export function RepoIngestForm() {
     try {
       const result = await apiRequest<IngestResult>("/api/ingest/github", {
         method: "POST",
-        body: JSON.stringify({ repo_url: url }),
+        body: JSON.stringify({ repo_url: url, workspace_id: workspaceId }),
       });
       setStatus({ kind: "success", result });
     } catch (requestError) {
@@ -56,10 +57,10 @@ export function RepoIngestForm() {
   return (
     <section aria-labelledby="ingest-heading">
       <Link
-        href="/workspaces"
+        href={`/workspaces/${workspaceId}`}
         className="text-sm font-medium text-muted transition-colors hover:text-foreground"
       >
-        ← Back to workspaces
+        ← Back to workspace
       </Link>
       <h1
         id="ingest-heading"
