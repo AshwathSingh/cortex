@@ -3,20 +3,15 @@ import type { Metadata } from "next";
 import { WorkspaceRoutePlaceholder } from "@/components/workspaces/workspace-route-placeholder";
 
 export const metadata: Metadata = {
-  title: "Review | Cortex",
+  title: "Review queue | Cortex",
   description: "Review flagged issues in a Cortex workspace.",
 };
 
-export default async function ReviewPage({
-  params,
-}: PageProps<"/workspaces/[workspaceId]/review">) {
-  const { workspaceId } = await params;
-
+export default function ReviewPage() {
   return (
     <WorkspaceRoutePlaceholder
-      workspaceId={workspaceId}
       eyebrow="Workspace review"
-      title="Review"
+      title="Review queue"
       description="Review contradictions, unresolved questions, and other flagged issues."
     />
   );

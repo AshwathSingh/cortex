@@ -1,16 +1,10 @@
-import Link from "next/link";
-
-import { routes } from "@/lib/routes";
-
 type WorkspaceRoutePlaceholderProps = {
-  workspaceId: string;
   eyebrow: string;
   title: string;
   description: string;
 };
 
 export function WorkspaceRoutePlaceholder({
-  workspaceId,
   eyebrow,
   title,
   description,
@@ -18,13 +12,7 @@ export function WorkspaceRoutePlaceholder({
   return (
     <main className="min-h-screen px-[var(--cortex-page-gutter)] py-8 sm:py-12">
       <div className="mx-auto w-full max-w-[64rem]">
-        <Link
-          href={routes.workspace.home(workspaceId)}
-          className="text-sm font-medium text-muted transition-colors hover:text-foreground"
-        >
-          ← Workspace home
-        </Link>
-        <section className="mt-10" aria-labelledby="route-title">
+        <section aria-labelledby="route-title">
           <p className="text-sm font-medium text-accent-bright">{eyebrow}</p>
           <h1
             id="route-title"

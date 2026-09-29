@@ -17,6 +17,23 @@
   --cortex-accent-bright: #78a0ff;
   --cortex-page-gutter: clamp(1.25rem, 5vw, 5.75rem);
   --cortex-content-width: 87.5rem;
+
+  /* Logged-in shell defaults. WorkspaceShell can override these per instance. */
+  --cortex-sidebar-width: 15.5rem;
+  --cortex-sidebar-background: rgb(9 14 23 / 58%);
+  --cortex-sidebar-border: rgb(98 136 202 / 18%);
+  --cortex-sidebar-active: linear-gradient(
+    90deg,
+    rgb(59 103 220 / 19%),
+    rgb(59 103 220 / 7%)
+  );
+  --cortex-sidebar-active-border: rgb(120 160 255 / 15%);
+  --cortex-sidebar-hover: rgb(85 112 154 / 9%);
+  --cortex-sidebar-accent: #6e97ff;
+  --cortex-sidebar-text: #a4adbd;
+  --cortex-sidebar-icon: #78849a;
+  --cortex-sidebar-item-radius: 0.625rem;
+  --cortex-sidebar-logo-background: rgb(18 29 46 / 68%);
 }
 
 @theme inline {
@@ -63,6 +80,12 @@ body {
 :focus-visible {
   outline: 3px solid var(--cortex-accent-bright);
   outline-offset: 3px;
+}
+
+.cortex-composer-input:focus,
+.cortex-composer-input:focus-visible {
+  outline: none !important;
+  outline-offset: 0 !important;
 }
 
 ::selection {

@@ -7,14 +7,9 @@ export const metadata: Metadata = {
   description: "Manage source data for a Cortex workspace.",
 };
 
-export default async function SourcesPage({
-  params,
-}: PageProps<"/workspaces/[workspaceId]/sources">) {
-  const { workspaceId } = await params;
-
+export default function SourcesPage() {
   return (
     <WorkspaceRoutePlaceholder
-      workspaceId={workspaceId}
       eyebrow="Workspace sources"
       title="Sources"
       description="Connect and manage the source data that powers this workspace."
