@@ -65,6 +65,11 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
             >
               {workspace.name}
             </h1>
+            {workspace.description ? (
+              <p className="mt-5 max-w-2xl whitespace-pre-line text-base leading-7 text-muted">
+                {workspace.description}
+              </p>
+            ) : null}
             <p className="mt-4 text-sm text-subtle">
               Created {new Date(workspace.created_at).toLocaleDateString()}
             </p>

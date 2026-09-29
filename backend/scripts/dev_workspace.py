@@ -17,9 +17,9 @@ This talks to Postgres directly through SQLAlchemy -- it does NOT go through the
 API, so it works whether or not uvicorn is running.
 
 NOTE: This is a developer convenience, not a fixture loader and not part of the API.
-Creating a workspace through the product is a separate user story; until that
-endpoint exists this script is how a workspace comes into being locally. Each
-command prints the id it created. API access still requires signing in normally.
+Users create workspaces through ``POST /api/workspaces`` (US-2); this script is
+for seeding test data without signing in. Each command prints the id it created.
+API access still requires signing in normally.
 """
 
 import argparse
@@ -31,7 +31,7 @@ from sqlalchemy.exc import IntegrityError
 from app.db.postgres import dispose_engine, get_session_factory
 from app.models import Role, User, Workspace, WorkspaceMembership
 from app.security import hash_password
-from app.services.workspaces import create_workspace
+from app.services.workspaces import WorkspaceNameTaken, create_workspace
 
 TRIAL_PASSWORD = "local-development-password"
 
@@ -250,6 +250,9 @@ def main() -> None:
             "conflicts with rows already in the database — "
             "run `--reset` first, then re-run this."
         )
+    except WorkspaceNameTaken as e:
+        session.rollback()
+        raise SystemExit(f"that owner already has a workspace named '{e}'")
     finally:
         session.close()
         dispose_engine()
