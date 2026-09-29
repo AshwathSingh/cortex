@@ -64,11 +64,16 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
             >
               {workspace.name}
             </h1>
+            {workspace.description ? (
+              <p className="mt-5 max-w-2xl whitespace-pre-line text-base leading-7 text-muted">
+                {workspace.description}
+              </p>
+            ) : null}
             <p className="mt-4 text-sm text-subtle">
               Created {new Date(workspace.created_at).toLocaleDateString()}
             </p>
             <Link
-              href="/ingest"
+              href={`/workspaces/${workspaceId}/ingest`}
               className="mt-10 inline-flex min-h-11 items-center rounded-control bg-accent px-5 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover"
             >
               Add a GitHub repository

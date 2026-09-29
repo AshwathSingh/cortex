@@ -30,8 +30,16 @@ class RateLimitExceeded(GitHubAPIError):
 _SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
+def normalize_repo_url(url: str) -> str:
+    """Add ``https://`` when no scheme is given, so ``github.com/owner/repo`` works."""
+    url = url.strip()
+    if url and "://" not in url:
+        url = f"https://{url}"
+    return url
+
+
 def parse_repo_url(url: str) -> tuple[str, str]:
-    parsed = urlparse(url.strip())
+    parsed = urlparse(normalize_repo_url(url))
     if parsed.scheme not in ("http", "https") or parsed.netloc.lower() not in (
         "github.com",
         "www.github.com",
