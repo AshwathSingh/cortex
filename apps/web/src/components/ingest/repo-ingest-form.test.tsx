@@ -19,9 +19,11 @@ function mockFetch(
   return fn;
 }
 
+const WORKSPACE_ID = "ccccccc0-0000-4000-8000-00000000c0de";
+
 async function submit(url: string) {
   const user = userEvent.setup();
-  render(<RepoIngestForm />);
+  render(<RepoIngestForm workspaceId={WORKSPACE_ID} />);
   if (url) await user.type(screen.getByLabelText(/repository url/i), url);
   await user.click(screen.getByRole("button", { name: /ingest repository/i }));
 }
@@ -29,7 +31,7 @@ async function submit(url: string) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("RepoIngestForm", () => {
-  it("posts the URL and shows the counts on success", async () => {
+  it("posts the URL and the workspace, and shows the counts on success", async () => {
     const fetchFn = mockFetch(200, { repo: "o/r", pull_requests: 3, issues: 2 });
     await submit("https://github.com/o/r");
 
@@ -38,8 +40,10 @@ describe("RepoIngestForm", () => {
     );
     const [url, init] = fetchFn.mock.calls[0];
     expect(url).toBe("/api/ingest/github");
+    // Without workspace_id the backend 422s and nothing is scoped to a workspace.
     expect(JSON.parse(init.body)).toEqual({
       repo_url: "https://github.com/o/r",
+      workspace_id: WORKSPACE_ID,
     });
   });
 

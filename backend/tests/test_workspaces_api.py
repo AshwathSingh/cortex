@@ -1,4 +1,20 @@
-"""US-2 (T-2.4): POST /api/workspaces against its acceptance criteria.
+"""T-43.3: workspace loading and authorisation checks.
+
+Covers the two US-41 endpoints:
+
+    GET /api/workspaces         the Workspace Selector's list
+    GET /api/workspaces/{id}    opening one workspace
+
+No Docker and no network: the fixture runs the real queries against an
+in-memory database, the same approach `test_auth_api.py` uses. `get_session`
+is the only dependency overridden -- `get_current_user` is left alone, because
+who may see which workspace is exactly what these tests check.
+
+Callers authenticate the way the app really does, with a session cookie backed
+by a `user_sessions` row, so an expired session or a deactivated account is
+covered here too.
+"""
+US-2 (T-2.4): POST /api/workspaces against its acceptance criteria.
 
 Runs on in-memory SQLite like ``test_auth_api.py``; no Postgres needed.
 """

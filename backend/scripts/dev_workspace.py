@@ -120,16 +120,17 @@ def _trial(session, args: argparse.Namespace) -> None:
 
     Two users, four workspaces, five memberships.
     """
+    # EmailStr rejects .test domains, so logins would 422.
     owner = User(
         github_id=900001,
         display_name="Aryan Jumani",
-        email="trial-owner@cortex.test",
+        email="trial-owner@example.com",
         password_hash=hash_password(TRIAL_PASSWORD),
     )
     outsider = User(
         github_id=900002,
         display_name="Outsider",
-        email="trial-outsider@cortex.test",
+        email="trial-outsider@example.com",
         password_hash=hash_password(TRIAL_PASSWORD),
     )
     session.add_all([owner, outsider])
