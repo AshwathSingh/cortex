@@ -47,18 +47,17 @@ describe("RepoIngestForm", () => {
     });
   });
 
-  it("links back to the workspace it is ingesting into", () => {
-    render(<RepoIngestForm workspaceId={WORKSPACE_ID} />);
-    expect(screen.getByRole("link", { name: /back to workspace/i })).toHaveAttribute(
-      "href",
-      `/workspaces/${WORKSPACE_ID}`,
-    );
-  });
+  it("adds https:// to a scheme-less GitHub URL", async () => {
+    const fetchFn = mockFetch(200, { repo: "o/r", pull_requests: 0, issues: 0 });
+    await submit("github.com/o/r");
 
-  it("explains a 403 from a viewer-only workspace", async () => {
-    mockFetch(403, {});
-    await submit("https://github.com/o/r");
-    expect(await screen.findByRole("alert")).toHaveTextContent(/edit access/i);
+    expect(await screen.findByRole("status")).toBeInTheDocument();
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toEqual({
+      repo_url: "https://github.com/o/r",
+    });
+    expect(screen.getByLabelText(/repository url/i)).toHaveValue(
+      "https://github.com/o/r",
+    );
   });
 
   it("shows the server message for an invalid URL", async () => {

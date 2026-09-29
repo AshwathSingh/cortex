@@ -15,6 +15,12 @@ const fallbackMessages: Record<number, string> = {
   503: "Graph database is unavailable.",
 };
 
+/** Add `https://` when no scheme is given, so `github.com/owner/repo` works. */
+export function normalizeRepoUrl(input: string): string {
+  const url = input.trim();
+  return url && !url.includes("://") ? `https://${url}` : url;
+}
+
 type Status =
   | { kind: "idle" }
   | { kind: "loading" }
@@ -27,11 +33,12 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const url = repoUrl.trim();
+    const url = normalizeRepoUrl(repoUrl);
     if (!url) {
       setStatus({ kind: "error", message: "Enter a GitHub repository URL." });
       return;
     }
+    setRepoUrl(url);
 
     setStatus({ kind: "loading" });
     try {
@@ -83,10 +90,11 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
         </label>
         <input
           id="repo-url"
-          type="url"
+          type="text"
+          inputMode="url"
           value={repoUrl}
           onChange={(event) => setRepoUrl(event.target.value)}
-          placeholder="https://github.com/owner/repo"
+          placeholder="github.com/owner/repo"
           disabled={isLoading}
           autoComplete="off"
           spellCheck={false}
