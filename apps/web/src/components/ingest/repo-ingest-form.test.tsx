@@ -54,6 +54,7 @@ describe("RepoIngestForm", () => {
     expect(await screen.findByRole("status")).toBeInTheDocument();
     expect(JSON.parse(fetchFn.mock.calls[0][1].body)).toEqual({
       repo_url: "https://github.com/o/r",
+      workspace_id: WORKSPACE_ID,
     });
     expect(screen.getByLabelText(/repository url/i)).toHaveValue(
       "https://github.com/o/r",
