@@ -18,17 +18,25 @@ const WORKSPACE = {
 function mockFetch(status = 200, body: unknown = WORKSPACE) {
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { "Content-Type": "application/json" },
-      }),
+    vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
     ),
   );
 }
 
-beforeEach(() => router.replace.mockReset());
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  router.replace.mockReset();
+  window.sessionStorage.clear();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("WorkspaceDetail", () => {
   it("loads the workspace into the Cortex composer", async () => {
@@ -36,8 +44,9 @@ describe("WorkspaceDetail", () => {
 
     render(<WorkspaceDetail workspaceId={WORKSPACE.id} />);
 
-    expect(await screen.findByRole("heading", { name: /what should we explore/i }))
-      .toHaveTextContent(WORKSPACE.name);
+    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent(
+      WORKSPACE.name,
+    );
     expect(
       screen.getByRole("link", {
         name: `Switch workspace. Current workspace: ${WORKSPACE.name}`,
@@ -47,6 +56,27 @@ describe("WorkspaceDetail", () => {
     expect(screen.getByRole("button", { name: /send question/i })).toHaveAttribute(
       "aria-disabled",
       "true",
+    );
+  });
+
+  it("uses a different heading when a new page session begins", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    mockFetch();
+
+    const firstPage = render(<WorkspaceDetail workspaceId={WORKSPACE.id} />);
+    await screen.findByRole("link", {
+      name: `Switch workspace. Current workspace: ${WORKSPACE.name}`,
+    });
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      "What should we explore in",
+    );
+    firstPage.unmount();
+
+    render(<WorkspaceDetail workspaceId={WORKSPACE.id} />);
+    await vi.waitFor(() =>
+      expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+        "What would you like to understand about",
+      ),
     );
   });
 

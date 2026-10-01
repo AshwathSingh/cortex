@@ -15,6 +15,7 @@
   --cortex-accent: #3b67dc;
   --cortex-accent-hover: #315bc9;
   --cortex-accent-bright: #78a0ff;
+  --cortex-composer-background: #0d1016;
   --cortex-page-gutter: clamp(1.25rem, 5vw, 5.75rem);
   --cortex-content-width: 87.5rem;
 
@@ -53,6 +54,7 @@
   --color-accent: var(--cortex-accent);
   --color-accent-hover: var(--cortex-accent-hover);
   --color-accent-bright: var(--cortex-accent-bright);
+  --color-composer: var(--cortex-composer-background);
   --color-role-owner: var(--cortex-role-owner);
   --color-role-editor: var(--cortex-role-editor);
   --color-role-viewer: var(--cortex-role-viewer);
@@ -92,8 +94,8 @@ body {
 
 .cortex-composer-input:focus,
 .cortex-composer-input:focus-visible {
-  outline: none !important;
-  outline-offset: 0 !important;
+  outline: none;
+  outline-offset: 0;
 }
 
 ::selection {

@@ -15,6 +15,51 @@ const promptSuggestions = [
   "Summarize recent decisions",
 ];
 
+const headingVariants = [
+  ["What should we explore in", "?"],
+  ["What would you like to understand about", "?"],
+  ["What should Cortex investigate in", "?"],
+  ["Where should we begin in", "?"],
+  ["What needs a closer look in", "?"],
+  ["What question should we answer about", "?"],
+  ["What should we trace through", "?"],
+] as const;
+
+function chooseHeadingVariant(workspaceId: string) {
+  const storageKey = `cortex:home-heading:${workspaceId}`;
+  let previousVariant: number | null = null;
+
+  try {
+    const storedValue = window.sessionStorage.getItem(storageKey);
+    const storedVariant = storedValue === null ? Number.NaN : Number(storedValue);
+    if (
+      Number.isInteger(storedVariant) &&
+      storedVariant >= 0 &&
+      storedVariant < headingVariants.length
+    ) {
+      previousVariant = storedVariant;
+    }
+  } catch {
+    // Browser storage is optional; the heading can still vary without it.
+  }
+
+  const availableVariants =
+    previousVariant === null ? headingVariants.length : headingVariants.length - 1;
+  const randomOffset = Math.floor(Math.random() * availableVariants);
+  const nextVariant =
+    previousVariant === null
+      ? randomOffset
+      : (previousVariant + 1 + randomOffset) % headingVariants.length;
+
+  try {
+    window.sessionStorage.setItem(storageKey, String(nextVariant));
+  } catch {
+    // Ignore unavailable browser storage.
+  }
+
+  return nextVariant;
+}
+
 function ArrowUpIcon() {
   return (
     <svg
@@ -56,6 +101,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const router = useRouter();
   const promptInput = useRef<HTMLTextAreaElement>(null);
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [headingVariantIndex, setHeadingVariantIndex] = useState(0);
   const [prompt, setPrompt] = useState("");
   const [submissionNotice, setSubmissionNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +115,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
           `/api/workspaces/${workspaceId}`,
           { signal: controller.signal },
         );
+        setHeadingVariantIndex(chooseHeadingVariant(workspaceId));
         setWorkspace(result);
       } catch (requestError) {
         if (controller.signal.aborted) return;
@@ -103,6 +150,8 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
     );
   }
 
+  const [headingPrefix, headingSuffix] = headingVariants[headingVariantIndex];
+
   return (
     <main className="min-h-screen overflow-hidden">
       <div className="mx-auto flex min-h-screen w-full max-w-[76rem] flex-col px-[var(--cortex-page-gutter)] pb-10">
@@ -117,18 +166,18 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
               id="ask-cortex-heading"
               className="text-center text-[clamp(1.65rem,3vw,2.25rem)] font-medium leading-tight tracking-[-0.035em] text-foreground"
             >
-              What should we explore in{" "}
+              {headingPrefix}{" "}
               <span className="decoration-border decoration-dotted underline underline-offset-4">
                 {workspace?.name ?? "this workspace"}
               </span>
-              ?
+              {headingSuffix}
             </h1>
             <div className="mt-9">
               <form
                 onSubmit={submitQuestion}
                 aria-label="Ask Cortex"
                 autoComplete="off"
-                className="relative z-10 overflow-hidden rounded-[1.125rem] border border-border/30 bg-[#0d1016] shadow-[0_20px_60px_rgb(0_0_0/28%)] transition-[border-color,box-shadow] duration-200 focus-within:border-border/65 focus-within:shadow-[0_22px_70px_rgb(0_0_0/34%)]"
+                className="relative z-10 overflow-hidden rounded-[1.125rem] border border-border/30 bg-composer shadow-[0_20px_60px_rgb(0_0_0/28%)] transition-[border-color,box-shadow] duration-200 focus-within:border-border/65 focus-within:shadow-[0_22px_70px_rgb(0_0_0/34%)]"
               >
                 <label htmlFor="cortex-question" className="sr-only">
                   Ask Cortex about this workspace
