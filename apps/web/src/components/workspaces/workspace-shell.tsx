@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import {
@@ -16,10 +16,13 @@ import {
   ReviewIcon,
   SourcesIcon,
 } from "@/components/navigation/sidebar-icons";
+import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { AuthenticatedUser, WorkspaceSummary } from "@/lib/api-types";
 import { rememberLastWorkspace } from "@/lib/last-workspace";
 import { routes } from "@/lib/routes";
+
+import { WorkspaceProvider } from "./workspace-context";
 
 export type SidebarAppearance = {
   width?: string;
@@ -72,15 +75,21 @@ export function WorkspaceShell({
 }: WorkspaceShellProps) {
   const activePath = usePathname();
   const router = useRouter();
-  const [workspaceName, setWorkspaceName] = useState("Workspace");
+  const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
 
-    async function loadWorkspaceName() {
+    async function loadWorkspaceData() {
+      setWorkspace(null);
+      setError(null);
+      setIsLoading(true);
+
       try {
-        const [workspace, currentUser] = await Promise.all([
+        const [currentWorkspace, currentUser] = await Promise.all([
           apiRequest<WorkspaceSummary>(`/api/workspaces/${workspaceId}`, {
             signal: controller.signal,
           }),
@@ -88,20 +97,35 @@ export function WorkspaceShell({
             signal: controller.signal,
           }),
         ]);
-        setWorkspaceName(workspace.name);
+        setWorkspace(currentWorkspace);
         setUser(currentUser);
-        rememberLastWorkspace(currentUser.id, workspace.id);
+        rememberLastWorkspace(currentUser.id, currentWorkspace.id);
       } catch (requestError) {
         if (controller.signal.aborted) return;
         if (requestError instanceof ApiError && requestError.status === 401) {
           router.replace("/login");
+          return;
+        }
+        setError(
+          requestError instanceof ApiError
+            ? requestError.message
+            : "Unable to load this workspace.",
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
         }
       }
     }
 
-    void loadWorkspaceName();
+    void loadWorkspaceData();
     return () => controller.abort();
   }, [router, workspaceId]);
+
+  const workspaceContext = useMemo(
+    () => ({ workspaceId, workspace, user, isLoading, error }),
+    [error, isLoading, user, workspace, workspaceId],
+  );
 
   const primaryLinks: SidebarLink[] = [
     {
@@ -146,25 +170,38 @@ export function WorkspaceShell({
   ];
 
   return (
-    <div
-      data-workspace-id={workspaceId}
-      style={sidebarStyles(sidebarAppearance)}
-      className="grid min-h-screen min-w-[64rem] grid-cols-[var(--cortex-sidebar-width)_minmax(0,1fr)]"
-    >
-      <AppSidebar
-        productLabel="Cortex"
-        workspace={{ label: workspaceName, href: routes.workspaceSelector }}
-        account={{
-          label: user?.display_name ?? user?.email ?? "Your account",
-          detail: user?.display_name ? user.email : "Personal settings",
-          href: routes.account,
-        }}
-        activePath={activePath}
-        primaryLinks={primaryLinks}
-        secondaryLinks={secondaryLinks}
-        utilityLinks={utilityLinks}
-      />
-      <div className="min-w-0">{children}</div>
-    </div>
+    <WorkspaceProvider value={workspaceContext}>
+      <div
+        data-workspace-id={workspaceId}
+        style={sidebarStyles(sidebarAppearance)}
+        className="grid min-h-screen min-w-[64rem] grid-cols-[var(--cortex-sidebar-width)_minmax(0,1fr)]"
+      >
+        <AppSidebar
+          productLabel="Cortex"
+          workspace={{
+            label: workspace?.name ?? "Workspace",
+            href: routes.workspaceSelector,
+          }}
+          account={{
+            label: user?.display_name ?? user?.email ?? "Your account",
+            detail: user?.display_name ? user.email : "Personal settings",
+            href: routes.account,
+          }}
+          activePath={activePath}
+          primaryLinks={primaryLinks}
+          secondaryLinks={secondaryLinks}
+          utilityLinks={utilityLinks}
+        />
+        <div className="min-w-0">
+          {error ? (
+            <main className="min-h-screen px-[var(--cortex-page-gutter)] py-8">
+              <FeedbackAlert message={error} />
+            </main>
+          ) : (
+            children
+          )}
+        </div>
+      </div>
+    </WorkspaceProvider>
   );
 }

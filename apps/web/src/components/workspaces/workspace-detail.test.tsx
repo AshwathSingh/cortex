@@ -3,9 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceDetail } from "@/components/workspaces/workspace-detail";
-
-const router = { replace: vi.fn() };
-vi.mock("next/navigation", () => ({ useRouter: () => router }));
+import {
+  WorkspaceProvider,
+  type WorkspaceContextValue,
+} from "@/components/workspaces/workspace-context";
+import type { WorkspaceSummary } from "@/lib/api-types";
 
 const WORKSPACE = {
   id: "workspace-1",
@@ -13,38 +15,39 @@ const WORKSPACE = {
   description: null,
   role: "OWNER",
   created_at: "2026-09-28T00:00:00Z",
-};
+} satisfies WorkspaceSummary;
 
-function mockFetch(status = 200, body: unknown = WORKSPACE) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn().mockImplementation(() =>
-      Promise.resolve(
-        new Response(JSON.stringify(body), {
-          status,
-          headers: { "Content-Type": "application/json" },
-        }),
-      ),
-    ),
+function renderWorkspaceDetail(
+  overrides: Partial<WorkspaceContextValue> = {},
+) {
+  return render(
+    <WorkspaceProvider
+      value={{
+        workspaceId: WORKSPACE.id,
+        workspace: WORKSPACE,
+        user: null,
+        isLoading: false,
+        error: null,
+        ...overrides,
+      }}
+    >
+      <WorkspaceDetail workspaceId={WORKSPACE.id} />
+    </WorkspaceProvider>,
   );
 }
 
 beforeEach(() => {
-  router.replace.mockReset();
   window.sessionStorage.clear();
 });
 afterEach(() => {
   vi.restoreAllMocks();
-  vi.unstubAllGlobals();
 });
 
 describe("WorkspaceDetail", () => {
-  it("loads the workspace into the Cortex composer", async () => {
-    mockFetch();
+  it("renders the shared workspace in the Cortex composer", () => {
+    renderWorkspaceDetail();
 
-    render(<WorkspaceDetail workspaceId={WORKSPACE.id} />);
-
-    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent(
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       WORKSPACE.name,
     );
     expect(
@@ -59,20 +62,21 @@ describe("WorkspaceDetail", () => {
     );
   });
 
-  it("uses a different heading when a new page session begins", async () => {
+  it("uses a different heading when the home view is remounted", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
-    mockFetch();
 
-    const firstPage = render(<WorkspaceDetail workspaceId={WORKSPACE.id} />);
-    await screen.findByRole("link", {
-      name: `Switch workspace. Current workspace: ${WORKSPACE.name}`,
-    });
+    const firstPage = renderWorkspaceDetail();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       "What should we explore in",
     );
+    await vi.waitFor(() =>
+      expect(
+        window.sessionStorage.getItem(`cortex:home-heading:${WORKSPACE.id}`),
+      ).toBe("0"),
+    );
     firstPage.unmount();
 
-    render(<WorkspaceDetail workspaceId={WORKSPACE.id} />);
+    renderWorkspaceDetail();
     await vi.waitFor(() =>
       expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
         "What would you like to understand about",
@@ -81,9 +85,8 @@ describe("WorkspaceDetail", () => {
   });
 
   it("places a suggested question into the composer", async () => {
-    mockFetch();
     const user = userEvent.setup();
-    render(<WorkspaceDetail workspaceId={WORKSPACE.id} />);
+    renderWorkspaceDetail();
 
     await user.click(
       screen.getByRole("button", { name: "Show open contradictions" }),
@@ -99,9 +102,8 @@ describe("WorkspaceDetail", () => {
   });
 
   it("explains that assistant responses are not connected yet", async () => {
-    mockFetch();
     const user = userEvent.setup();
-    render(<WorkspaceDetail workspaceId={WORKSPACE.id} />);
+    renderWorkspaceDetail();
 
     await user.type(
       screen.getByLabelText(/ask cortex about this workspace/i),
@@ -110,13 +112,5 @@ describe("WorkspaceDetail", () => {
     await user.click(screen.getByRole("button", { name: /send question/i }));
 
     expect(screen.getByText(/assistant service is connected/i)).toBeInTheDocument();
-  });
-
-  it("returns expired sessions to login", async () => {
-    mockFetch(401, { detail: "Not authenticated" });
-
-    render(<WorkspaceDetail workspaceId={WORKSPACE.id} />);
-
-    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
   });
 });
