@@ -34,6 +34,11 @@
   --cortex-sidebar-icon: #78849a;
   --cortex-sidebar-item-radius: 0.625rem;
   --cortex-sidebar-logo-background: rgb(18 29 46 / 68%);
+
+  /* Red and green are reserved for source sync status. */
+  --cortex-role-owner: #78a0ff;
+  --cortex-role-editor: #b08cff;
+  --cortex-role-viewer: #e0a86a;
 }
 
 @theme inline {
@@ -48,6 +53,9 @@
   --color-accent: var(--cortex-accent);
   --color-accent-hover: var(--cortex-accent-hover);
   --color-accent-bright: var(--cortex-accent-bright);
+  --color-role-owner: var(--cortex-role-owner);
+  --color-role-editor: var(--cortex-role-editor);
+  --color-role-viewer: var(--cortex-role-viewer);
   --font-sans: var(--font-geist-sans);
   --radius-panel: 1.5rem;
   --radius-control: 0.875rem;

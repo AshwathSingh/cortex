@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
+import { RoleBadge } from "@/components/workspaces/role-badge";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { AuthenticatedUser, WorkspaceSummary } from "@/lib/api-types";
 import {
@@ -173,9 +174,7 @@ export function WorkspaceSelector() {
                   <h2 className="text-xl font-semibold text-foreground">
                     {workspace.name}
                   </h2>
-                  <span className="rounded-full border border-border/40 px-2.5 py-1 text-[0.65rem] font-semibold tracking-[0.08em] text-accent-bright">
-                    {workspace.role}
-                  </span>
+                  <RoleBadge role={workspace.role} />
                 </div>
                 {workspace.description ? (
                   <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted">

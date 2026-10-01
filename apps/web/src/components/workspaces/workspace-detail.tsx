@@ -123,7 +123,6 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
               </span>
               ?
             </h1>
-
             <div className="mt-9">
               <form
                 onSubmit={submitQuestion}
@@ -151,7 +150,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
                 <div className="flex min-h-13 items-center justify-between gap-4 px-3.5 pb-3">
                   <div className="flex min-w-0 items-center gap-1">
                     <Link
-                      href="/ingest"
+                      href={routes.workspace.ingest(workspaceId)}
                       aria-label="Add source"
                       title="Add source"
                       className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs font-medium text-muted transition-colors hover:bg-surface/70 hover:text-foreground"

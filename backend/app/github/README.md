@@ -111,26 +111,59 @@ additionally have `merged_at`, `head`, and `base`.
 
 ## HTTP endpoint (T-7.5)
 
+Requires an authenticated session cookie and **OWNER or EDITOR** on the target
+workspace — ingestion writes nodes, so a VIEWER cannot trigger it.
+
 ```
 cd backend && uvicorn app.main:app --reload
 curl -X POST localhost:8000/api/ingest/github \
   -H 'Content-Type: application/json' \
-  -d '{"repo_url": "https://github.com/octocat/Hello-World"}'
+  -b 'cortex_session=<token>' \
+  -d '{"repo_url": "https://github.com/octocat/Hello-World",
+       "workspace_id": "3f1c…"}'
 # {"repo":"octocat/Hello-World","pull_requests":N,"issues":M}
 ```
 
 | Status | Cause |
 |---|---|
 | 200 | Fetched, validated and written. Body: `repo`, `pull_requests`, `issues` counts. |
-| 422 | Invalid repo URL or missing `repo_url`. Nothing fetched or written. |
+| 401 | No session cookie, or an expired/invalid one. |
+| 403 | Caller holds no role on the workspace, or only VIEWER. Same 403 for a workspace that doesn't exist, so existence isn't leaked. |
+| 422 | Invalid repo URL, or missing/malformed `repo_url` or `workspace_id`. Nothing fetched or written. |
 | 404 | Repo not found or not accessible. |
 | 429 | GitHub rate limit; `Retry-After` header set. |
 | 502 | GitHub error or unexpected payload shape. Nothing written. |
 | 503 | Neo4j unavailable. |
 
-The GitHub token is optional server config (`GITHUB_TOKEN` in `.env`) and is never
-read from the request or returned. Interactive docs: http://localhost:8000/docs.
-The call is synchronous: it returns after the whole repo is ingested.
+Authorization is checked **before** the URL is parsed and before any GitHub call,
+so the endpoint can't be used to probe repositories or spend the server's rate
+limit. The GitHub token is optional server config (`GITHUB_TOKEN` in `.env`) and is
+never read from the request or returned. Interactive docs:
+http://localhost:8000/docs. The call is synchronous: it returns after the whole
+repo is ingested.
+
+The frontend reaches this from `/workspaces/[workspaceId]/ingest`, which supplies
+`workspace_id` from the route.
+
+## Workspace scoping
+
+Every node written carries a `workspace_id` property, and it is part of the MERGE
+key for all three labels, so `(id, workspace_id)` — not `id` — identifies a node.
+Two workspaces ingesting the same repo therefore get **separate copies** rather
+than fighting over one shared node, and the `AUTHORED` MATCH is
+workspace-qualified so an edge can never bind to another workspace's author. This
+is what US-14's Graph Explorer filters on.
+
+`app.github.mapper.normalise_workspace_id` rejects a missing, blank or non-UUID
+workspace id before any statement is built, and canonicalises the UUID so two
+spellings of one id can't create duplicate nodes. That guard matters because
+Neo4j Community has no existence constraints — the database cannot reject an
+unscoped node itself, and an unscoped node is invisible to every workspace query.
+
+Nodes ingested before this change carry no `workspace_id`. They cannot be
+backfilled (nothing records which workspace a repo belonged to), so wipe the
+graph and re-ingest: `docker compose down -v`, then
+`python -m scripts.init_graph_schema`.
 
 ## Running the tests
 
@@ -153,7 +186,12 @@ Tests use `httpx.MockTransport`, so no network or token is needed.
   error) that the frontend form polls. Until then, set `GITHUB_TOKEN` and ingest small
   repos.
 - Auto-populating new issues during a live session (US-7 acceptance criterion).
-- Workspace scoping of ingested nodes.
+- **Persisting the connected source.** Ingestion is still fire-and-forget: nothing
+  records that a repo was connected to a workspace, so there is no repo list, no
+  re-sync and no `last_synced_at`. US-10's `DataSource` table (carrying
+  `workspace_id`) is the intended home. Deliberately deferred — no current
+  consumer reads it, and the request shape above already takes `workspace_id`, so
+  adding it later needs no API change.
 - Token handling: `GITHUB_CLIENT_ID`/`SECRET` are in `.env.example`, but the
   client takes a plain token argument. OAuth (US-1) must supply it, and tokens
   must be decrypted only in-process and never returned in API responses.

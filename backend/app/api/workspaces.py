@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 from sqlalchemy import select
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
 from app.models import Role, Workspace, WorkspaceMembership
 from app.services.workspaces import WorkspaceNameTaken, create_workspace
 
@@ -109,20 +109,5 @@ def get_workspace(
         to return the same 403 (to prevent anyone knowing which workspaces exist and
     which don't)
     """
-    row = session.execute(
-        select(Workspace, WorkspaceMembership.role)
-        .join(WorkspaceMembership, WorkspaceMembership.workspace_id == Workspace.id)
-        .where(
-            WorkspaceMembership.workspace_id == workspace_id,
-            WorkspaceMembership.user_id == user.id,
-        )
-    ).first()
-
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this workspace",
-        )
-
-    workspace, role = row
+    workspace, role = load_workspace_for_user(session, user, workspace_id)
     return _summarise(workspace, role)
