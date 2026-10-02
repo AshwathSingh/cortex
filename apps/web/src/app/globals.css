@@ -16,6 +16,14 @@
   --cortex-accent-hover: #315bc9;
   --cortex-accent-bright: #78a0ff;
   --cortex-composer-background: #0d1016;
+  --cortex-graph-author: #78a0ff;
+  --cortex-graph-pull-request: #7ddfa0;
+  --cortex-graph-issue: #e0a86a;
+  --cortex-graph-edge: rgb(120 160 255 / 22%);
+  --cortex-graph-edge-strong: rgb(120 160 255 / 38%);
+  --cortex-graph-label: #c7cedd;
+  --cortex-graph-label-muted: #8b94a6;
+  --cortex-graph-divider: rgb(98 136 202 / 16%);
   --cortex-page-gutter: clamp(1.25rem, 5vw, 5.75rem);
   --cortex-content-width: 87.5rem;
 
@@ -96,6 +104,14 @@ body {
 .cortex-composer-input:focus-visible {
   outline: none;
   outline-offset: 0;
+}
+
+.graph-scene {
+  background-color: rgb(8 13 22 / 42%);
+  background-image:
+    radial-gradient(circle, rgb(120 160 255 / 9%) 1px, transparent 1px),
+    radial-gradient(circle at 50% 42%, rgb(32 67 132 / 11%), transparent 52%);
+  background-size: 24px 24px, 100% 100%;
 }
 
 ::selection {

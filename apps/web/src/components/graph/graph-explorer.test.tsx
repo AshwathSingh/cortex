@@ -180,6 +180,31 @@ describe("GraphCanvas", () => {
     );
   });
 
+  it("remeasures when its container resizes", () => {
+    stubCanvas();
+    let resize: (() => void) | undefined;
+    const observe = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resize = callback;
+        }
+        observe = observe;
+        disconnect = vi.fn();
+      },
+    );
+    render(<GraphCanvas nodes={NODES} edges={EDGES} />);
+    const canvas = screen.getByRole("img") as HTMLCanvasElement;
+    const parent = canvas.parentElement as HTMLElement;
+    Object.defineProperty(parent, "clientWidth", { configurable: true, value: 720 });
+
+    resize?.();
+
+    expect(observe).toHaveBeenCalledWith(parent);
+    expect(canvas.style.width).toBe("720px");
+  });
+
   it("gives each existing node type its own colour", () => {
     const colours = ["Author", "PullRequest", "Issue"].map(nodeColour);
     expect(new Set(colours).size).toBe(3);
@@ -223,7 +248,7 @@ describe("GraphExplorer", () => {
     render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
 
     expect(
-      await screen.findByText(/nothing in this workspace yet/i),
+      await screen.findByText(/your graph starts with a source/i),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /add a github repository/i }),
@@ -237,7 +262,7 @@ describe("GraphExplorer", () => {
     render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
 
     expect(await screen.findByRole("status")).toHaveTextContent(
-      /larger than the display limit/i,
+      /display limit reached/i,
     );
   });
 
@@ -266,13 +291,12 @@ describe("GraphExplorer", () => {
     );
   });
 
-  it("links back to the workspace", async () => {
+  it("uses the workspace sidebar for navigation instead of a duplicate back link", async () => {
     stubCanvas();
     mockFetch(200, graph());
     render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
 
-    expect(
-      await screen.findByRole("link", { name: /back to workspace/i }),
-    ).toHaveAttribute("href", `/workspaces/${WORKSPACE_ID}`);
+    expect(await screen.findByRole("heading", { name: "Graph" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /back to workspace/i })).not.toBeInTheDocument();
   });
 });
