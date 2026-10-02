@@ -175,7 +175,7 @@ export function WorkspaceShell({
           account={{
             label: user?.display_name ?? user?.email ?? "Your account",
             detail: user?.display_name ? user.email : "Personal settings",
-            href: routes.account,
+            href: routes.workspace.account(workspaceId),
           }}
           activePath={activePath}
           primaryLinks={primaryLinks}

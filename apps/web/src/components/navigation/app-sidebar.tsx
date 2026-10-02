@@ -187,6 +187,7 @@ export function AppSidebar({
 
           <Link
             href={account.href}
+            aria-label={`Account: ${account.label}`}
             className="group/account mt-2 flex min-h-12 items-center gap-3 rounded-[var(--cortex-sidebar-item-radius)] px-2.5 transition-colors duration-150 hover:bg-[var(--cortex-sidebar-hover)] active:bg-[var(--cortex-sidebar-hover)]"
           >
             <span className="grid size-8 shrink-0 place-items-center rounded-full border border-[var(--cortex-sidebar-border)] bg-surface/70 font-mono text-xs font-semibold text-foreground">

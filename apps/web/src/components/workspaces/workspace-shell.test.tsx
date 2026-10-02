@@ -78,6 +78,9 @@ describe("WorkspaceShell", () => {
       "/api/auth/me",
       expect.objectContaining({ credentials: "same-origin" }),
     );
+    expect(
+      screen.getByRole("link", { name: `Account: ${USER.display_name}` }),
+    ).toHaveAttribute("href", `/workspaces/${WORKSPACE.id}/account`);
   });
 
   it("returns expired sessions to login", async () => {

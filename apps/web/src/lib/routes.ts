@@ -8,6 +8,7 @@ export const routes = {
   workspaceSelector: "/workspaces?select=1",
   workspace: {
     home: (workspaceId: string) => workspacePath(workspaceId),
+    account: (workspaceId: string) => `${workspacePath(workspaceId)}/account`,
     graph: (workspaceId: string) => `${workspacePath(workspaceId)}/graph`,
     review: (workspaceId: string) => `${workspacePath(workspaceId)}/review`,
     sources: (workspaceId: string) => `${workspacePath(workspaceId)}/sources`,

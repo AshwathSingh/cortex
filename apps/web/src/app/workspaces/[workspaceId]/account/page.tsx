@@ -1,13 +1,12 @@
 import type { Metadata } from "next";
 
 import { AccountSettings } from "@/components/account/account-settings";
-import { routes } from "@/lib/routes";
 
 export const metadata: Metadata = {
   title: "Account | Cortex",
   description: "Manage your Cortex account.",
 };
 
-export default function AccountPage() {
-  return <AccountSettings backHref={routes.workspaces} backLabel="All workspaces" />;
+export default function WorkspaceAccountPage() {
+  return <AccountSettings />;
 }
