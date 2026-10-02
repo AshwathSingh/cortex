@@ -4,7 +4,6 @@ function workspacePath(workspaceId: string) {
 
 export const routes = {
   account: "/account",
-  appearance: "/account#appearance",
   workspaces: "/workspaces",
   workspaceSelector: "/workspaces?select=1",
   workspace: {

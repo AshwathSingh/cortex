@@ -9,7 +9,6 @@ import {
   type SidebarLink,
 } from "@/components/navigation/app-sidebar";
 import {
-  AppearanceIcon,
   GraphIcon,
   HomeIcon,
   ManageIcon,
@@ -160,15 +159,6 @@ export function WorkspaceShell({
     },
   ];
 
-  const utilityLinks = [
-    {
-      label: "Appearance",
-      href: routes.appearance,
-      icon: AppearanceIcon,
-      exact: true,
-    },
-  ];
-
   return (
     <WorkspaceProvider value={workspaceContext}>
       <div
@@ -190,7 +180,6 @@ export function WorkspaceShell({
           activePath={activePath}
           primaryLinks={primaryLinks}
           secondaryLinks={secondaryLinks}
-          utilityLinks={utilityLinks}
         />
         <div className="min-w-0">
           {error ? (
