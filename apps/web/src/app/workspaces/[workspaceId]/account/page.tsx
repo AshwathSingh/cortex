@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { AccountSettings } from "@/components/account/account-settings";
+import { WorkspaceAccountSettings } from "@/components/account/workspace-account-settings";
 
 export const metadata: Metadata = {
   title: "Account | Cortex",
@@ -8,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function WorkspaceAccountPage() {
-  return <AccountSettings />;
+  return <WorkspaceAccountSettings />;
 }

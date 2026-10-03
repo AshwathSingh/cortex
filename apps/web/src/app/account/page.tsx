@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 
-import { AccountSettings } from "@/components/account/account-settings";
-import { routes } from "@/lib/routes";
+import { StandaloneAccountSettings } from "@/components/account/standalone-account-settings";
 
 export const metadata: Metadata = {
   title: "Account | Cortex",
@@ -9,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function AccountPage() {
-  return <AccountSettings backHref={routes.workspaces} backLabel="All workspaces" />;
+  return <StandaloneAccountSettings />;
 }
