@@ -2,8 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 
+import {
+  SettingsSection,
+  SettingsValue,
+} from "@/components/settings/settings-section";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { AuthenticatedUser } from "@/lib/api-types";
@@ -27,51 +31,6 @@ function accountInitials(user: AuthenticatedUser | null) {
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase())
       .join("") || "A"
-  );
-}
-
-function SettingsSection({
-  title,
-  description,
-  children,
-  danger = false,
-}: {
-  title: string;
-  description: string;
-  children: ReactNode;
-  danger?: boolean;
-}) {
-  const titleId = `${title.toLowerCase().replaceAll(" ", "-")}-title`;
-
-  return (
-    <section
-      aria-labelledby={titleId}
-      className={`overflow-hidden rounded-2xl border bg-surface/55 ${
-        danger ? "border-red-400/20" : "border-border/30"
-      }`}
-    >
-      <div className="border-b border-border/20 px-6 py-5">
-        <h2
-          id={titleId}
-          className="text-base font-semibold tracking-[-0.015em] text-foreground"
-        >
-          {title}
-        </h2>
-        <p className="mt-1 text-sm leading-6 text-muted">{description}</p>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-        {label}
-      </p>
-      <p className="mt-1.5 truncate text-sm text-foreground">{value}</p>
-    </div>
   );
 }
 
@@ -135,6 +94,7 @@ export function AccountSettings({
 
         <div className="mt-10 space-y-5">
           <SettingsSection
+            id="profile"
             title="Profile"
             description="The identity other members see when you collaborate."
           >
@@ -153,8 +113,8 @@ export function AccountSettings({
               </button>
             </div>
             <div className="grid gap-5 border-t border-border/20 px-6 py-5 sm:grid-cols-2">
-              <ReadOnlyField label="Display name" value={displayName} />
-              <ReadOnlyField label="Email address" value={email} />
+              <SettingsValue label="Display name" value={displayName} />
+              <SettingsValue label="Email address" value={email} />
             </div>
             <p className="border-t border-border/20 px-6 py-3 text-xs text-subtle">
               Profile editing will be enabled when account updates are connected.
@@ -162,6 +122,7 @@ export function AccountSettings({
           </SettingsSection>
 
           <SettingsSection
+            id="security"
             title="Security"
             description="Control access to your account and active session."
           >
@@ -195,6 +156,7 @@ export function AccountSettings({
           </SettingsSection>
 
           <SettingsSection
+            id="delete-account"
             title="Delete account"
             description="Permanently remove your account and personal data."
             danger
