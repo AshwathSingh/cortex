@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
-import { StandaloneAccountSettings } from "@/components/account/standalone-account-settings";
+import { routes } from "@/lib/routes";
 
 export const metadata: Metadata = {
   title: "Account | Cortex",
@@ -8,5 +9,5 @@ export const metadata: Metadata = {
 };
 
 export default function AccountPage() {
-  return <StandaloneAccountSettings />;
+  redirect(routes.workspaces);
 }

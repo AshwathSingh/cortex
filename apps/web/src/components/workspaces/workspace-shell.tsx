@@ -185,7 +185,7 @@ export function WorkspaceShell({
               detail: option.role,
               href: routes.workspace.home(option.id),
             })),
-            createHref: routes.newWorkspace,
+            createHref: routes.newWorkspaceFrom(workspaceId),
           }}
           account={{
             label: user?.display_name ?? user?.email ?? "Your account",

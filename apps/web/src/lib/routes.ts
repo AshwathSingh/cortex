@@ -3,10 +3,10 @@ function workspacePath(workspaceId: string) {
 }
 
 export const routes = {
-  account: "/account",
   workspaces: "/workspaces",
-  workspaceSelector: "/workspaces?select=1",
   newWorkspace: "/workspaces/new",
+  newWorkspaceFrom: (workspaceId: string) =>
+    `/workspaces/new?from=${encodeURIComponent(workspaceId)}`,
   workspace: {
     home: (workspaceId: string) => workspacePath(workspaceId),
     account: (workspaceId: string) => `${workspacePath(workspaceId)}/account`,

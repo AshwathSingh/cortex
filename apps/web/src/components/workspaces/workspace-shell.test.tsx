@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceDetail } from "@/components/workspaces/workspace-detail";
@@ -91,6 +92,28 @@ describe("WorkspaceShell", () => {
       screen.getByRole("link", { name: `Account: ${USER.display_name}` }),
     ).toHaveAttribute("href", `/workspaces/${WORKSPACE.id}/account`);
     expect(screen.getByRole("button", { name: `Switch workspace. Current workspace: ${WORKSPACE.name}` })).toBeInTheDocument();
+  });
+
+  it("opens workspace creation from the sidebar with a return destination", async () => {
+    mockWorkspaceRequests();
+    const user = userEvent.setup();
+
+    render(
+      <WorkspaceShell workspaceId={WORKSPACE.id}>
+        <WorkspaceDetail workspaceId={WORKSPACE.id} />
+      </WorkspaceShell>,
+    );
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: `Switch workspace. Current workspace: ${WORKSPACE.name}`,
+      }),
+    );
+
+    expect(screen.getByRole("link", { name: /new workspace/i })).toHaveAttribute(
+      "href",
+      `/workspaces/new?from=${WORKSPACE.id}`,
+    );
   });
 
   it("returns expired sessions to login", async () => {

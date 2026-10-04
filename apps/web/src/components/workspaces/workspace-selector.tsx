@@ -40,29 +40,24 @@ export function WorkspaceSelector() {
           }),
         ]);
 
-        const isSelectingWorkspace =
-          new URLSearchParams(window.location.search).get("select") === "1";
+        const lastWorkspaceId = getLastWorkspaceId(currentUser.id);
+        const lastWorkspace = availableWorkspaces.find(
+          (workspace) => workspace.id === lastWorkspaceId,
+        );
 
-        if (!isSelectingWorkspace) {
-          const lastWorkspaceId = getLastWorkspaceId(currentUser.id);
-          const lastWorkspace = availableWorkspaces.find(
-            (workspace) => workspace.id === lastWorkspaceId,
-          );
+        if (lastWorkspaceId && !lastWorkspace) {
+          forgetLastWorkspace(currentUser.id);
+        }
 
-          if (lastWorkspaceId && !lastWorkspace) {
-            forgetLastWorkspace(currentUser.id);
-          }
+        const workspaceToResume =
+          lastWorkspace ??
+          (availableWorkspaces.length === 1 ? availableWorkspaces[0] : null);
 
-          const workspaceToResume =
-            lastWorkspace ??
-            (availableWorkspaces.length === 1 ? availableWorkspaces[0] : null);
-
-          if (workspaceToResume) {
-            isResumingWorkspace = true;
-            rememberLastWorkspace(currentUser.id, workspaceToResume.id);
-            router.replace(routes.workspace.home(workspaceToResume.id));
-            return;
-          }
+        if (workspaceToResume) {
+          isResumingWorkspace = true;
+          rememberLastWorkspace(currentUser.id, workspaceToResume.id);
+          router.replace(routes.workspace.home(workspaceToResume.id));
+          return;
         }
 
         setUser(currentUser);
@@ -150,7 +145,7 @@ export function WorkspaceSelector() {
           description="Open a project context you own or collaborate on."
           action={
             <Link
-              href="/workspaces/new"
+              href={routes.newWorkspace}
               className={buttonClassName({
                 size: "large",
                 variant: "primary",
@@ -192,7 +187,7 @@ export function WorkspaceSelector() {
             <p className="mt-10 rounded-panel border border-border/40 bg-surface/60 p-6 text-muted">
               You do not have access to any workspaces yet.{" "}
               <Link
-                href="/workspaces/new"
+                href={routes.newWorkspace}
                 className="font-semibold text-accent-bright transition-colors hover:text-foreground"
               >
                 Create one

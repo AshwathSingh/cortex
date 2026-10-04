@@ -76,9 +76,7 @@ describe("WorkspaceSelector", () => {
     );
   });
 
-  it("shows the chooser when workspace selection was requested", async () => {
-    window.history.replaceState({}, "", "/workspaces?select=1");
-    rememberLastWorkspace(USER.id, WORKSPACES[1].id);
+  it("shows the chooser only when no workspace can be resumed", async () => {
     mockWorkspaceRequests();
 
     render(<WorkspaceSelector />);
@@ -88,5 +86,17 @@ describe("WorkspaceSelector", () => {
     ).toBeInTheDocument();
     expect(router.replace).not.toHaveBeenCalled();
     expect(screen.getByText("Previous workspace")).toBeInTheDocument();
+  });
+
+  it("does not expose a query parameter that bypasses auto-resume", async () => {
+    window.history.replaceState({}, "", "/workspaces?select=1");
+    rememberLastWorkspace(USER.id, WORKSPACES[1].id);
+    mockWorkspaceRequests();
+
+    render(<WorkspaceSelector />);
+
+    await vi.waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/workspaces/workspace-2"),
+    );
   });
 });

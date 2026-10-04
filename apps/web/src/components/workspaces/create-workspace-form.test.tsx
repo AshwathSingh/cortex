@@ -43,13 +43,19 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("CreateWorkspaceForm", () => {
-  it("returns to the explicit workspace selector", () => {
+  it("returns to the workspace that opened the form", () => {
+    render(<CreateWorkspaceForm backHref="/workspaces/workspace-1" />);
+
+    expect(screen.getByRole("link", { name: /back to workspace/i })).toHaveAttribute(
+      "href",
+      "/workspaces/workspace-1",
+    );
+  });
+
+  it("does not show workspace navigation without an originating workspace", () => {
     render(<CreateWorkspaceForm />);
 
-    expect(screen.getByRole("link", { name: /all workspaces/i })).toHaveAttribute(
-      "href",
-      "/workspaces?select=1",
-    );
+    expect(screen.queryByRole("link", { name: /workspace/i })).not.toBeInTheDocument();
   });
 
   it("posts the trimmed form and redirects to the new workspace", async () => {
