@@ -1,10 +1,9 @@
 import Link from "next/link";
-import type { InputHTMLAttributes, ReactNode } from "react";
+import type { ReactNode } from "react";
 
+import { Button } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
-
-const fieldClassName =
-  "mt-2 h-12 w-full rounded-control border border-border/60 bg-surface/70 px-4 text-[0.95rem] text-foreground outline-none transition placeholder:text-subtle hover:border-border focus:border-accent-bright focus:ring-2 focus:ring-accent-bright/20";
+export { FormField } from "@/components/ui/form-field";
 
 type AuthFormLayoutProps = {
   children: ReactNode;
@@ -77,17 +76,19 @@ export function AuthFormLayout({
 
 function GitHubAuthButton() {
   return (
-    <button
+    <Button
       type="button"
       disabled
       title="GitHub authentication is not configured yet"
-      className="mt-9 flex min-h-12 w-full cursor-not-allowed items-center justify-center gap-3 rounded-control border border-border/40 bg-surface/50 px-5 text-sm font-semibold text-muted opacity-70"
+      size="large"
+      variant="muted"
+      className="mt-9 w-full gap-3 bg-surface/50 opacity-70 disabled:cursor-not-allowed"
     >
       <svg aria-hidden="true" viewBox="0 0 24 24" className="size-5 fill-current">
         <path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.77-.24.77-.54v-2.1c-3.14.68-3.8-1.33-3.8-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.03-.7.08-.69.08-.69 1.13.08 1.73 1.16 1.73 1.16 1.01 1.73 2.65 1.23 3.3.94.1-.73.39-1.23.72-1.51-2.5-.29-5.13-1.25-5.13-5.56 0-1.23.44-2.23 1.16-3.02-.12-.28-.5-1.43.11-2.98 0 0 .95-.3 3.1 1.15a10.7 10.7 0 0 1 5.64 0c2.15-1.46 3.1-1.15 3.1-1.15.61 1.55.23 2.7.11 2.98.72.79 1.16 1.79 1.16 3.02 0 4.32-2.64 5.26-5.15 5.55.4.35.76 1.04.76 2.1v3.12c0 .3.2.65.78.54A11.25 11.25 0 0 0 12 .75Z" />
       </svg>
       Continue with GitHub (soon)
-    </button>
+    </Button>
   );
 }
 
@@ -99,37 +100,6 @@ function AuthDivider() {
         or use email
       </span>
       <span className="h-px flex-1 bg-border/40" />
-    </div>
-  );
-}
-
-type FormFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, "id"> & {
-  hint?: string;
-  id: string;
-  label: string;
-};
-
-export function FormField({ hint, id, label, ...inputProps }: FormFieldProps) {
-  const hintId = hint ? `${id}-hint` : undefined;
-
-  return (
-    <div>
-      <div className={hint ? "flex items-baseline justify-between gap-4" : undefined}>
-        <label htmlFor={id} className="text-sm font-medium text-foreground">
-          {label}
-        </label>
-        {hint ? (
-          <span id={hintId} className="text-xs text-subtle">
-            {hint}
-          </span>
-        ) : null}
-      </div>
-      <input
-        {...inputProps}
-        id={id}
-        aria-describedby={inputProps["aria-describedby"] ?? hintId}
-        className={fieldClassName}
-      />
     </div>
   );
 }
@@ -146,12 +116,14 @@ export function AuthSubmitButton({
   disabled?: boolean;
 }) {
   return (
-    <button
+    <Button
       type="submit"
       disabled={disabled}
-      className="mt-8 flex min-h-12 w-full items-center justify-center rounded-control bg-accent px-5 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover disabled:cursor-wait disabled:opacity-60"
+      size="large"
+      variant="primary"
+      className="mt-8 w-full disabled:cursor-wait"
     >
       {children}
-    </button>
+    </Button>
   );
 }

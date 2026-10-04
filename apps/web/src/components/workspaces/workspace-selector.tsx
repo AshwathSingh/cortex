@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { Button, buttonClassName } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
+import { PageHeader, PageShell } from "@/components/ui/page-layout";
 import { RoleBadge } from "@/components/workspaces/role-badge";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { AuthenticatedUser, WorkspaceSummary } from "@/lib/api-types";
@@ -120,46 +122,44 @@ export function WorkspaceSelector() {
   }
 
   return (
-    <main className="min-h-screen px-[var(--cortex-page-gutter)] py-8 sm:py-12">
-      <div className="mx-auto w-full max-w-[64rem]">
-        <header className="flex items-center justify-between gap-4 border-b border-border/30 pb-6">
-          <Link
-            href="/"
-            className="text-[1.35rem] font-semibold tracking-[-0.025em] text-foreground"
-          >
-            Cortex
-          </Link>
-          <button
-            type="button"
-            disabled={isLoggingOut}
-            onClick={logout}
-            className="min-h-11 rounded-control border border-border/50 px-4 text-sm font-medium text-muted transition-colors hover:border-border hover:text-foreground disabled:cursor-wait disabled:opacity-60"
-          >
-            {isLoggingOut ? "Logging out…" : "Log out"}
-          </button>
-        </header>
+    <PageShell>
+      <header className="flex items-center justify-between gap-4 border-b border-border/30 pb-6">
+        <Link
+          href="/"
+          className="text-[1.35rem] font-semibold tracking-[-0.025em] text-foreground"
+        >
+          Cortex
+        </Link>
+        <Button
+          type="button"
+          disabled={isLoggingOut}
+          onClick={logout}
+          size="medium"
+          variant="muted"
+          className="min-h-11 disabled:cursor-wait"
+        >
+          {isLoggingOut ? "Logging out…" : "Log out"}
+        </Button>
+      </header>
 
-        <section aria-labelledby="workspace-heading" className="py-14 sm:py-20">
-          <p className="text-sm font-medium text-accent-bright">
-            {user?.display_name ?? user?.email ?? "Your Cortex account"}
-          </p>
-          <h1
-            id="workspace-heading"
-            className="mt-3 text-[clamp(2.25rem,6vw,4rem)] font-semibold leading-none tracking-[-0.05em]"
-          >
-            Choose a workspace
-          </h1>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
-            <p className="max-w-2xl text-base leading-7 text-muted">
-              Open a project context you own or collaborate on.
-            </p>
+      <section aria-labelledby="workspace-heading" className="py-14 sm:py-20">
+        <PageHeader
+          eyebrow={user?.display_name ?? user?.email ?? "Your Cortex account"}
+          headingId="workspace-heading"
+          title="Choose a workspace"
+          description="Open a project context you own or collaborate on."
+          action={
             <Link
               href="/workspaces/new"
-              className="inline-flex min-h-11 items-center rounded-control bg-accent px-5 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover"
+              className={buttonClassName({
+                size: "large",
+                variant: "primary",
+              })}
             >
               New workspace
             </Link>
-          </div>
+          }
+        />
 
           <FeedbackAlert message={error} />
 
@@ -200,8 +200,7 @@ export function WorkspaceSelector() {
               .
             </p>
           ) : null}
-        </section>
-      </div>
-    </main>
+      </section>
+    </PageShell>
   );
 }

@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { type FormEvent, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
+import { FormField } from "@/components/ui/form-field";
+import { PageHeader } from "@/components/ui/page-layout";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { IngestResult } from "@/lib/api-types";
 import { routes } from "@/lib/routes";
@@ -64,21 +67,13 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
 
   return (
     <section aria-labelledby="ingest-heading">
-      <Link
-        href={routes.workspace.sources(workspaceId)}
-        className="text-sm font-medium text-muted transition-colors hover:text-foreground"
-      >
-        ← Back to sources
-      </Link>
-      <h1
-        id="ingest-heading"
-        className="mt-10 text-[clamp(2.25rem,6vw,4rem)] font-semibold leading-none tracking-[-0.05em]"
-      >
-        Add a repository
-      </h1>
-      <p className="mt-4 text-base leading-7 text-muted">
-        Build project memory from a GitHub repository.
-      </p>
+      <PageHeader
+        backHref={routes.workspace.sources(workspaceId)}
+        backLabel="Back to sources"
+        description="Build project memory from a GitHub repository."
+        headingId="ingest-heading"
+        title="Add a repository"
+      />
 
       <form
         onSubmit={handleSubmit}
@@ -86,11 +81,9 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
         aria-label="Ingest a GitHub repository"
         className="mt-10"
       >
-        <label htmlFor="repo-url" className="text-sm font-medium text-foreground">
-          GitHub repository URL
-        </label>
-        <input
+        <FormField
           id="repo-url"
+          label="GitHub repository URL"
           type="text"
           inputMode="url"
           value={repoUrl}
@@ -99,15 +92,16 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
           disabled={isLoading}
           autoComplete="off"
           spellCheck={false}
-          className="mt-2 h-12 w-full rounded-control border border-border/60 bg-surface/70 px-4 text-foreground outline-none transition placeholder:text-subtle hover:border-border focus:border-accent-bright focus:ring-2 focus:ring-accent-bright/20"
         />
-        <button
+        <Button
           type="submit"
           disabled={isLoading}
-          className="mt-6 min-h-12 rounded-control bg-accent px-5 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover disabled:cursor-wait disabled:opacity-60"
+          size="large"
+          variant="primary"
+          className="mt-6 disabled:cursor-wait"
         >
           {isLoading ? "Ingesting…" : "Ingest repository"}
-        </button>
+        </Button>
 
         <div aria-live="polite">
           {isLoading ? (

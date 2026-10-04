@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { GraphCanvas } from "@/components/graph/graph-canvas";
+import { buttonClassName } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { GraphNodeType, WorkspaceGraph } from "@/lib/api-types";
@@ -111,7 +112,10 @@ export function GraphView({ workspaceId }: { workspaceId: string }) {
                 </p>
                 <Link
                   href={`/workspaces/${workspaceId}/ingest`}
-                  className="mt-7 inline-flex min-h-10 items-center rounded-lg bg-accent px-4 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover"
+                  className={buttonClassName({
+                    className: "mt-7",
+                    variant: "primary",
+                  })}
                 >
                   Add a GitHub repository
                 </Link>
