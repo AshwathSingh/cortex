@@ -75,6 +75,7 @@ export function WorkspaceShell({
   const activePath = usePathname();
   const router = useRouter();
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -88,15 +89,22 @@ export function WorkspaceShell({
       setIsLoading(true);
 
       try {
-        const [currentWorkspace, currentUser] = await Promise.all([
-          apiRequest<WorkspaceSummary>(`/api/workspaces/${workspaceId}`, {
+        const [availableWorkspaces, currentUser] = await Promise.all([
+          apiRequest<WorkspaceSummary[]>("/api/workspaces", {
             signal: controller.signal,
           }),
           apiRequest<AuthenticatedUser>("/api/auth/me", {
             signal: controller.signal,
           }),
         ]);
+        const currentWorkspace = availableWorkspaces.find(
+          (candidate) => candidate.id === workspaceId,
+        );
+        if (!currentWorkspace) {
+          throw new ApiError("You do not have access to this workspace.", 403);
+        }
         setWorkspace(currentWorkspace);
+        setWorkspaces(availableWorkspaces);
         setUser(currentUser);
         rememberLastWorkspace(currentUser.id, currentWorkspace.id);
       } catch (requestError) {
@@ -169,8 +177,15 @@ export function WorkspaceShell({
         <AppSidebar
           productLabel="Cortex"
           workspace={{
+            id: workspaceId,
             label: workspace?.name ?? "Workspace",
-            href: routes.workspaceSelector,
+            options: workspaces.map((option) => ({
+              id: option.id,
+              label: option.name,
+              detail: option.role,
+              href: routes.workspace.home(option.id),
+            })),
+            createHref: routes.newWorkspace,
           }}
           account={{
             label: user?.display_name ?? user?.email ?? "Your account",

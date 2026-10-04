@@ -25,6 +25,13 @@ const USER = {
   display_name: "Cortex Engineer",
 } satisfies AuthenticatedUser;
 
+const OTHER_WORKSPACE = {
+  ...WORKSPACE,
+  id: "workspace-2",
+  name: "Platform",
+  role: "EDITOR",
+} satisfies WorkspaceSummary;
+
 function jsonResponse(status: number, body: unknown) {
   return Promise.resolve(
     new Response(JSON.stringify(body), {
@@ -37,9 +44,11 @@ function jsonResponse(status: number, body: unknown) {
 function mockWorkspaceRequests(workspaceStatus = 200, workspaceBody: unknown = WORKSPACE) {
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const path = String(input);
-    return path === `/api/workspaces/${WORKSPACE.id}`
-      ? jsonResponse(workspaceStatus, workspaceBody)
-      : jsonResponse(200, USER);
+    if (path === "/api/workspaces") {
+      const body = workspaceStatus === 200 ? [workspaceBody, OTHER_WORKSPACE] : workspaceBody;
+      return jsonResponse(workspaceStatus, body);
+    }
+    return jsonResponse(200, USER);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -71,7 +80,7 @@ describe("WorkspaceShell", () => {
     );
     expect(
       fetchMock.mock.calls.filter(
-        ([input]) => String(input) === `/api/workspaces/${WORKSPACE.id}`,
+        ([input]) => String(input) === "/api/workspaces",
       ),
     ).toHaveLength(1);
     expect(fetchMock).toHaveBeenCalledWith(
@@ -81,6 +90,7 @@ describe("WorkspaceShell", () => {
     expect(
       screen.getByRole("link", { name: `Account: ${USER.display_name}` }),
     ).toHaveAttribute("href", `/workspaces/${WORKSPACE.id}/account`);
+    expect(screen.getByRole("button", { name: `Switch workspace. Current workspace: ${WORKSPACE.name}` })).toBeInTheDocument();
   });
 
   it("returns expired sessions to login", async () => {

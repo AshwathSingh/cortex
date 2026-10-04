@@ -50,11 +50,7 @@ describe("WorkspaceDetail", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
       WORKSPACE.name,
     );
-    expect(
-      screen.getByRole("link", {
-        name: `Switch workspace. Current workspace: ${WORKSPACE.name}`,
-      }),
-    ).toHaveTextContent(WORKSPACE.name);
+    expect(screen.getByText(`Workspace · ${WORKSPACE.name}`)).toBeInTheDocument();
     expect(screen.getByLabelText(/ask cortex about this workspace/i)).toBeEnabled();
     expect(screen.getByRole("button", { name: /send question/i })).toHaveAttribute(
       "aria-disabled",

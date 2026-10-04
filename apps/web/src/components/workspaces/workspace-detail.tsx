@@ -193,13 +193,9 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
             </form>
 
             <div className="relative mx-5 -mt-px flex min-h-10 items-center justify-between gap-4 rounded-b-xl border border-border/25 bg-surface/45 px-4 pt-px text-[0.6875rem] text-subtle">
-              <Link
-                href={routes.workspaceSelector}
-                aria-label={`Switch workspace. Current workspace: ${workspace?.name ?? "Loading"}`}
-                className="min-w-0 truncate transition-colors hover:text-foreground"
-              >
+              <span className="min-w-0 truncate">
                 Workspace · {workspace?.name ?? "Loading…"}
-              </Link>
+              </span>
               <Link
                 href={routes.workspace.sources(workspaceId)}
                 className="shrink-0 transition-colors hover:text-foreground"

@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { AppSidebar } from "@/components/navigation/app-sidebar";
@@ -22,7 +23,15 @@ const primaryLinks = [
 
 const baseProps = {
   productLabel: "Cortex",
-  workspace: { label: "Demo project", href: "/workspaces" },
+  workspace: {
+    id: "demo",
+    label: "Demo project",
+    options: [
+      { id: "demo", label: "Demo project", detail: "OWNER", href: "/workspaces/demo" },
+      { id: "platform", label: "Platform", detail: "EDITOR", href: "/workspaces/platform" },
+    ],
+    createHref: "/workspaces/new",
+  },
   account: {
     label: "Ada Lovelace",
     detail: "ada@example.com",
@@ -53,7 +62,7 @@ describe("AppSidebar", () => {
     );
     expect(screen.getByRole("link", { name: /Review/ })).toHaveTextContent("3");
     expect(
-      screen.getByRole("link", {
+      screen.getByRole("button", {
         name: "Switch workspace. Current workspace: Demo project",
       }),
     ).not.toHaveAttribute("title");
@@ -64,6 +73,26 @@ describe("AppSidebar", () => {
     expect(
       screen.getByRole("link", { name: "Workspace settings" }),
     ).toHaveAttribute("href", "/workspaces/demo/manage");
+  });
+
+  it("opens an in-sidebar workspace menu", async () => {
+    const user = userEvent.setup();
+    render(<AppSidebar {...baseProps} activePath="/workspaces/demo" />);
+    await user.click(screen.getByRole("button", { name: "Switch workspace. Current workspace: Demo project" }));
+    expect(screen.getByRole("navigation", { name: "Workspaces" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Demo project/i })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: /Platform/i })).toHaveAttribute("href", "/workspaces/platform");
+    expect(screen.getByRole("link", { name: /New workspace/i })).toHaveAttribute("href", "/workspaces/new");
+  });
+
+  it("closes the workspace menu with Escape", async () => {
+    const user = userEvent.setup();
+    render(<AppSidebar {...baseProps} activePath="/workspaces/demo" />);
+    const trigger = screen.getByRole("button", { name: /switch workspace/i });
+    await user.click(trigger);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("navigation", { name: "Workspaces" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 
   it("does not activate Home for a nested workspace route", () => {
