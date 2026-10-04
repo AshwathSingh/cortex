@@ -42,7 +42,9 @@ def test_source_query_is_workspace_scoped_and_parameterised():
 
 
 def test_source_query_only_counts_repository_items_and_orders_results():
+    assert "source:Repository" in SOURCES_QUERY
     assert "n:PullRequest OR n:Issue" in SOURCES_QUERY
+    assert "OPTIONAL MATCH (n)" in SOURCES_QUERY
     assert "ORDER BY toLower(repo), repo" in SOURCES_QUERY
 
 
@@ -64,6 +66,28 @@ def test_returns_typed_source_summaries():
             "pull_requests": 8,
             "issues": 3,
             "total_items": 11,
+        }
+    ]
+
+
+def test_returns_a_connected_repository_with_no_indexed_items():
+    driver = SourceDriver(
+        [
+            {
+                "repo": "cortex/empty",
+                "pull_requests": 0,
+                "issues": 0,
+                "total_items": 0,
+            }
+        ]
+    )
+
+    assert [asdict(source) for source in fetch_source_summaries(driver, WS)] == [
+        {
+            "repo": "cortex/empty",
+            "pull_requests": 0,
+            "issues": 0,
+            "total_items": 0,
         }
     ]
 

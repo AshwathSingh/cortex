@@ -55,11 +55,16 @@ LIMIT $limit
 """
 
 SOURCES_QUERY = """
-MATCH (n)
+MATCH (source)
+WHERE (source:Repository OR source:PullRequest OR source:Issue)
+  AND source.workspace_id = $workspace_id
+  AND source.repo IS NOT NULL
+WITH DISTINCT source.repo AS repo
+OPTIONAL MATCH (n)
 WHERE (n:PullRequest OR n:Issue)
   AND n.workspace_id = $workspace_id
-  AND n.repo IS NOT NULL
-RETURN n.repo AS repo,
+  AND n.repo = repo
+RETURN repo,
        sum(CASE WHEN n:PullRequest THEN 1 ELSE 0 END) AS pull_requests,
        sum(CASE WHEN n:Issue THEN 1 ELSE 0 END) AS issues,
        count(n) AS total_items
@@ -176,7 +181,7 @@ def fetch_graph(
 def fetch_source_summaries(
     driver: Driver, workspace_id: str | uuid.UUID
 ) -> list[SourceSummaryPayload]:
-    """Summarise repositories already present in one workspace's graph."""
+    """Summarise connected repositories and their indexed graph items."""
     workspace = normalise_workspace_id(workspace_id)
 
     def work(tx) -> list:

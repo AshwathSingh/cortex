@@ -1,6 +1,7 @@
 """Map raw GitHub JSON to Cypher for the T-7.2 graph schema.
 
-Nodes:  (:Author {id, workspace_id}), (:PullRequest {...}), (:Issue {...})
+Nodes:  (:Repository {repo, workspace_id}), (:Author {id, workspace_id}),
+        (:PullRequest {...}), (:Issue {...})
 Edges:  (:Author)-[:AUTHORED]->(:PullRequest | :Issue)
 
 Every node is scoped to one workspace. ``workspace_id`` is part of the MERGE key
@@ -23,6 +24,10 @@ from neo4j import Driver
 from app.github.models import IssuePayload, PullRequestPayload
 
 Statement = tuple[str, dict[str, Any]]
+
+UPSERT_REPOSITORY = """
+MERGE (r:Repository {repo: $repo, workspace_id: $workspace_id})
+"""
 
 UPSERT_AUTHORS = """
 UNWIND $rows AS row
@@ -105,7 +110,12 @@ def build_statements(
         if item.user:
             authors[item.user.id] = item.user.model_dump(mode="json")
 
-    statements: list[Statement] = []
+    # The repository node records a successful connection even when GitHub
+    # returns no pull requests or issues. It is intentionally excluded from the
+    # Graph Explorer's drawable labels and exists only as source metadata.
+    statements: list[Statement] = [
+        (UPSERT_REPOSITORY, {"repo": repo, "workspace_id": workspace})
+    ]
     if authors:
         statements.append(
             (UPSERT_AUTHORS, {"rows": list(authors.values()), "workspace_id": workspace})

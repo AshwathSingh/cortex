@@ -19,7 +19,7 @@ def main() -> None:
     apply_constraints(get_driver())
     print(
         f"Neo4j schema: dropped {len(LEGACY_CONSTRAINTS)} pre-workspace constraint(s) "
-        f"if present, applied {len(CONSTRAINTS)} composite (id, workspace_id) constraint(s)."
+        f"if present, applied {len(CONSTRAINTS)} workspace-scoped constraint(s)."
     )
     close_driver()
 
