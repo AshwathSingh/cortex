@@ -20,7 +20,12 @@ from pydantic import BaseModel
 
 from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
 from app.db.neo4j_driver import get_driver
-from app.graph.queries import DEFAULT_EDGE_LIMIT, DEFAULT_NODE_LIMIT, fetch_graph
+from app.graph.queries import (
+    DEFAULT_EDGE_LIMIT,
+    DEFAULT_NODE_LIMIT,
+    fetch_graph,
+    fetch_source_summaries,
+)
 
 router = APIRouter(prefix="/api/workspaces", tags=["graph"])
 
@@ -49,9 +54,41 @@ class GraphResponse(BaseModel):
     truncated: bool
 
 
+class SourceSummary(BaseModel):
+    repo: str
+    pull_requests: int
+    issues: int
+    total_items: int
+
+
 def get_neo4j() -> Driver:
     """Injectable so tests can supply a fake driver (same shape as app.api.ingest)."""
     return get_driver()
+
+
+@router.get("/{workspace_id}/sources", response_model=list[SourceSummary])
+def read_workspace_sources(
+    workspace_id: uuid.UUID,
+    user: CurrentUser,
+    session: DbSession,
+    driver: Driver = Depends(get_neo4j),
+) -> list[SourceSummary]:
+    load_workspace_for_user(session, user, workspace_id)
+
+    try:
+        sources = fetch_source_summaries(driver, workspace_id)
+    except (Neo4jError, DriverError):
+        raise HTTPException(status_code=503, detail="Graph database unavailable")
+
+    return [
+        SourceSummary(
+            repo=source.repo,
+            pull_requests=source.pull_requests,
+            issues=source.issues,
+            total_items=source.total_items,
+        )
+        for source in sources
+    ]
 
 
 @router.get("/{workspace_id}/graph", response_model=GraphResponse)

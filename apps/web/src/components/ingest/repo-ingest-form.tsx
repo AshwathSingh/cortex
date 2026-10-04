@@ -6,6 +6,7 @@ import { type FormEvent, useState } from "react";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { IngestResult } from "@/lib/api-types";
+import { routes } from "@/lib/routes";
 
 const fallbackMessages: Record<number, string> = {
   403: "You need edit access to this workspace to add a repository.",
@@ -64,10 +65,10 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
   return (
     <section aria-labelledby="ingest-heading">
       <Link
-        href={`/workspaces/${workspaceId}`}
+        href={routes.workspace.sources(workspaceId)}
         className="text-sm font-medium text-muted transition-colors hover:text-foreground"
       >
-        ← Back to workspace
+        ← Back to sources
       </Link>
       <h1
         id="ingest-heading"
@@ -118,10 +119,16 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
             message={status.kind === "error" ? status.message : null}
           />
           {status.kind === "success" ? (
-            <p role="status" className="mt-5 text-sm text-foreground">
-              Ingested <strong>{status.result.repo}</strong>: {status.result.pull_requests}{" "}
-              pull requests, {status.result.issues} issues.
-            </p>
+            <div role="status" className="mt-5 text-sm text-foreground">
+              <p>
+                Ingested <strong>{status.result.repo}</strong>:{" "}
+                {status.result.pull_requests} pull requests, {status.result.issues}{" "}
+                issues.
+              </p>
+              <Link href={routes.workspace.sources(workspaceId)} className="mt-3 inline-block font-semibold text-accent-bright transition-colors hover:text-foreground">
+                View sources →
+              </Link>
+            </div>
           ) : null}
         </div>
       </form>

@@ -20,6 +20,10 @@ export type IngestResult = {
   issues: number;
 };
 
+export type WorkspaceSource = IngestResult & {
+  total_items: number;
+};
+
 /** The node labels the graph holds today. Requirement/Decision/Evidence come
  *  from the Connection Agent, which is not built, so they are not modelled. */
 export type GraphNodeType = "Author" | "PullRequest" | "Issue";

@@ -1,18 +1,15 @@
 import type { Metadata } from "next";
 
-import { WorkspaceRoutePlaceholder } from "@/components/workspaces/workspace-route-placeholder";
+import { SourceInventory } from "@/components/sources/source-inventory";
 
 export const metadata: Metadata = {
   title: "Sources | Cortex",
-  description: "Manage source data for a Cortex workspace.",
+  description: "View the repositories connected to a Cortex workspace.",
 };
 
-export default function SourcesPage() {
-  return (
-    <WorkspaceRoutePlaceholder
-      eyebrow="Workspace sources"
-      title="Sources"
-      description="Connect and manage the source data that powers this workspace."
-    />
-  );
+export default async function SourcesPage({
+  params,
+}: PageProps<"/workspaces/[workspaceId]/sources">) {
+  const { workspaceId } = await params;
+  return <SourceInventory workspaceId={workspaceId} />;
 }

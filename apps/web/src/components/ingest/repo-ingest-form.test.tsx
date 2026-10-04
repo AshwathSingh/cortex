@@ -31,6 +31,14 @@ async function submit(url: string) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("RepoIngestForm", () => {
+  it("returns to the source inventory", () => {
+    render(<RepoIngestForm workspaceId={WORKSPACE_ID} />);
+    expect(screen.getByRole("link", { name: /back to sources/i })).toHaveAttribute(
+      "href",
+      `/workspaces/${WORKSPACE_ID}/sources`,
+    );
+  });
+
   it("posts the URL and the workspace, and shows the counts on success", async () => {
     const fetchFn = mockFetch(200, { repo: "o/r", pull_requests: 3, issues: 2 });
     await submit("https://github.com/o/r");
@@ -45,6 +53,10 @@ describe("RepoIngestForm", () => {
       repo_url: "https://github.com/o/r",
       workspace_id: WORKSPACE_ID,
     });
+    expect(screen.getByRole("link", { name: /view sources/i })).toHaveAttribute(
+      "href",
+      `/workspaces/${WORKSPACE_ID}/sources`,
+    );
   });
 
   it("adds https:// to a scheme-less GitHub URL", async () => {
