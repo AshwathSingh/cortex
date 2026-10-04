@@ -1,10 +1,12 @@
 """T-1.5: GitHub OAuth sign-in, tested against the US-1 acceptance criteria.
 
 GitHub is replaced by an ``httpx.MockTransport``; everything on the Cortex side
--- state check, user/credential writes, session cookie, ``get_current_user`` --
-runs for real against the in-memory database from ``api_db``.
+-- state/PKCE transaction, user/credential writes, session cookie, rate limits,
+``get_current_user`` -- runs for real against the in-memory database from
+``api_db``.
 """
 
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -13,11 +15,16 @@ from cryptography.fernet import Fernet
 from pydantic import SecretStr
 from sqlalchemy import select, text
 
-from app.api.auth import OAUTH_STATE_COOKIE, get_github_oauth_client
+from app.api.auth import (
+    OAUTH_STATE_COOKIE,
+    get_github_oauth_client,
+    github_callback_limiter,
+    github_login_limiter,
+)
 from app.config import settings
-from app.github.oauth import GitHubOAuthClient, OAuthError
+from app.github.oauth import GitHubOAuthClient, OAuthError, code_challenge
 from app.main import app
-from app.models import GitHubCredential, User, UserSession
+from app.models import GitHubCredential, OAuthTransaction, User, UserSession
 from app.security import decrypt_secret, encrypt_secret, hash_password
 
 ACCESS_TOKEN = "gho_test_access_token_do_not_leak"
@@ -40,13 +47,26 @@ class FakeGitHub:
         self.token_response: httpx.Response = httpx.Response(
             200, json={"access_token": ACCESS_TOKEN, "scope": "read:user,user:email"}
         )
+        self.refresh_response: httpx.Response = httpx.Response(
+            200, json={"error": "bad_refresh_token"}
+        )
         self.profile = dict(PROFILE)
         self.emails = list(EMAILS)
         self.requests: list[httpx.Request] = []
 
+    def token_requests(self) -> list[dict[str, str]]:
+        return [
+            {k: v[0] for k, v in parse_qs(r.content.decode()).items()}
+            for r in self.requests
+            if r.url.path == "/login/oauth/access_token"
+        ]
+
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         if request.url.path == "/login/oauth/access_token":
+            form = parse_qs(request.content.decode())
+            if form.get("grant_type") == ["refresh_token"]:
+                return self.refresh_response
             return self.token_response
         if request.headers.get("Authorization") != f"Bearer {ACCESS_TOKEN}":
             return httpx.Response(401, json={"message": "Bad credentials"})
@@ -55,6 +75,26 @@ class FakeGitHub:
         if request.url.path == "/user/emails":
             return httpx.Response(200, json=self.emails)
         return httpx.Response(404)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    # The limiters are module-level; without a reset one test's calls count
+    # against the next.
+    github_login_limiter.reset()
+    github_callback_limiter.reset()
+    yield
+    github_login_limiter.reset()
+    github_callback_limiter.reset()
+
+
+def oauth_client(handler) -> GitHubOAuthClient:
+    return GitHubOAuthClient(
+        client_id="test-client-id",
+        client_secret="test-secret",
+        redirect_uri=settings.github_oauth_redirect_uri,
+        transport=httpx.MockTransport(handler),
+    )
 
 
 @pytest.fixture
@@ -71,12 +111,7 @@ def github(api_db, oauth_settings):
     fake = FakeGitHub()
 
     def override():
-        client = GitHubOAuthClient(
-            client_id="test-client-id",
-            client_secret="test-secret",
-            redirect_uri=settings.github_oauth_redirect_uri,
-            transport=httpx.MockTransport(fake),
-        )
+        client = oauth_client(fake)
         try:
             yield client
         finally:
@@ -89,11 +124,15 @@ def github(api_db, oauth_settings):
         app.dependency_overrides.pop(get_github_oauth_client, None)
 
 
+def authorize_params(response) -> dict[str, str]:
+    return {k: v[0] for k, v in parse_qs(urlparse(response.headers["location"]).query).items()}
+
+
 def start_login(client) -> str:
     """Hit the login endpoint like the browser does; return the state it issued."""
     response = client.get("/api/auth/github/login", follow_redirects=False)
     assert response.status_code == 302
-    return parse_qs(urlparse(response.headers["location"]).query)["state"][0]
+    return authorize_params(response)["state"]
 
 
 def finish_login(client, state: str, code: str = "valid-code"):
@@ -324,4 +363,186 @@ def test_oauth_client_raises_on_malformed_token_response():
         transport=httpx.MockTransport(lambda r: httpx.Response(200, text="<html>")),
     )
     with pytest.raises(OAuthError):
-        client.exchange_code("code")
+        client.exchange_code("code", "verifier")
+
+
+# -- PKCE and the single-use OAuth transaction ---------------------------------
+
+
+def test_authorization_uses_pkce_and_exchange_sends_the_matching_verifier(
+    api_db, github
+):
+    client, _ = api_db
+    response = client.get("/api/auth/github/login", follow_redirects=False)
+    params = authorize_params(response)
+
+    assert params["code_challenge_method"] == "S256"
+    assert finish_login(client, params["state"]).status_code == 200
+
+    [exchange] = github.token_requests()
+    assert code_challenge(exchange["code_verifier"]) == params["code_challenge"]
+    # The verifier never leaves the server except in the exchange itself.
+    assert exchange["code_verifier"] not in response.headers["location"]
+    assert exchange["code_verifier"] not in response.headers["set-cookie"]
+
+
+def test_transaction_stores_only_a_hash_of_the_state(api_db, github):
+    client, sessions = api_db
+    state = start_login(client)
+
+    with sessions() as session:
+        stored = session.scalar(select(OAuthTransaction.state_hash))
+    assert stored != state and len(stored) == 64
+
+
+def test_replayed_callback_is_rejected_after_a_successful_sign_in(api_db, github):
+    client, sessions = api_db
+    state = start_login(client)
+    assert finish_login(client, state).status_code == 200
+    requests_after_first = len(github.requests)
+
+    client.cookies.clear()
+    client.cookies.set(OAUTH_STATE_COOKIE, state, path="/api/auth/github")
+    replay = finish_login(client, state)
+
+    assert replay.status_code == 401
+    assert len(github.requests) == requests_after_first  # GitHub never contacted
+    assert count(sessions, UserSession) == 1
+
+
+def test_state_is_spent_by_the_first_valid_callback_even_if_github_rejects_it(
+    api_db, github
+):
+    client, sessions = api_db
+    state = start_login(client)
+    github.token_response = httpx.Response(200, json={"error": "bad_verification_code"})
+    assert finish_login(client, state).status_code == 401
+
+    github.token_response = httpx.Response(
+        200, json={"access_token": ACCESS_TOKEN, "scope": ""}
+    )
+    retry = finish_login(client, state)
+
+    assert retry.status_code == 401
+    assert len(github.token_requests()) == 1
+    assert count(sessions, User) == 0
+
+
+def test_expired_transaction_is_rejected(api_db, github):
+    client, sessions = api_db
+    state = start_login(client)
+    with sessions() as session:
+        session.scalar(select(OAuthTransaction)).expires_at = datetime.now(
+            timezone.utc
+        ) - timedelta(seconds=1)
+        session.commit()
+
+    assert_rejected(finish_login(client, state), sessions)
+    assert github.requests == []
+
+
+def test_starting_a_login_sweeps_expired_transactions(api_db, github):
+    client, sessions = api_db
+    start_login(client)
+    with sessions() as session:
+        session.scalar(select(OAuthTransaction)).expires_at = datetime.now(
+            timezone.utc
+        ) - timedelta(minutes=1)
+        session.commit()
+
+    start_login(client)
+
+    assert count(sessions, OAuthTransaction) == 1
+
+
+# -- Expiring tokens -----------------------------------------------------------
+
+
+def test_expiring_token_stores_refresh_token_encrypted_with_expiry(api_db, github):
+    client, sessions = api_db
+    github.token_response = httpx.Response(
+        200,
+        json={
+            "access_token": ACCESS_TOKEN,
+            "scope": "",
+            "expires_in": 28800,
+            "refresh_token": "ghr_refresh_do_not_leak",
+            "refresh_token_expires_in": 15897600,
+        },
+    )
+    before = datetime.now(timezone.utc)
+
+    response = finish_login(client, start_login(client))
+
+    assert response.status_code == 200
+    assert "ghr_refresh_do_not_leak" not in response.text
+    with sessions() as session:
+        raw = session.execute(text("SELECT refresh_token FROM github_credentials")).scalar_one()
+        assert "ghr_refresh_do_not_leak" not in raw
+        credential = session.scalar(select(GitHubCredential))
+        assert credential.refresh_token == "ghr_refresh_do_not_leak"
+        expires = credential.access_token_expires_at.replace(tzinfo=timezone.utc)
+        assert before + timedelta(hours=8) <= expires <= before + timedelta(hours=8, minutes=1)
+        assert credential.refresh_token_expires_at is not None
+
+
+def test_classic_oauth_app_token_is_stored_as_non_expiring(api_db, github):
+    client, sessions = api_db
+    finish_login(client, start_login(client))
+
+    with sessions() as session:
+        credential = session.scalar(select(GitHubCredential))
+        assert credential.access_token_expires_at is None
+        assert credential.refresh_token is None
+
+
+# -- Key loss ------------------------------------------------------------------
+
+
+def test_sign_in_recovers_when_the_stored_token_key_was_lost(
+    api_db, github, monkeypatch
+):
+    client, sessions = api_db
+    finish_login(client, start_login(client))
+    monkeypatch.setattr(
+        settings, "token_encryption_key", SecretStr(Fernet.generate_key().decode())
+    )
+    client.cookies.clear()
+
+    response = finish_login(client, start_login(client))
+
+    assert response.status_code == 200
+    with sessions() as session:
+        assert session.scalar(select(GitHubCredential)).access_token == ACCESS_TOKEN
+
+
+# -- Rate limiting -------------------------------------------------------------
+
+
+def test_login_endpoint_is_rate_limited_per_client(api_db, github, monkeypatch):
+    client, _ = api_db
+    monkeypatch.setattr(github_login_limiter, "limit", 2)
+
+    statuses = [
+        client.get("/api/auth/github/login", follow_redirects=False).status_code
+        for _ in range(3)
+    ]
+
+    assert statuses == [302, 302, 429]
+    limited = client.get("/api/auth/github/login", follow_redirects=False)
+    assert int(limited.headers["Retry-After"]) >= 1
+
+
+def test_callback_is_rate_limited_before_state_or_github_is_touched(
+    api_db, github, monkeypatch
+):
+    client, sessions = api_db
+    monkeypatch.setattr(github_callback_limiter, "limit", 1)
+    finish_login(client, "forged")
+    state = start_login(client)  # the login bucket is separate
+
+    response = finish_login(client, state)
+
+    assert response.status_code == 429
+    assert github.requests == []
+    assert count(sessions, OAuthTransaction) == 1  # not consumed

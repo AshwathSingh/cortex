@@ -20,7 +20,11 @@ def get_engine() -> Engine:
     if _engine is None:
         # pool_pre_ping: Postgres drops idle connections; without this the first
         # query after an idle period fails instead of transparently reconnecting.
-        _engine = create_engine(settings.database_url, pool_pre_ping=True)
+        # hide_parameters: keep bound values (OAuth tokens, password hashes, session
+        # hashes) out of SQL logs and out of the text of database exceptions.
+        _engine = create_engine(
+            settings.database_url, pool_pre_ping=True, hide_parameters=True
+        )
     return _engine
 
 

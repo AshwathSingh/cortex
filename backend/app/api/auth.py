@@ -2,11 +2,14 @@
 
 GitHub sign-in (US-1) runs in two steps:
 
-    GET  /api/auth/github/login     -> sets a state cookie, 302 to GitHub
-    POST /api/auth/github/callback  {"code", "state"} from the frontend callback page
+    GET  /api/auth/github/login     -> records an OAuthTransaction (hashed state +
+                                       PKCE verifier), sets a state cookie, 302 to GitHub
+    POST /api/auth/github/callback  {"code", "state"} from the frontend callback page;
+                                       consumes the transaction, exchanges code + verifier
 
-Both steps end in the same session cookie as email/password login. The GitHub
-access token is stored encrypted (``GitHubCredential``) and never returned.
+Both endpoints are rate limited per client IP. Sign-in ends in the same session
+cookie as email/password login. GitHub tokens are stored encrypted
+(``GitHubCredential``) and never returned.
 """
 
 import secrets
@@ -23,6 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentUser
+from app.api.rate_limit import RateLimiter
 from app.config import settings
 from app.db.postgres import get_session
 from app.github.oauth import (
@@ -31,14 +35,16 @@ from app.github.oauth import (
     OAuthError,
     OAuthToken,
     authorize_url,
+    new_code_verifier,
 )
-from app.models import GitHubCredential, User, UserSession
+from app.models import OAuthTransaction, User, UserSession
 from app.security import (
     hash_password,
     hash_session_token,
     new_session_token,
     verify_password,
 )
+from app.services.github_credentials import save_github_token
 from app.services.workspaces import create_workspace
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -187,6 +193,11 @@ def current_user(user: CurrentUser) -> UserResponse:
     return _user_response(user)
 
 
+# Separate buckets, so a burst of starts cannot lock a user out of finishing.
+github_login_limiter = RateLimiter(settings.oauth_rate_limit_per_minute)
+github_callback_limiter = RateLimiter(settings.oauth_rate_limit_per_minute)
+
+
 def _require_github_oauth() -> None:
     if not settings.github_oauth_configured:
         raise HTTPException(
@@ -208,17 +219,34 @@ def get_github_oauth_client() -> Iterator[GitHubOAuthClient]:
         client.close()
 
 
-@router.get("/github/login")
-def github_login() -> RedirectResponse:
-    """Start GitHub sign-in: bind a random state to this browser, then hand off."""
+@router.get("/github/login", dependencies=[Depends(github_login_limiter)])
+def github_login(session: DbSession) -> RedirectResponse:
+    """Start GitHub sign-in: record a one-time transaction, bind it to this
+    browser with a cookie, then hand off to GitHub with a PKCE challenge."""
     _require_github_oauth()
+    now = datetime.now(timezone.utc)
     state = secrets.token_urlsafe(32)
+    code_verifier = new_code_verifier()
+
+    # Abandoned sign-ins would otherwise pile up; the rate limit bounds how many
+    # one client can create between sweeps.
+    session.execute(delete(OAuthTransaction).where(OAuthTransaction.expires_at <= now))
+    session.add(
+        OAuthTransaction(
+            state_hash=hash_session_token(state),
+            code_verifier=code_verifier,
+            expires_at=now + timedelta(seconds=OAUTH_STATE_TTL_SECONDS),
+        )
+    )
+    session.commit()
+
     response = RedirectResponse(
         authorize_url(
             client_id=settings.github_client_id,
             redirect_uri=settings.github_oauth_redirect_uri,
             scope=settings.github_oauth_scope,
             state=state,
+            code_verifier=code_verifier,
         ),
         status_code=status.HTTP_302_FOUND,
     )
@@ -241,6 +269,27 @@ def _github_sign_in_failed() -> HTTPException:
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="GitHub sign-in failed. Please try again.",
     )
+
+
+def _consume_transaction(session: Session, state: str) -> str:
+    """Delete the unexpired transaction for ``state`` and return its PKCE verifier.
+
+    Committed before GitHub is contacted, so the state is spent by the first
+    callback that presents it -- whether or not the rest of sign-in succeeds. Of
+    two concurrent callbacks, only the one whose DELETE removes the row proceeds.
+    """
+    code_verifier = session.execute(
+        delete(OAuthTransaction)
+        .where(
+            OAuthTransaction.state_hash == hash_session_token(state),
+            OAuthTransaction.expires_at > datetime.now(timezone.utc),
+        )
+        .returning(OAuthTransaction.code_verifier)
+    ).scalar_one_or_none()
+    session.commit()
+    if code_verifier is None:
+        raise _github_sign_in_failed()
+    return code_verifier
 
 
 def _resolve_github_user(
@@ -283,20 +332,17 @@ def _resolve_github_user(
         user.github_login = identity.login
         user.avatar_url = identity.avatar_url
 
-    credential = session.get(GitHubCredential, user.id)
-    if credential is None:
-        session.add(
-            GitHubCredential(
-                user_id=user.id, access_token=token.access_token, scope=token.scope
-            )
-        )
-    else:
-        credential.access_token = token.access_token
-        credential.scope = token.scope
+    # Overwrites without reading the old row, so a token encrypted under a lost
+    # or retired key never blocks sign-in.
+    save_github_token(session, user.id, token)
     return user
 
 
-@router.post("/github/callback", response_model=UserResponse)
+@router.post(
+    "/github/callback",
+    response_model=UserResponse,
+    dependencies=[Depends(github_callback_limiter)],
+)
 def github_callback(
     payload: GitHubCallbackRequest,
     request: Request,
@@ -310,9 +356,10 @@ def github_callback(
         expected_state.encode(), payload.state.encode()
     ):
         raise _github_sign_in_failed()
+    code_verifier = _consume_transaction(session, payload.state)
 
     try:
-        token = oauth.exchange_code(payload.code)
+        token = oauth.exchange_code(payload.code, code_verifier)
         identity = oauth.fetch_identity(token.access_token)
     except OAuthError as error:
         raise _github_sign_in_failed() from error

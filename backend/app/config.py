@@ -26,9 +26,16 @@ class Settings(BaseSettings):
     github_client_secret: SecretStr | None = None
     github_oauth_redirect_uri: str = "http://localhost:3000/auth/github/callback"
     github_oauth_scope: str = "read:user user:email"
-    # Fernet key that encrypts OAuth access tokens at rest. Generate one with:
+    # Fernet key that encrypts OAuth tokens at rest. Generate one with:
     #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Validated at startup (app.security.validate_encryption_keys), not here: a
+    # pydantic error would echo the raw key into the log.
     token_encryption_key: SecretStr | None = None
+    # Comma-separated keys that may still decrypt but never encrypt. Put the old
+    # key here when rotating, run scripts.rotate_token_key, then remove it.
+    token_encryption_previous_keys: SecretStr | None = None
+    # Per client IP, per endpoint, on the public /api/auth/github/* routes.
+    oauth_rate_limit_per_minute: int = 20
 
     # Postgres holds users, workspaces and membership (US-41). The graph DB holds
     # nodes/edges/evidence; who may see a workspace is a relational question.
@@ -36,6 +43,17 @@ class Settings(BaseSettings):
     session_cookie_name: str = "cortex_session"
     session_ttl_days: int = 30
     secure_cookies: bool = False
+
+    @field_validator(
+        "github_client_secret",
+        "token_encryption_key",
+        "token_encryption_previous_keys",
+        mode="before",
+    )
+    @classmethod
+    def _blank_secret_is_unset(cls, v):
+        # `.env.example` ships `TOKEN_ENCRYPTION_KEY=`; treat that as not configured.
+        return None if isinstance(v, str) and not v.strip() else v
 
     @field_validator("database_url")
     @classmethod
@@ -49,6 +67,13 @@ class Settings(BaseSettings):
         if v.startswith("postgresql://"):
             return v.replace("postgresql://", "postgresql+psycopg://", 1)
         return v
+
+    @property
+    def token_encryption_previous_key_list(self) -> list[str]:
+        if self.token_encryption_previous_keys is None:
+            return []
+        raw = self.token_encryption_previous_keys.get_secret_value()
+        return [key.strip() for key in raw.split(",") if key.strip()]
 
     @property
     def github_oauth_configured(self) -> bool:

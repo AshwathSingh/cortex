@@ -1,10 +1,14 @@
-"""T-1.1: GitHub OAuth web flow -- authorize URL, code exchange, identity.
+"""T-1.1: GitHub OAuth web flow -- authorize URL, PKCE code exchange, refresh,
+identity.
 
 Separate from ``client.py``: that client paginates repository data once a token
 exists; this one runs before Cortex knows who the user is. GitHub's JSON is
 validated with Pydantic before anything is written to Postgres.
 """
 
+import base64
+import hashlib
+import secrets
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -27,6 +31,11 @@ class _Payload(BaseModel):
 class _TokenResponse(_Payload):
     access_token: str
     scope: str = ""
+    # Only sent when the app issues expiring user tokens (GitHub Apps with token
+    # expiration on). A classic OAuth App token has neither and does not expire.
+    expires_in: int | None = None
+    refresh_token: str | None = None
+    refresh_token_expires_in: int | None = None
 
 
 class _GitHubProfile(_Payload):
@@ -46,9 +55,23 @@ class _GitHubEmail(_Payload):
 class OAuthToken:
     access_token: str
     scope: str
+    expires_in: int | None = None  # seconds; None means the token does not expire
+    refresh_token: str | None = None
+    refresh_token_expires_in: int | None = None
 
     def __repr__(self) -> str:
-        return f"OAuthToken(scope={self.scope!r})"
+        return f"OAuthToken(scope={self.scope!r}, expires_in={self.expires_in!r})"
+
+
+def new_code_verifier() -> str:
+    # 64 random bytes -> 86 URL-safe characters, inside RFC 7636's 43-128 range.
+    return secrets.token_urlsafe(64)
+
+
+def code_challenge(verifier: str) -> str:
+    """RFC 7636 S256: base64url(sha256(verifier)) without padding."""
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
 @dataclass(frozen=True)
@@ -60,13 +83,17 @@ class GitHubIdentity:
     email: str  # verified; the primary address when it is verified
 
 
-def authorize_url(*, client_id: str, redirect_uri: str, scope: str, state: str) -> str:
+def authorize_url(
+    *, client_id: str, redirect_uri: str, scope: str, state: str, code_verifier: str
+) -> str:
     query = urlencode(
         {
             "client_id": client_id,
             "redirect_uri": redirect_uri,
             "scope": scope,
             "state": state,
+            "code_challenge": code_challenge(code_verifier),
+            "code_challenge_method": "S256",
         }
     )
     return f"{AUTHORIZE_URL}?{query}"
@@ -89,19 +116,33 @@ class GitHubOAuthClient:
     def close(self) -> None:
         self._http.close()
 
-    def exchange_code(self, code: str) -> OAuthToken:
+    def exchange_code(self, code: str, code_verifier: str) -> OAuthToken:
+        return self._request_token(
+            {
+                "code": code,
+                "code_verifier": code_verifier,
+                "redirect_uri": self._redirect_uri,
+            }
+        )
+
+    def refresh(self, refresh_token: str) -> OAuthToken:
+        """Trade a refresh token for a new pair. GitHub refresh tokens are single-use."""
+        return self._request_token(
+            {"grant_type": "refresh_token", "refresh_token": refresh_token}
+        )
+
+    def _request_token(self, grant: dict[str, str]) -> OAuthToken:
         resp = self._http.post(
             TOKEN_URL,
             headers={"Accept": "application/json"},
             data={
                 "client_id": self._client_id,
                 "client_secret": self._client_secret,
-                "code": code,
-                "redirect_uri": self._redirect_uri,
+                **grant,
             },
         )
         if resp.status_code != 200:
-            raise OAuthError(f"token exchange failed: HTTP {resp.status_code}")
+            raise OAuthError(f"token request failed: HTTP {resp.status_code}")
         try:
             body = resp.json()
         except ValueError as e:
@@ -113,7 +154,13 @@ class GitHubOAuthClient:
             token = _TokenResponse.model_validate(body)
         except ValidationError as e:
             raise OAuthError("malformed token response") from e
-        return OAuthToken(access_token=token.access_token, scope=token.scope)
+        return OAuthToken(
+            access_token=token.access_token,
+            scope=token.scope,
+            expires_in=token.expires_in,
+            refresh_token=token.refresh_token,
+            refresh_token_expires_in=token.refresh_token_expires_in,
+        )
 
     def fetch_identity(self, access_token: str) -> GitHubIdentity:
         headers = {
