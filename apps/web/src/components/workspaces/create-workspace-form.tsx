@@ -13,6 +13,7 @@ import {
 import { PageHeader } from "@/components/ui/page-layout";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { WorkspaceSummary } from "@/lib/api-types";
+import { routes } from "@/lib/routes";
 
 // Mirrors the limits enforced by POST /api/workspaces.
 export const NAME_MAX_LENGTH = 100;
@@ -85,7 +86,7 @@ export function CreateWorkspaceForm() {
   return (
     <section aria-labelledby="create-workspace-heading">
       <PageHeader
-        backHref="/workspaces"
+        backHref={routes.workspaceSelector}
         backLabel="All workspaces"
         description="A workspace holds the repositories and project memory for one team or project."
         headingId="create-workspace-heading"

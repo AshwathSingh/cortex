@@ -45,7 +45,7 @@ export function StandaloneAccountSettings() {
     <AccountSettings
       user={user}
       loadError={error}
-      backHref={routes.workspaces}
+      backHref={routes.workspaceSelector}
       backLabel="All workspaces"
     />
   );

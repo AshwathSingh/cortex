@@ -5,6 +5,7 @@ function workspacePath(workspaceId: string) {
 export const routes = {
   account: "/account",
   workspaces: "/workspaces",
+  workspaceSelector: "/workspaces?select=1",
   newWorkspace: "/workspaces/new",
   workspace: {
     home: (workspaceId: string) => workspacePath(workspaceId),

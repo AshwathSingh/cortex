@@ -43,6 +43,15 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("CreateWorkspaceForm", () => {
+  it("returns to the explicit workspace selector", () => {
+    render(<CreateWorkspaceForm />);
+
+    expect(screen.getByRole("link", { name: /all workspaces/i })).toHaveAttribute(
+      "href",
+      "/workspaces?select=1",
+    );
+  });
+
   it("posts the trimmed form and redirects to the new workspace", async () => {
     const fetchFn = mockFetch(201, CREATED);
     await submit("  Apollo  ", "Launch plans");
