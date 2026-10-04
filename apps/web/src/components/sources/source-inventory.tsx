@@ -8,9 +8,11 @@ import { buttonClassName } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { PageHeader, PageShell } from "@/components/ui/page-layout";
+import { useWorkspace } from "@/components/workspaces/workspace-context";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { WorkspaceSource } from "@/lib/api-types";
 import { routes } from "@/lib/routes";
+import { canManageSources } from "@/lib/workspace-permissions";
 
 type State =
   | { kind: "loading" }
@@ -44,6 +46,7 @@ function itemLabel(count: number, singular: string) {
 
 export function SourceInventory({ workspaceId }: { workspaceId: string }) {
   const router = useRouter();
+  const { workspace, isLoading: isWorkspaceLoading } = useWorkspace();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [requestVersion, setRequestVersion] = useState(0);
 
@@ -78,6 +81,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
   }, [requestVersion, router, workspaceId]);
 
   const sources = state.kind === "ready" ? state.sources : [];
+  const canAddSources = canManageSources(workspace?.role);
   const indexedItems = sources.reduce(
     (total, source) => total + source.total_items,
     0,
@@ -90,17 +94,17 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
         eyebrow="Knowledge inputs"
         title="Sources"
         description="Repositories Cortex uses to build this workspace's project memory."
-        action={
+        action={canAddSources ? (
           <Link
             href={routes.workspace.ingest(workspaceId)}
             className={buttonClassName({ variant: "primary" })}
           >
             Add repository
           </Link>
-        }
+        ) : undefined}
       />
 
-      {state.kind === "loading" ? (
+      {state.kind === "loading" || isWorkspaceLoading ? (
         <p role="status" className="mt-12 text-sm text-muted">
           Loading sources…
         </p>
@@ -122,23 +126,27 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
         </div>
       ) : null}
 
-      {state.kind === "ready" && sources.length === 0 ? (
+      {state.kind === "ready" && !isWorkspaceLoading && sources.length === 0 ? (
         <EmptyState
           icon={<RepositoryIcon />}
-          title="Connect your first source"
-          description="Add a GitHub repository to index its pull requests and issues."
-          action={
+          title={canAddSources ? "Connect your first source" : "No indexed sources yet"}
+          description={
+            canAddSources
+              ? "Add a GitHub repository to index its pull requests and issues."
+              : "Ask a workspace owner or editor to connect a GitHub repository."
+          }
+          action={canAddSources ? (
             <Link
               href={routes.workspace.ingest(workspaceId)}
               className={buttonClassName({ className: "mt-6" })}
             >
               Add GitHub repository
             </Link>
-          }
+          ) : undefined}
         />
       ) : null}
 
-      {state.kind === "ready" && sources.length > 0 ? (
+      {state.kind === "ready" && !isWorkspaceLoading && sources.length > 0 ? (
         <section aria-labelledby="indexed-sources-heading" className="mt-12">
           <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border/30 pb-4">
             <div>

@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { FormField } from "@/components/ui/form-field";
 import { PageHeader } from "@/components/ui/page-layout";
+import { useWorkspace } from "@/components/workspaces/workspace-context";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { IngestResult } from "@/lib/api-types";
 import { routes } from "@/lib/routes";
+import { canManageSources } from "@/lib/workspace-permissions";
 
 const fallbackMessages: Record<number, string> = {
   403: "You need edit access to this workspace to add a repository.",
@@ -32,6 +34,7 @@ type Status =
   | { kind: "error"; message: string };
 
 export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
+  const { workspace, isLoading: isWorkspaceLoading } = useWorkspace();
   const [repoUrl, setRepoUrl] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
@@ -64,16 +67,46 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
   }
 
   const isLoading = status.kind === "loading";
+  const header = (
+    <PageHeader
+      backHref={routes.workspace.sources(workspaceId)}
+      backLabel="Back to sources"
+      description="Build project memory from a GitHub repository."
+      headingId="ingest-heading"
+      title="Add a repository"
+    />
+  );
+
+  if (isWorkspaceLoading) {
+    return (
+      <section aria-labelledby="ingest-heading">
+        {header}
+        <p role="status" className="mt-10 text-sm text-muted">
+          Checking workspace access…
+        </p>
+      </section>
+    );
+  }
+
+  if (!canManageSources(workspace?.role)) {
+    return (
+      <section aria-labelledby="ingest-heading">
+        {header}
+        <div className="mt-10 border-y border-border/25 py-8">
+          <h2 className="text-base font-semibold text-foreground">
+            View-only access
+          </h2>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-muted">
+            Ask a workspace owner or editor to connect a GitHub repository.
+          </p>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section aria-labelledby="ingest-heading">
-      <PageHeader
-        backHref={routes.workspace.sources(workspaceId)}
-        backLabel="Back to sources"
-        description="Build project memory from a GitHub repository."
-        headingId="ingest-heading"
-        title="Add a repository"
-      />
+      {header}
 
       <form
         onSubmit={handleSubmit}
