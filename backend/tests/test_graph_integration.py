@@ -91,6 +91,30 @@ def test_ingested_data_renders_as_nodes_and_edges(graph, client):
         assert e["source"] in keys and e["target"] in keys
 
 
+def test_repeated_reads_return_the_same_order(graph, client):
+    """Ordering is what stops the canvas reshuffling between reloads.
+
+    Neo4j gives no ordering guarantee without ORDER BY, so this asserts against
+    a real server rather than the query text.
+    """
+    use_github(
+        [pull_request(n, ALICE) for n in range(1, 6)],
+        [issue(n, BOB) for n in range(10, 15)],
+    )
+    assert ingest_into(client, TEST_WORKSPACE_ID).status_code == 200
+
+    first = client.get(graph_url(TEST_WORKSPACE_ID)).json()
+    second = client.get(graph_url(TEST_WORKSPACE_ID)).json()
+
+    assert [n["key"] for n in first["nodes"]] == [n["key"] for n in second["nodes"]]
+    assert [(e["source"], e["target"]) for e in first["edges"]] == [
+        (e["source"], e["target"]) for e in second["edges"]
+    ]
+    # And the order is the documented one: primary label, then id.
+    keys = [n["key"] for n in first["nodes"]]
+    assert keys == sorted(keys, key=lambda k: (k.split(":")[0], int(k.split(":")[1])))
+
+
 def test_workspace_sees_only_its_own_nodes(graph, client):
     """AC: opening a workspace shows nodes only associated with that workspace."""
     use_github([pull_request(1, ALICE)], [issue(2, BOB)])

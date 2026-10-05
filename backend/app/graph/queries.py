@@ -37,10 +37,14 @@ def _label_predicate(variable: str) -> str:
     return " OR ".join(f"{variable}:{label}" for label in GRAPH_LABELS)
 
 
+# Both queries ORDER BY before LIMIT. Without it the limit slices an arbitrary
+# subset, so two requests against an unchanged workspace could return different
+# nodes and the canvas would reshuffle on reload for no reason.
 NODES_QUERY = f"""
 MATCH (n)
 WHERE ({_label_predicate("n")}) AND n.workspace_id = $workspace_id
 RETURN labels(n) AS labels, properties(n) AS props
+ORDER BY head(labels(n)), n.id
 LIMIT $limit
 """
 
@@ -51,6 +55,7 @@ WHERE ({_label_predicate("a")}) AND ({_label_predicate("b")})
 RETURN labels(a) AS source_labels, a.id AS source_id,
        labels(b) AS target_labels, b.id AS target_id,
        type(r) AS type
+ORDER BY head(labels(a)), a.id, head(labels(b)), b.id, type(r)
 LIMIT $limit
 """
 

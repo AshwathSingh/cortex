@@ -5,10 +5,12 @@ from fastapi import FastAPI
 from app.api import auth, graph, health, ingest, workspaces
 from app.db.neo4j_driver import close_driver
 from app.db.postgres import dispose_engine
+from app.security import validate_encryption_keys
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_encryption_keys()
     yield
     close_driver()
     dispose_engine()

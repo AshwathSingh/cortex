@@ -10,14 +10,30 @@ import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { GraphNodeType, WorkspaceGraph } from "@/lib/api-types";
 
-const NODE_TYPES: { type: GraphNodeType; label: string; colour: string }[] = [
-  { type: "Author", label: "Author", colour: "var(--cortex-graph-author)" },
+const NODE_TYPES: {
+  type: GraphNodeType;
+  label: string;
+  colour: string;
+  shapeClass: string;
+}[] = [
+  {
+    type: "Author",
+    label: "Author",
+    colour: "var(--cortex-graph-author)",
+    shapeClass: "rounded-full",
+  },
   {
     type: "PullRequest",
     label: "Pull request",
     colour: "var(--cortex-graph-pull-request)",
+    shapeClass: "rounded-[2px]",
   },
-  { type: "Issue", label: "Issue", colour: "var(--cortex-graph-issue)" },
+  {
+    type: "Issue",
+    label: "Issue",
+    colour: "var(--cortex-graph-issue)",
+    shapeClass: "rotate-45 rounded-[1px]",
+  },
 ];
 
 type State =
@@ -69,13 +85,17 @@ export function GraphView({ workspaceId }: { workspaceId: string }) {
           className="flex min-h-14 flex-wrap items-center justify-between gap-4 border-b border-[var(--cortex-graph-divider)] px-6 py-2"
         >
           <ul className="flex items-center gap-5" aria-label="Node types">
-            {NODE_TYPES.map(({ type, label, colour }) => (
+            {NODE_TYPES.map(({ type, label, colour, shapeClass }) => (
               <li key={type} className="flex items-center gap-2 text-xs text-muted">
                 <span
                   aria-hidden="true"
-                  className="size-2 rounded-full"
-                  style={{ backgroundColor: colour }}
-                />
+                  className="inline-flex size-3 items-center justify-center"
+                >
+                  <span
+                    className={`block size-2 border-2 ${shapeClass}`}
+                    style={{ borderColor: colour }}
+                  />
+                </span>
                 {label}
               </li>
             ))}

@@ -199,3 +199,71 @@ id that does not exist — the two are deliberately indistinguishable so nobody
 can probe which ids are real.
 
 Verify the Postgres connection at <http://localhost:8000/api/health/database>.
+
+## 10. GitHub sign-in (US-1)
+
+One-time setup per developer:
+
+1. Create an OAuth app at <https://github.com/settings/developers> →
+   **New OAuth App**. Homepage URL `http://localhost:3000`, **Authorization
+   callback URL** `http://localhost:3000/auth/github/callback` (must equal
+   `GITHUB_OAUTH_REDIRECT_URI`).
+2. Copy the client ID and a generated client secret into `.env` as
+   `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
+3. Generate `TOKEN_ENCRYPTION_KEY`:
+   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+4. Apply migrations: `python -m scripts.init_postgres_schema`.
+
+Until all three values are set, `/api/auth/github/*` returns `503`.
+
+Flow: "Continue with GitHub" → `GET /api/auth/github/login` records a one-time
+`oauth_transactions` row (hashed `state` + PKCE verifier), sets a 10-minute
+`state` cookie and redirects to GitHub with an S256 `code_challenge` → GitHub
+redirects to the frontend page `/auth/github/callback` → it `POST`s
+`{code, state}` to `/api/auth/github/callback` → the transaction is deleted
+before GitHub is contacted, so each state works once → the code is exchanged
+together with the verifier → session cookie set, redirect to `/workspaces`.
+A state mismatch, replayed or expired state, rejected code or GitHub account
+with no verified email returns `401` and creates nothing.
+
+GitHub tokens are stored Fernet-encrypted in `github_credentials` and never
+included in an API response. Classic OAuth App tokens do not expire. If GitHub
+issues expiring tokens (a GitHub App with token expiration on), the refresh
+token and both expiry times are stored too, and
+`app.services.github_credentials.get_github_access_token` refreshes on demand.
+Postgres is opened with `hide_parameters=True`, so bound values never appear in
+SQL logs or database error messages.
+
+A GitHub email that matches an existing email/password account returns `409`
+rather than linking the two: signup emails are not verified, so auto-linking
+would let whoever registered the address first take over the GitHub user's
+account.
+
+### Rotating the token key
+
+1. Generate a new key. Set it as `TOKEN_ENCRYPTION_KEY`, move the old one to
+   `TOKEN_ENCRYPTION_PREVIOUS_KEYS`, restart the API. Both keys now decrypt; new
+   writes use the new key.
+2. `python -m scripts.rotate_token_key` re-encrypts every stored token.
+3. Remove the old key from `TOKEN_ENCRYPTION_PREVIOUS_KEYS` and restart.
+
+If a key is lost, nobody is locked out: signing in with GitHub overwrites the
+stored token without reading it, and code that reads a token gets
+`GitHubReauthRequired` (and the row is deleted) instead of a crash. To clean up
+eagerly, run `python -m scripts.rotate_token_key --purge-unreadable`.
+
+### Rate limiting
+
+Both `/api/auth/github/*` endpoints allow `OAUTH_RATE_LIMIT_PER_MINUTE` requests
+per client IP and return `429` with `Retry-After` beyond that. Counters live in
+process memory, so with several workers or hosts each keeps its own; move them
+to a shared store before scaling out. Behind a proxy, run uvicorn with
+`--proxy-headers --forwarded-allow-ips=<proxy ip>` so it limits real client
+IPs, not the proxy's (127.0.0.1 is trusted by default).
+
+### Dependency audit
+
+```
+pip install pip-audit   # in a separate venv, so it is not a project dependency
+pip freeze > /tmp/installed.txt && pip-audit -r /tmp/installed.txt --no-deps --disable-pip
+```

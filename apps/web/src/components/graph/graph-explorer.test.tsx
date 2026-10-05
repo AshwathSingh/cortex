@@ -1,13 +1,17 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { GraphCanvas, nodeColour } from "@/components/graph/graph-canvas";
+import {
+  GraphCanvas,
+  nodeColour,
+  nodeShape,
+} from "@/components/graph/graph-canvas";
 import { GraphExplorer } from "@/components/graph/graph-explorer";
 import type { GraphEdge, GraphNode, WorkspaceGraph } from "@/lib/api-types";
 
 const WORKSPACE_ID = "ccccccc0-0000-4000-8000-00000000c0de";
-/** Each node renders as halo fill + ring stroke + centre dot. */
-const ARCS_PER_NODE = 3;
+/** Each node renders as halo fill + ring stroke + centre mark. */
+const PATHS_PER_NODE = 3;
 
 // The router object must be STABLE across renders. `useRouter` is in the
 // effect's dependency list, so returning a fresh object each call re-runs the
@@ -38,6 +42,8 @@ function stubCanvas(): Ctx2D {
     lineTo: vi.fn(),
     stroke: vi.fn(),
     arc: vi.fn(),
+    rect: vi.fn(),
+    closePath: vi.fn(),
     fill: vi.fn(),
     fillText: vi.fn(),
     setTransform: vi.fn(),
@@ -102,12 +108,22 @@ afterEach(() => {
 });
 
 describe("GraphCanvas", () => {
-  it("draws a ring, halo and centre dot for every node", () => {
+  it("draws a ring, halo and centre mark for every node", () => {
     const ctx = stubCanvas();
     render(<GraphCanvas nodes={NODES} edges={[]} />);
-    expect(ctx.arc).toHaveBeenCalledTimes(NODES.length * ARCS_PER_NODE);
+    expect(ctx.beginPath).toHaveBeenCalledTimes(NODES.length * PATHS_PER_NODE);
     expect(ctx.fill).toHaveBeenCalled();
     expect(ctx.stroke).toHaveBeenCalled();
+  });
+
+  it("distinguishes node types by shape, not only by colour", () => {
+    expect(new Set(["Author", "PullRequest", "Issue"].map(nodeShape)).size).toBe(3);
+
+    const ctx = stubCanvas();
+    render(<GraphCanvas nodes={NODES} edges={[]} />);
+    expect(ctx.arc).toHaveBeenCalled();
+    expect(ctx.rect).toHaveBeenCalled();
+    expect(ctx.closePath).toHaveBeenCalled();
   });
 
   it("uses a resolvable font and pixel-snapped labels (crispness)", () => {
@@ -129,9 +145,11 @@ describe("GraphCanvas", () => {
 
   it("draws one line per edge", () => {
     const ctx = stubCanvas();
-    render(<GraphCanvas nodes={NODES} edges={EDGES} />);
-    expect(ctx.moveTo).toHaveBeenCalledTimes(EDGES.length);
-    expect(ctx.lineTo).toHaveBeenCalledTimes(EDGES.length);
+    const nodes = NODES.slice(0, 2); // circle + square; neither uses lineTo
+    const edges = EDGES.slice(0, 1);
+    render(<GraphCanvas nodes={nodes} edges={edges} />);
+    expect(ctx.moveTo).toHaveBeenCalledTimes(edges.length);
+    expect(ctx.lineTo).toHaveBeenCalledTimes(edges.length);
     // stroke() also draws each node's rim, so it runs more often than once per edge.
     expect(ctx.stroke).toHaveBeenCalled();
   });
@@ -151,7 +169,7 @@ describe("GraphCanvas", () => {
       node(`PullRequest:${i}`, "PullRequest", `#${i} a reasonably long title`),
     );
     render(<GraphCanvas nodes={many} edges={[]} />);
-    expect(ctx.arc).toHaveBeenCalledTimes(120 * ARCS_PER_NODE);
+    expect(ctx.beginPath).toHaveBeenCalledTimes(120 * PATHS_PER_NODE);
     expect(ctx.fillText.mock.calls.length).toBeGreaterThan(0);
     expect(ctx.fillText.mock.calls.length).toBeLessThan(120);
   });

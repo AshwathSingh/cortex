@@ -16,14 +16,6 @@
   --cortex-accent-hover: #315bc9;
   --cortex-accent-bright: #78a0ff;
   --cortex-composer-background: #0d1016;
-  --cortex-graph-author: #78a0ff;
-  --cortex-graph-pull-request: #7ddfa0;
-  --cortex-graph-issue: #e0a86a;
-  --cortex-graph-edge: rgb(120 160 255 / 22%);
-  --cortex-graph-edge-strong: rgb(120 160 255 / 38%);
-  --cortex-graph-label: #c7cedd;
-  --cortex-graph-label-muted: #8b94a6;
-  --cortex-graph-divider: rgb(98 136 202 / 16%);
   --cortex-page-gutter: clamp(1.25rem, 5vw, 5.75rem);
   --cortex-content-width: 87.5rem;
 
@@ -48,6 +40,20 @@
   --cortex-role-owner: #78a0ff;
   --cortex-role-editor: #b08cff;
   --cortex-role-viewer: #e0a86a;
+
+  /* Graph Explorer. The canvas cannot read a CSS variable through
+     ctx.fillStyle, so graph-canvas.tsx resolves these off the element with
+     getComputedStyle -- keep the names in sync with GRAPH_TOKENS there.
+     Colour alone never distinguishes a node type; each also has a shape. */
+  --cortex-graph-author: #78a0ff;
+  --cortex-graph-pull-request: #7ddfa0;
+  --cortex-graph-issue: #e0a86a;
+  --cortex-graph-node-unknown: #a4adbd;
+  --cortex-graph-edge: rgb(120 160 255 / 22%);
+  --cortex-graph-edge-hub: rgb(120 160 255 / 38%);
+  --cortex-graph-label: #c7cedd;
+  --cortex-graph-label-dim: #8b94a6;
+  --cortex-graph-divider: rgb(98 136 202 / 16%);
 }
 
 @theme inline {
@@ -66,6 +72,9 @@
   --color-role-owner: var(--cortex-role-owner);
   --color-role-editor: var(--cortex-role-editor);
   --color-role-viewer: var(--cortex-role-viewer);
+  --color-graph-author: var(--cortex-graph-author);
+  --color-graph-pull-request: var(--cortex-graph-pull-request);
+  --color-graph-issue: var(--cortex-graph-issue);
   --font-sans: var(--font-geist-sans);
   --radius-panel: 1.5rem;
   --radius-control: 0.875rem;

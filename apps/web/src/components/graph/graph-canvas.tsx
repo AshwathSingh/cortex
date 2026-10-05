@@ -12,7 +12,16 @@ export const NODE_COLOURS: Record<GraphNodeType, string> = {
   Issue: "#e0a86a",
 };
 
+export type NodeShape = "circle" | "square" | "diamond";
+
+export const NODE_SHAPES: Record<GraphNodeType, NodeShape> = {
+  Author: "circle",
+  PullRequest: "square",
+  Issue: "diamond",
+};
+
 const FALLBACK_COLOUR = "#a4adbd";
+const FALLBACK_SHAPE: NodeShape = "circle";
 const AUTHOR_RADIUS = 19;
 const LEAF_RADIUS = 11;
 const AUTHOR_GROWTH = 1.1;
@@ -34,6 +43,10 @@ export function nodeColour(type: string): string {
   return NODE_COLOURS[type as GraphNodeType] ?? FALLBACK_COLOUR;
 }
 
+export function nodeShape(type: string): NodeShape {
+  return NODE_SHAPES[type as GraphNodeType] ?? FALLBACK_SHAPE;
+}
+
 function cssValue(
   styles: CSSStyleDeclaration | null,
   property: string,
@@ -42,12 +55,44 @@ function cssValue(
   return styles?.getPropertyValue(property).trim() || fallback;
 }
 
-function withAlpha(hex: string, alpha: number): string {
-  const value = hex.replace("#", "");
+function withAlpha(colour: string, alpha: number): string {
+  const hex = colour.trim();
+  if (!/^#[0-9a-f]{6}$/i.test(hex)) return hex;
+  const value = hex.slice(1);
   const r = parseInt(value.slice(0, 2), 16);
   const g = parseInt(value.slice(2, 4), 16);
   const b = parseInt(value.slice(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function tracePath(
+  ctx: CanvasRenderingContext2D,
+  shape: NodeShape,
+  x: number,
+  y: number,
+  radius: number,
+) {
+  ctx.beginPath();
+  if (shape === "circle") {
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    return;
+  }
+  if (shape === "square") {
+    const halfExtent = radius * 0.88;
+    ctx.rect(
+      x - halfExtent,
+      y - halfExtent,
+      halfExtent * 2,
+      halfExtent * 2,
+    );
+    return;
+  }
+  const diamondExtent = radius * 1.18;
+  ctx.moveTo(x, y - diamondExtent);
+  ctx.lineTo(x + diamondExtent, y);
+  ctx.lineTo(x, y + diamondExtent);
+  ctx.lineTo(x - diamondExtent, y);
+  ctx.closePath();
 }
 
 function overlaps(a: Box, b: Box): boolean {
@@ -131,13 +176,13 @@ export function GraphCanvas({
       );
       const hubEdgeColour = cssValue(
         styles,
-        "--cortex-graph-edge-strong",
+        "--cortex-graph-edge-hub",
         "rgba(120, 160, 255, 0.38)",
       );
       const labelColour = cssValue(styles, "--cortex-graph-label", "#c7cedd");
       const dimLabelColour = cssValue(
         styles,
-        "--cortex-graph-label-muted",
+        "--cortex-graph-label-dim",
         "#8b94a6",
       );
       const byKey = new Map(nodes.map((node) => [node.key, node]));
@@ -188,25 +233,23 @@ export function GraphCanvas({
           const placed = drawOrder[i];
           const node = byKey.get(placed.key);
           const colour = node ? colours[node.type] : FALLBACK_COLOUR;
+          const shape = nodeShape(node?.type ?? "");
 
-          ctx.beginPath();
-          ctx.arc(placed.x, placed.y, placed.radius, 0, Math.PI * 2);
+          tracePath(ctx, shape, placed.x, placed.y, placed.radius);
           ctx.fillStyle = withAlpha(colour, HALO_ALPHA);
           ctx.fill();
 
-          ctx.beginPath();
-          ctx.arc(placed.x, placed.y, placed.radius, 0, Math.PI * 2);
+          tracePath(ctx, shape, placed.x, placed.y, placed.radius);
           ctx.lineWidth = RING_WIDTH;
           ctx.strokeStyle = colour;
           ctx.stroke();
 
-          ctx.beginPath();
-          ctx.arc(
+          tracePath(
+            ctx,
+            shape,
             placed.x,
             placed.y,
             Math.max(2.5, placed.radius * CORE_RATIO),
-            0,
-            Math.PI * 2,
           );
           ctx.fillStyle = colour;
           ctx.fill();

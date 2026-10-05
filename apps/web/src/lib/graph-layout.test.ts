@@ -13,7 +13,7 @@ function keys(n: number): string[] {
   return Array.from({ length: n }, (_, i) => `PullRequest:${i}`);
 }
 
-function allFinite(nodes: { x: number; y: number }[]): boolean {
+function allFinite(nodes: readonly { x: number; y: number }[]): boolean {
   return nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y));
 }
 
@@ -105,7 +105,7 @@ describe("GraphSimulation", () => {
     linked.run();
     loose.run();
 
-    const meanSpread = (nodes: { x: number; y: number }[]) => {
+    const meanSpread = (nodes: readonly { x: number; y: number }[]) => {
       let total = 0;
       let pairs = 0;
       for (let i = 0; i < nodes.length; i += 1) {
@@ -186,16 +186,41 @@ describe("collision separation", () => {
     }
   });
 
-  it("carries each node's radius and charge through", () => {
+  it("exposes radius but keeps physics state off the public node type", () => {
     const sim = new GraphSimulation(
       [{ key: "Author:1", radius: 22, charge: 2.4 }, "PullRequest:1"],
       [],
       SIZE,
     );
     expect(sim.nodeAt("Author:1")?.radius).toBe(22);
-    expect(sim.nodeAt("Author:1")?.charge).toBe(2.4);
     // Plain string entries still work, so existing callers are unaffected.
     expect(sim.nodeAt("PullRequest:1")?.radius).toBe(DEFAULT_RADIUS);
+    // `charge` and `vx`/`vy` are intentionally absent from LayoutNode; the
+    // renderer has no business reading them.
+    expect("charge" in (sim.nodes[0] as object)).toBe(true); // present at runtime
+  });
+
+  it("gives a high-charge node more room than a low-charge one", () => {
+    // Charge is no longer readable, so assert what it is FOR: hubs push harder
+    // and end up further from their neighbours.
+    const spread = (charge: number) => {
+      const sim = new GraphSimulation(
+        [
+          { key: "Author:1", radius: 12, charge },
+          "PullRequest:1",
+          "PullRequest:2",
+          "PullRequest:3",
+        ],
+        [],
+        SIZE,
+      );
+      sim.run();
+      const hub = sim.nodeAt("Author:1")!;
+      const others = sim.nodes.filter((n) => n.key !== "Author:1");
+      return Math.min(...others.map((n) => distance(hub, n)));
+    };
+
+    expect(spread(3)).toBeGreaterThan(spread(1));
   });
 
   it("keeps every node inside the viewport when clamped", () => {
