@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
 
 if TYPE_CHECKING:
+    from app.models.github_credential import GitHubCredential
     from app.models.session import UserSession
     from app.models.workspace import WorkspaceMembership
 
@@ -17,7 +18,7 @@ class User(Base):
     """Authentication identity and profile stored in Postgres.
 
     Password hashes are nullable because GitHub-only accounts do not have a
-    Cortex password. OAuth access tokens and sessions belong in separate tables.
+    Cortex password. OAuth access tokens (``GitHubCredential``) and sessions live in separate tables.
     """
 
     __tablename__ = "users"
@@ -52,6 +53,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     sessions: Mapped[list["UserSession"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    github_credential: Mapped["GitHubCredential | None"] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
 
