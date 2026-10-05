@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { GraphCanvas, NODE_COLOURS } from "@/components/graph/graph-canvas";
+import { GraphCanvas } from "@/components/graph/graph-canvas";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { GraphNodeType, WorkspaceGraph } from "@/lib/api-types";
@@ -19,12 +19,37 @@ import type { GraphNodeType, WorkspaceGraph } from "@/lib/api-types";
  * Only Author / PullRequest / Issue are legended, because that is all the graph
  * holds. Requirement, Decision and Evidence come from the Connection Agent, which
  * is not built.
+ *
+ * Each swatch repeats the canvas's shape as well as its colour, so the legend is
+ * still usable without colour vision. Colours come from the --cortex-graph-*
+ * tokens in globals.css, the same ones graph-canvas.tsx resolves.
  */
 
-const LEGEND: { type: GraphNodeType; label: string }[] = [
-  { type: "Author", label: "Author" },
-  { type: "PullRequest", label: "Pull request" },
-  { type: "Issue", label: "Issue" },
+const LEGEND: {
+  type: GraphNodeType;
+  label: string;
+  colour: string;
+  /** Mirrors NODE_SHAPES in graph-canvas.tsx. */
+  shapeClass: string;
+}[] = [
+  {
+    type: "Author",
+    label: "Author",
+    colour: "var(--cortex-graph-author)",
+    shapeClass: "rounded-full",
+  },
+  {
+    type: "PullRequest",
+    label: "Pull request",
+    colour: "var(--cortex-graph-pull-request)",
+    shapeClass: "rounded-[2px]",
+  },
+  {
+    type: "Issue",
+    label: "Issue",
+    colour: "var(--cortex-graph-issue)",
+    shapeClass: "rotate-45 rounded-[1px]",
+  },
 ];
 
 type State =
@@ -86,13 +111,17 @@ export function GraphView({
 
         {graph && !isEmpty ? (
           <ul className="flex flex-wrap items-center gap-4" aria-label="Node types">
-            {LEGEND.map(({ type, label }) => (
+            {LEGEND.map(({ type, label, colour, shapeClass }) => (
               <li key={type} className="flex items-center gap-2 text-sm text-muted">
                 <span
                   aria-hidden="true"
-                  className="inline-block size-3 rounded-full"
-                  style={{ backgroundColor: NODE_COLOURS[type] }}
-                />
+                  className="inline-flex size-3.5 items-center justify-center"
+                >
+                  <span
+                    className={`block size-2.5 border-2 ${shapeClass}`}
+                    style={{ borderColor: colour }}
+                  />
+                </span>
                 {label}
               </li>
             ))}

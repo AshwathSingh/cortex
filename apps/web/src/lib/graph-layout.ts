@@ -37,13 +37,24 @@ export type NodeSpec = {
   charge?: number;
 };
 
+/**
+ * What the renderer sees: where to draw a node and how big. Velocity, charge and
+ * everything else the integrator mutates stay on `SimulationNode` below, so a
+ * consumer cannot accidentally depend on (or corrupt) the physics state.
+ */
 export type LayoutNode = {
-  key: string;
+  readonly key: string;
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+};
+
+/** Internal: a node plus the mutable state the integrator needs. */
+export type SimulationNode = LayoutNode & {
   x: number;
   y: number;
   vx: number;
   vy: number;
-  radius: number;
   charge: number;
 };
 
@@ -106,14 +117,18 @@ export function seedNodes(
   nodes: readonly (string | NodeSpec)[],
   width: number,
   height: number,
-): LayoutNode[] {
+): SimulationNode[] {
   const cx = width / 2;
   const cy = height / 2;
   const radius = Math.min(width, height) / 2.2;
 
-  return nodes.map((entry, index) => {
-    const spec = toSpec(entry);
-    const t = nodes.length > 1 ? index / (nodes.length - 1) : 0;
+  // Seed position depends on index, so the caller's ordering would otherwise
+  // decide the layout. Sorting by key makes the result identical no matter what
+  // order the API returned -- the same graph lays out the same way every reload.
+  const ordered = [...nodes].map(toSpec).sort((a, b) => a.key.localeCompare(b.key));
+
+  return ordered.map((spec, index) => {
+    const t = ordered.length > 1 ? index / (ordered.length - 1) : 0;
     // Golden angle keeps successive nodes apart instead of forming spokes.
     const angle = index * 2.39996 + (hashKey(spec.key) % 360) * (Math.PI / 180) * 0.15;
     const r = radius * Math.sqrt(t) || radius * 0.1;
@@ -130,8 +145,10 @@ export function seedNodes(
 }
 
 export class GraphSimulation {
-  readonly nodes: LayoutNode[];
-  private readonly index: Map<string, LayoutNode>;
+  /** Exposed as position data only; the objects carry physics state internally. */
+  readonly nodes: readonly LayoutNode[];
+  private readonly sim: SimulationNode[];
+  private readonly index: Map<string, SimulationNode>;
   private readonly edges: LayoutEdge[];
   private readonly opts: Required<SimulationOptions>;
   private alphaValue = ALPHA_START;
@@ -142,8 +159,9 @@ export class GraphSimulation {
     options: SimulationOptions,
   ) {
     this.opts = { ...DEFAULTS, ...options };
-    this.nodes = seedNodes(nodes, this.opts.width, this.opts.height);
-    this.index = new Map(this.nodes.map((node) => [node.key, node]));
+    this.sim = seedNodes(nodes, this.opts.width, this.opts.height);
+    this.nodes = this.sim;
+    this.index = new Map(this.sim.map((node) => [node.key, node]));
     // Drop edges naming a node we weren't given, so a malformed payload can't
     // crash the render loop. The API already filters these; belt and braces.
     this.edges = edges.filter(
@@ -164,12 +182,12 @@ export class GraphSimulation {
   }
 
   /** Advance one frame. Returns the node list for convenience. */
-  tick(): LayoutNode[] {
+  tick(): readonly LayoutNode[] {
     const { repulsion, springLength, springStrength, centering, damping } = this.opts;
     const cx = this.opts.width / 2;
     const cy = this.opts.height / 2;
     const a = this.alphaValue;
-    const nodes = this.nodes;
+    const nodes = this.sim;
 
     for (let i = 0; i < nodes.length; i += 1) {
       const node = nodes[i];
@@ -232,7 +250,7 @@ export class GraphSimulation {
    */
   private separate(): void {
     const pad = this.opts.collisionPadding;
-    const nodes = this.nodes;
+    const nodes = this.sim;
     for (let i = 0; i < nodes.length; i += 1) {
       for (let j = i + 1; j < nodes.length; j += 1) {
         const a = nodes[i];
@@ -257,7 +275,7 @@ export class GraphSimulation {
   /** Keep every node inside the viewport, accounting for its radius. */
   clampToBounds(margin = 8): void {
     const { width, height } = this.opts;
-    for (const node of this.nodes) {
+    for (const node of this.sim) {
       const r = node.radius + margin;
       node.x = Math.min(width - r, Math.max(r, node.x));
       node.y = Math.min(height - r, Math.max(r, node.y));
@@ -265,7 +283,7 @@ export class GraphSimulation {
   }
 
   /** Run to settled without rendering. Used for tests and for a static image. */
-  run(maxTicks = 500): LayoutNode[] {
+  run(maxTicks = 500): readonly LayoutNode[] {
     let ticks = 0;
     while (!this.settled && ticks < maxTicks) {
       this.tick();
@@ -283,7 +301,7 @@ export class GraphSimulation {
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    for (const node of this.nodes) {
+    for (const node of this.sim) {
       if (node.x < minX) minX = node.x;
       if (node.y < minY) minY = node.y;
       if (node.x > maxX) maxX = node.x;

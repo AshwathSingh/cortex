@@ -112,6 +112,23 @@ def test_edges_require_both_endpoints_in_the_workspace():
     assert where.count("workspace_id = $workspace_id") == 2
 
 
+def test_both_queries_order_before_limiting():
+    """An unordered LIMIT slices an arbitrary subset.
+
+    Two requests against an unchanged workspace would then return different
+    nodes, and the canvas would reshuffle on reload for no reason.
+    """
+    for query in (NODES_QUERY, EDGES_QUERY):
+        assert "ORDER BY" in query, query
+        assert query.index("ORDER BY") < query.index("LIMIT"), query
+
+
+def test_ordering_matches_the_node_key_the_client_builds():
+    # node_key() is "{label}:{id}", so ordering by label then id keeps the
+    # truncated set aligned with how the client identifies nodes.
+    assert "ORDER BY head(labels(n)), n.id" in NODES_QUERY
+
+
 def test_queries_are_restricted_to_known_labels():
     for label in GRAPH_LABELS:
         assert f"n:{label}" in NODES_QUERY
