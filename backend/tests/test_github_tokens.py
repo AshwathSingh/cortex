@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import select, text
+from sqlalchemy.dialects import postgresql
 
 from app.api.rate_limit import RateLimiter
 from app.config import Settings, settings
@@ -30,10 +31,11 @@ from app.security import (
 )
 from app.services.github_credentials import (
     GitHubReauthRequired,
+    GitHubUnavailable,
     get_github_access_token,
     save_github_token,
 )
-from scripts.rotate_token_key import rotate
+from scripts.rotate_token_key import locked_credentials_query, rotate
 from tests.test_github_oauth import FakeGitHub, oauth_client
 
 NOW = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)
@@ -186,6 +188,13 @@ def test_rotation_script_leaves_unreadable_rows_unless_asked(api_db, keys):
     assert (report.unreadable, report.purged, remaining) == (1, 0, 1)
 
 
+def test_rotation_locks_the_rows_it_rewrites():
+    # SQLite has no row locks, so check the statement Postgres would receive.
+    sql = str(locked_credentials_query().compile(dialect=postgresql.dialect()))
+    assert sql.rstrip().endswith("FOR UPDATE")
+    assert "ORDER BY github_credentials.user_id" in sql
+
+
 # -- Reading tokens: refresh and re-auth ---------------------------------------
 
 
@@ -271,14 +280,51 @@ def test_token_about_to_expire_is_refreshed_and_both_tokens_replaced(stored):
         ) == later + timedelta(hours=8)
 
 
-def test_rejected_refresh_discards_the_credential(stored):
+def test_revoked_refresh_token_discards_the_credential(stored):
     sessions, user_id = stored
     save(sessions, user_id, EXPIRING)
-    github = FakeGitHub()  # refresh_response is an error by default
+    github = FakeGitHub()  # refresh_response is bad_refresh_token by default
 
     with pytest.raises(GitHubReauthRequired):
         read_token(sessions, user_id, github, at=NOW + timedelta(hours=9))
     assert credential_count(sessions) == 0
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(429, json={"message": "rate limited"}),
+        httpx.Response(500),
+        httpx.Response(502, text="<html>bad gateway</html>"),
+        httpx.Response(200, text="<html>not json</html>"),
+        httpx.Response(200, json={"error": "incorrect_client_credentials"}),
+    ],
+    ids=["429", "500", "502", "malformed", "our-misconfiguration"],
+)
+def test_temporary_refresh_failure_keeps_the_credential(stored, response):
+    sessions, user_id = stored
+    save(sessions, user_id, EXPIRING)
+    github = FakeGitHub()
+    github.refresh_response = response
+
+    with pytest.raises(GitHubUnavailable):
+        read_token(sessions, user_id, github, at=NOW + timedelta(hours=9))
+
+    with sessions() as session:
+        credential = session.scalar(select(GitHubCredential))
+        assert (credential.access_token, credential.refresh_token) == ("gho_old", "ghr_old")
+
+
+def test_network_error_during_refresh_keeps_the_credential(stored):
+    sessions, user_id = stored
+    save(sessions, user_id, EXPIRING)
+
+    def unreachable(request):
+        raise httpx.ConnectError("down", request=request)
+
+    with pytest.raises(GitHubUnavailable):
+        read_token(sessions, user_id, unreachable, at=NOW + timedelta(hours=9))
+    assert credential_count(sessions) == 1
 
 
 def test_expired_refresh_token_requires_reauth_without_contacting_github(stored):

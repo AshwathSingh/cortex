@@ -12,20 +12,44 @@ Recovery (a key was lost): rows no configured key can decrypt are reported. Pass
 --purge-unreadable to delete them; those users get a new token the next time they
 sign in with GitHub, which works even before the purge.
 
-Reads and writes ciphertext with raw SQL so the ORM's EncryptedString never
-decrypts a row it cannot read. Safe to re-run.
+Reads and writes ciphertext through untyped columns so the ORM's
+EncryptedString never decrypts a row it cannot read. Every row is locked
+(SELECT ... FOR UPDATE) for the whole run, which is one transaction: a sign-in
+or token refresh touching the same user waits until rotation commits, so neither
+side overwrites the other. Safe to re-run.
 """
 
 import argparse
 from dataclasses import dataclass
 
 from cryptography.fernet import InvalidToken
-from sqlalchemy import Connection, text
+from sqlalchemy import Connection, column, select, table, text
 
 from app.db.postgres import dispose_engine, get_engine
 from app.security import rotate_secret, validate_encryption_keys
 
 _ENCRYPTED = ("access_token", "refresh_token")
+
+# Untyped on purpose: the raw ciphertext, not the ORM's decrypted value.
+_credentials = table(
+    "github_credentials",
+    column("user_id"),
+    column("access_token"),
+    column("refresh_token"),
+)
+
+
+def locked_credentials_query():
+    """Every credential row, locked until the caller's transaction ends.
+
+    Ordered so concurrent lockers always take rows in the same order. SQLite
+    (the test database) has no row locks and its dialect omits FOR UPDATE.
+    """
+    return (
+        select(_credentials)
+        .order_by(_credentials.c.user_id)
+        .with_for_update()
+    )
 
 
 @dataclass
@@ -36,18 +60,17 @@ class RotationReport:
 
 
 def rotate(connection: Connection, *, purge_unreadable: bool = False) -> RotationReport:
-    """Rotate every github_credentials row. Does not commit."""
+    """Rotate every github_credentials row. Does not commit: the caller's
+    transaction holds the row locks until it does."""
     report = RotationReport()
-    rows = connection.execute(
-        text("SELECT user_id, access_token, refresh_token FROM github_credentials")
-    ).all()
+    rows = connection.execute(locked_credentials_query()).all()
 
     for row in rows:
         try:
             values = {
-                column: None if row._mapping[column] is None
-                else rotate_secret(row._mapping[column])
-                for column in _ENCRYPTED
+                name: None if row._mapping[name] is None
+                else rotate_secret(row._mapping[name])
+                for name in _ENCRYPTED
             }
         except InvalidToken:
             report.unreadable += 1

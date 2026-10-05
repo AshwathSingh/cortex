@@ -21,7 +21,16 @@ API_BASE = "https://api.github.com"
 
 
 class OAuthError(Exception):
-    """GitHub rejected the sign-in, or returned an identity Cortex cannot use."""
+    """GitHub rejected the sign-in, or returned an identity Cortex cannot use.
+
+    ``code`` is GitHub's ``error`` field (e.g. ``bad_refresh_token``) when the
+    token endpoint answered with one, and None for HTTP failures (429, 5xx) or
+    malformed responses -- which may be temporary.
+    """
+
+    def __init__(self, message: str, *, code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 class _Payload(BaseModel):
@@ -149,7 +158,7 @@ class GitHubOAuthClient:
             raise OAuthError("malformed token response") from e
         # GitHub reports a bad or expired code as 200 {"error": ...}, not a 4xx.
         if isinstance(body, dict) and "error" in body:
-            raise OAuthError(str(body["error"]))
+            raise OAuthError(str(body["error"]), code=str(body["error"]))
         try:
             token = _TokenResponse.model_validate(body)
         except ValidationError as e:

@@ -4,15 +4,19 @@ Two rules keep a lost or rotated encryption key from locking anyone out:
 
 - Saving never reads the old row, so sign-in works even when the stored
   ciphertext is unreadable. A fresh sign-in is always the recovery path.
-- Reading treats an unreadable, expired or unrefreshable credential the same
-  way: delete it and raise ``GitHubReauthRequired``, so the caller can send the
-  user back through GitHub sign-in rather than fail with a 500.
+- Reading treats a credential that can never work again -- unreadable, refresh
+  token expired, or refresh rejected as ``bad_refresh_token`` -- the same way:
+  delete it and raise ``GitHubReauthRequired``, so the caller can send the user
+  back through GitHub sign-in rather than fail with a 500. A failure that may be
+  temporary (GitHub 429/5xx, network error) keeps the credential and raises
+  ``GitHubUnavailable`` instead.
 """
 
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from cryptography.fernet import InvalidToken
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
@@ -23,6 +27,11 @@ from app.models import GitHubCredential
 # Refresh this long before expiry, so a token is not handed out to die mid-request.
 EXPIRY_SKEW = timedelta(minutes=5)
 
+# Token-endpoint errors that mean this refresh token will never work again.
+# Anything else -- including our own misconfiguration, such as
+# incorrect_client_credentials -- must not wipe users' credentials.
+PERMANENT_REFRESH_ERRORS = frozenset({"bad_refresh_token"})
+
 Clock = Callable[[], datetime]
 
 
@@ -32,6 +41,11 @@ def _utcnow() -> datetime:
 
 class GitHubReauthRequired(Exception):
     """The user has no usable GitHub token and must sign in with GitHub again."""
+
+
+class GitHubUnavailable(Exception):
+    """Refreshing failed in a way that may be temporary; the credential is kept.
+    Retry later."""
 
 
 def _expiry(now: datetime, seconds: int | None) -> datetime | None:
@@ -81,7 +95,8 @@ def get_github_access_token(
     """A currently valid access token for the user, refreshing it if needed.
 
     Commits when it refreshes or discards a credential. Raises
-    ``GitHubReauthRequired`` when there is no usable token.
+    ``GitHubReauthRequired`` when there is no usable token, and
+    ``GitHubUnavailable`` when a refresh failed but may succeed later.
     """
     try:
         # FOR UPDATE: GitHub refresh tokens are single-use, so two requests must
@@ -106,8 +121,14 @@ def get_github_access_token(
 
     try:
         token = oauth.refresh(credential.refresh_token)
-    except OAuthError:
-        raise _discard(session, user_id) from None
+    except OAuthError as error:
+        if error.code in PERMANENT_REFRESH_ERRORS:
+            raise _discard(session, user_id) from None
+        session.rollback()  # release the row lock; the credential is untouched
+        raise GitHubUnavailable() from error
+    except httpx.TransportError as error:
+        session.rollback()
+        raise GitHubUnavailable() from error
 
     credential.access_token = token.access_token
     credential.scope = token.scope or credential.scope
