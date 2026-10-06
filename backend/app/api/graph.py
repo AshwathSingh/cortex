@@ -12,6 +12,7 @@ Neo4j.
 """
 
 import uuid
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from neo4j import Driver
@@ -23,7 +24,9 @@ from app.db.neo4j_driver import get_driver
 from app.graph.queries import (
     DEFAULT_EDGE_LIMIT,
     DEFAULT_NODE_LIMIT,
+    fetch_edge_details,
     fetch_graph,
+    fetch_node_details,
     fetch_source_summaries,
 )
 
@@ -59,6 +62,40 @@ class SourceSummary(BaseModel):
     pull_requests: int
     issues: int
     total_items: int
+
+
+class GraphOrigin(BaseModel):
+    key: str
+    type: str
+    title: str
+    url: str
+    relationship: str | None = None
+    direction: Literal["incoming", "outgoing"] | None = None
+
+
+class GraphNodeDetails(BaseModel):
+    key: str
+    id: int | str | None = None
+    type: str
+    title: str
+    content: str | None = None
+    attributes: dict[str, Any]
+    origins: list[GraphOrigin]
+
+
+class GraphEndpointDetails(GraphNodeDetails):
+    pass
+
+
+class GraphEdgeDetails(BaseModel):
+    key: str
+    type: str
+    title: str
+    content: str
+    source: GraphEndpointDetails
+    target: GraphEndpointDetails
+    attributes: dict[str, Any]
+    origins: list[GraphOrigin]
 
 
 def get_neo4j() -> Driver:
@@ -115,3 +152,49 @@ def read_workspace_graph(
         edges=[GraphEdge(**edge) for edge in payload.edges],
         truncated=payload.truncated,
     )
+
+
+@router.get(
+    "/{workspace_id}/graph/nodes/{node_type}/{node_id}",
+    response_model=GraphNodeDetails,
+)
+def read_graph_node_details(
+    workspace_id: uuid.UUID,
+    node_type: Literal["Author", "PullRequest", "Issue"],
+    node_id: int,
+    user: CurrentUser,
+    session: DbSession,
+    driver: Driver = Depends(get_neo4j),
+) -> GraphNodeDetails:
+    load_workspace_for_user(session, user, workspace_id)
+    try:
+        payload = fetch_node_details(driver, workspace_id, node_type, node_id)
+    except (Neo4jError, DriverError):
+        raise HTTPException(status_code=503, detail="Graph database unavailable")
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Graph node not found")
+    return GraphNodeDetails(**payload)
+
+
+@router.get("/{workspace_id}/graph/edges", response_model=GraphEdgeDetails)
+def read_graph_edge_details(
+    workspace_id: uuid.UUID,
+    source_key: str,
+    target_key: str,
+    edge_type: str,
+    user: CurrentUser,
+    session: DbSession,
+    driver: Driver = Depends(get_neo4j),
+) -> GraphEdgeDetails:
+    load_workspace_for_user(session, user, workspace_id)
+    try:
+        payload = fetch_edge_details(
+            driver, workspace_id, source_key, target_key, edge_type
+        )
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid graph node key")
+    except (Neo4jError, DriverError):
+        raise HTTPException(status_code=503, detail="Graph database unavailable")
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Graph edge not found")
+    return GraphEdgeDetails(**payload)

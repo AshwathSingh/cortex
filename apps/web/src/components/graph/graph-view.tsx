@@ -5,10 +5,17 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { GraphCanvas } from "@/components/graph/graph-canvas";
+import { GraphInspector, type InspectorState } from "@/components/graph/graph-inspector";
 import { buttonClassName } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
-import type { GraphNodeType, WorkspaceGraph } from "@/lib/api-types";
+import type {
+  GraphEdgeDetails,
+  GraphNodeDetails,
+  GraphNodeType,
+  GraphSelection,
+  WorkspaceGraph,
+} from "@/lib/api-types";
 
 const NODE_TYPES: {
   type: GraphNodeType;
@@ -44,6 +51,8 @@ type State =
 export function GraphView({ workspaceId }: { workspaceId: string }) {
   const router = useRouter();
   const [state, setState] = useState<State>({ kind: "loading" });
+  const [selection, setSelection] = useState<GraphSelection>(null);
+  const [inspectorState, setInspectorState] = useState<InspectorState>({ kind: "loading" });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -74,6 +83,53 @@ export function GraphView({ workspaceId }: { workspaceId: string }) {
     void load();
     return () => controller.abort();
   }, [router, workspaceId]);
+
+  useEffect(() => {
+    if (!selection) return;
+    const selected = selection;
+    const controller = new AbortController();
+
+    async function loadDetails() {
+      try {
+        if (selected.kind === "node") {
+          const separator = selected.key.indexOf(":");
+          const nodeType = selected.key.slice(0, separator);
+          const nodeId = selected.key.slice(separator + 1);
+          const details = await apiRequest<GraphNodeDetails>(
+            `/api/workspaces/${workspaceId}/graph/nodes/${encodeURIComponent(nodeType)}/${encodeURIComponent(nodeId)}`,
+            { signal: controller.signal },
+          );
+          setInspectorState({ kind: "node", details });
+        } else {
+          const params = new URLSearchParams({
+            source_key: selected.edge.source,
+            target_key: selected.edge.target,
+            edge_type: selected.edge.type,
+          });
+          const details = await apiRequest<GraphEdgeDetails>(
+            `/api/workspaces/${workspaceId}/graph/edges?${params.toString()}`,
+            { signal: controller.signal },
+          );
+          setInspectorState({ kind: "edge", details });
+        }
+      } catch (requestError) {
+        if (controller.signal.aborted) return;
+        if (requestError instanceof ApiError && requestError.status === 401) {
+          router.replace("/login");
+          return;
+        }
+        setInspectorState({
+          kind: "error",
+          message: requestError instanceof ApiError
+            ? requestError.message
+            : "Unable to load graph details.",
+        });
+      }
+    }
+
+    void loadDetails();
+    return () => controller.abort();
+  }, [router, selection, workspaceId]);
 
   const graph = state.kind === "ready" ? state.graph : null;
   const isWorkspaceEmpty = graph !== null && graph.nodes.length === 0;
@@ -144,8 +200,19 @@ export function GraphView({ workspaceId }: { workspaceId: string }) {
           ) : null}
 
           {graph && !isWorkspaceEmpty ? (
-            <GraphCanvas nodes={graph.nodes} edges={graph.edges} />
+            <GraphCanvas
+              nodes={graph.nodes}
+              edges={graph.edges}
+              onSelectionChange={(nextSelection) => {
+                setSelection(nextSelection);
+                if (nextSelection) setInspectorState({ kind: "loading" });
+              }}
+            />
           ) : null}
+
+          <span id="graph-interaction-help" className="sr-only">
+            Click a node or connection to inspect its details. Click empty graph space to close the inspector.
+          </span>
 
           {graph?.truncated ? (
             <p
@@ -156,6 +223,15 @@ export function GraphView({ workspaceId }: { workspaceId: string }) {
             </p>
           ) : null}
         </div>
+        {selection ? (
+          <div className="w-[22rem] max-w-[40vw] shrink-0 overflow-y-auto border-l border-[var(--cortex-graph-divider)] p-4">
+            <GraphInspector
+              selection={selection}
+              state={inspectorState}
+              onClose={() => setSelection(null)}
+            />
+          </div>
+        ) : null}
       </div>
     </div>
   );
