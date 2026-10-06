@@ -42,6 +42,41 @@ export type GraphEdge = {
   type: string;
 };
 
+export type GraphOrigin = {
+  key: string;
+  type: string;
+  title: string;
+  url: string;
+  relationship: string | null;
+  direction: "incoming" | "outgoing" | null;
+};
+
+export type GraphNodeDetails = {
+  key: string;
+  id: number | string | null;
+  type: string;
+  title: string;
+  content: string | null;
+  attributes: Record<string, unknown>;
+  origins: GraphOrigin[];
+};
+
+export type GraphEdgeDetails = {
+  key: string;
+  type: string;
+  title: string;
+  content: string;
+  source: GraphNodeDetails;
+  target: GraphNodeDetails;
+  attributes: Record<string, unknown>;
+  origins: GraphOrigin[];
+};
+
+export type GraphSelection =
+  | { kind: "node"; key: string }
+  | { kind: "edge"; edge: GraphEdge }
+  | null;
+
 export type WorkspaceGraph = {
   workspace_id: string;
   nodes: GraphNode[];

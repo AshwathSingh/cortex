@@ -5,9 +5,10 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { GraphCanvas } from "@/components/graph/graph-canvas";
+import { GraphInspector, type InspectorState } from "@/components/graph/graph-inspector";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
-import type { GraphNodeType, WorkspaceGraph } from "@/lib/api-types";
+import type { GraphEdgeDetails, GraphNodeDetails, GraphNodeType, GraphSelection, WorkspaceGraph } from "@/lib/api-types";
 
 /**
  * The graph itself: fetch, legend, canvas and the loading / empty / error states.
@@ -66,6 +67,8 @@ export function GraphView({
 }) {
   const router = useRouter();
   const [state, setState] = useState<State>({ kind: "loading" });
+  const [selection, setSelection] = useState<GraphSelection>(null);
+  const [inspectorState, setInspectorState] = useState<InspectorState>({ kind: "loading" });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -96,6 +99,54 @@ export function GraphView({
     void load();
     return () => controller.abort();
   }, [router, workspaceId]);
+
+  useEffect(() => {
+    if (!selection) return;
+    const selectedNodeKey = selection.kind === "node" ? selection.key : null;
+    const selectedEdge = selection.kind === "edge" ? selection.edge : null;
+    const controller = new AbortController();
+
+    async function loadDetails() {
+      try {
+        if (selectedNodeKey !== null) {
+          const separator = selectedNodeKey.indexOf(":");
+          const nodeType = selectedNodeKey.slice(0, separator);
+          const nodeId = selectedNodeKey.slice(separator + 1);
+          const details = await apiRequest<GraphNodeDetails>(
+            `/api/workspaces/${workspaceId}/graph/nodes/${encodeURIComponent(nodeType)}/${encodeURIComponent(nodeId)}`,
+            { signal: controller.signal },
+          );
+          setInspectorState({ kind: "node", details });
+        } else {
+          const params = new URLSearchParams({
+            source_key: selectedEdge!.source,
+            target_key: selectedEdge!.target,
+            edge_type: selectedEdge!.type,
+          });
+          const details = await apiRequest<GraphEdgeDetails>(
+            `/api/workspaces/${workspaceId}/graph/edges?${params.toString()}`,
+            { signal: controller.signal },
+          );
+          setInspectorState({ kind: "edge", details });
+        }
+      } catch (requestError) {
+        if (controller.signal.aborted) return;
+        if (requestError instanceof ApiError && requestError.status === 401) {
+          router.replace("/login");
+          return;
+        }
+        setInspectorState({
+          kind: "error",
+          message: requestError instanceof ApiError
+            ? requestError.message
+            : "Unable to load graph details.",
+        });
+      }
+    }
+
+    void loadDetails();
+    return () => controller.abort();
+  }, [router, selection, workspaceId]);
 
   const graph = state.kind === "ready" ? state.graph : null;
   const isEmpty = graph !== null && graph.nodes.length === 0;
@@ -162,7 +213,26 @@ export function GraphView({
         ) : null}
 
         {graph && !isEmpty ? (
-          <GraphCanvas nodes={graph.nodes} edges={graph.edges} height={height} />
+          <div className={selection ? "grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]" : ""}>
+            <div className="min-w-0">
+              <GraphCanvas
+                nodes={graph.nodes}
+                edges={graph.edges}
+                height={height}
+                onSelectionChange={(nextSelection) => {
+                  setSelection(nextSelection);
+                  if (nextSelection) setInspectorState({ kind: "loading" });
+                }}
+              />
+            </div>
+            {selection ? (
+              <GraphInspector
+                selection={selection}
+                state={inspectorState}
+                onClose={() => setSelection(null)}
+              />
+            ) : null}
+          </div>
         ) : null}
       </div>
     </div>

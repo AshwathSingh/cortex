@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { GraphSimulation, type NodeSpec } from "@/lib/graph-layout";
-import type { GraphEdge, GraphNode, GraphNodeType } from "@/lib/api-types";
+import type { GraphEdge, GraphNode, GraphNodeType, GraphSelection } from "@/lib/api-types";
 
 /**
  * Canvas-based, not SVG, per design issue 3.a.vii: hundreds of nodes means
@@ -137,12 +137,64 @@ type GraphCanvasProps = {
   nodes: GraphNode[];
   edges: GraphEdge[];
   height?: number;
+  onSelectionChange?: (selection: GraphSelection) => void;
 };
 
-export function GraphCanvas({ nodes, edges, height = 560 }: GraphCanvasProps) {
+type HitNode = { key: string; x: number; y: number; radius: number };
+type HitEdge = { edge: GraphEdge; x1: number; y1: number; x2: number; y2: number };
+
+/** Resolve a canvas coordinate to the closest node or edge within its hit area. */
+export function hitTestGraph(
+  x: number,
+  y: number,
+  nodes: readonly HitNode[],
+  edges: readonly HitEdge[],
+): GraphSelection {
+  let closestNode: HitNode | null = null;
+  let closestNodeDistance = Number.POSITIVE_INFINITY;
+  for (const node of nodes) {
+    const distance = Math.hypot(x - node.x, y - node.y);
+    if (distance <= node.radius + 7 && distance < closestNodeDistance) {
+      closestNode = node;
+      closestNodeDistance = distance;
+    }
+  }
+  if (closestNode) return { kind: "node", key: closestNode.key };
+
+  let closestEdge: HitEdge | null = null;
+  let closestEdgeDistance = Number.POSITIVE_INFINITY;
+  for (const edge of edges) {
+    const dx = edge.x2 - edge.x1;
+    const dy = edge.y2 - edge.y1;
+    const lengthSquared = dx * dx + dy * dy;
+    const t = lengthSquared === 0
+      ? 0
+      : Math.max(0, Math.min(1, ((x - edge.x1) * dx + (y - edge.y1) * dy) / lengthSquared));
+    const distance = Math.hypot(x - (edge.x1 + t * dx), y - (edge.y1 + t * dy));
+    if (distance <= 8 && distance < closestEdgeDistance) {
+      closestEdge = edge;
+      closestEdgeDistance = distance;
+    }
+  }
+  return closestEdge ? { kind: "edge", edge: closestEdge.edge } : null;
+}
+
+export function GraphCanvas({
+  nodes,
+  edges,
+  height = 560,
+  onSelectionChange,
+}: GraphCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
+  const hitNodesRef = useRef<HitNode[]>([]);
+  const hitEdgesRef = useRef<HitEdge[]>([]);
+  const selectionHandlerRef = useRef(onSelectionChange);
   const [width, setWidth] = useState<number>(() => 0);
+
+  useEffect(() => {
+    selectionHandlerRef.current = onSelectionChange;
+  }, [onSelectionChange]);
 
   // Track the container's width rather than measuring once on mount: the panel
   // reflows when a sidebar opens or the window resizes, and a canvas that keeps
@@ -230,6 +282,20 @@ export function GraphCanvas({ nodes, edges, height = 560 }: GraphCanvasProps) {
 
     function draw() {
       ctx.clearRect(0, 0, width, height);
+
+      hitNodesRef.current = simulation.nodes.map(({ key, x, y, radius }) => ({
+        key,
+        x,
+        y,
+        radius,
+      }));
+      hitEdgesRef.current = edges.flatMap((edge) => {
+        const source = simulation.nodeAt(edge.source);
+        const target = simulation.nodeAt(edge.target);
+        return source && target
+          ? [{ edge, x1: source.x, y1: source.y, x2: target.x, y2: target.y }]
+          : [];
+      });
 
       for (const edge of edges) {
         const source = simulation.nodeAt(edge.source);
@@ -328,13 +394,36 @@ export function GraphCanvas({ nodes, edges, height = 560 }: GraphCanvasProps) {
     };
   }, [nodes, edges, height, width]);
 
+  function selectAt(event: React.MouseEvent<HTMLCanvasElement>) {
+    const canvas = event.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = width / (rect.width || width || 1);
+    const scaleY = height / (rect.height || height || 1);
+    const x = (event.clientX - rect.left) * scaleX;
+    const y = (event.clientY - rect.top) * scaleY;
+    selectionHandlerRef.current?.(
+      hitTestGraph(x, y, hitNodesRef.current, hitEdgesRef.current),
+    );
+  }
+
   return (
-    <canvas
-      ref={canvasRef}
-      role="img"
-      aria-label={`Knowledge graph: ${nodes.length} nodes, ${edges.length} connections`}
-      className="block w-full rounded-panel border border-border/50 bg-surface/40"
-      style={{ height }}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        role="img"
+        aria-label={`Knowledge graph: ${nodes.length} nodes, ${edges.length} connections`}
+        aria-describedby="graph-interaction-help"
+        className="block w-full rounded-panel border border-border/50 bg-surface/40"
+        style={{ height }}
+        onClick={selectAt}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") selectionHandlerRef.current?.(null);
+        }}
+        tabIndex={0}
+      />
+      <span id="graph-interaction-help" className="sr-only">
+        Click a node or connection to inspect its details. Click empty graph space to close the inspector.
+      </span>
+    </>
   );
 }
