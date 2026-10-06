@@ -70,7 +70,7 @@ def api() -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
 def db(api) -> sessionmaker[Session]:
     """US-2's tests need only the session factory; reuse the one `api` builds."""
     _, sessions = api
-    return sessions        
+    return sessions
 
 # --------------------------------------------------------------------------
 # Building a situation to test against

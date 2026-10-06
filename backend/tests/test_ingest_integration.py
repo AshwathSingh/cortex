@@ -101,6 +101,27 @@ def test_valid_repo_fetches_history_and_builds_graph(graph, client):
     assert graph.counts() == {"Author": 2, "PullRequest": 3, "Issue": 1, "AUTHORED": 4}
 
 
+def test_empty_repo_remains_visible_as_a_source(graph, client):
+    use_github(github_repo([], []))
+
+    response = client.post(URL, json=body())
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "repo": TEST_REPO,
+        "pull_requests": 0,
+        "issues": 0,
+    }
+    assert client.get(f"/api/workspaces/{TEST_WORKSPACE_ID}/sources").json() == [
+        {
+            "repo": TEST_REPO,
+            "pull_requests": 0,
+            "issues": 0,
+            "total_items": 0,
+        }
+    ]
+
+
 def test_node_properties_and_provenance(graph, client):
     pr = pull_request(1, ALICE)
     use_github(github_repo([pr], [issue(2, BOB)]))
@@ -269,3 +290,16 @@ def test_schema_constraints_allow_the_same_id_in_another_workspace(graph):
                 f"MATCH (n:{label} {{id: $id}}) RETURN count(n) AS c", id=nid
             ).single()["c"]
             assert found == 2
+
+
+def test_repository_constraint_is_workspace_scoped(graph):
+    props = {"repo": "cortex/empty", "workspace_id": TEST_WORKSPACE_ID}
+    with graph.driver.session() as session:
+        session.run("CREATE (:Repository $props)", props=props).consume()
+        with pytest.raises(ConstraintError):
+            session.run("CREATE (:Repository $props)", props=props).consume()
+
+        session.run(
+            "CREATE (:Repository $props)",
+            props={"repo": "cortex/empty", "workspace_id": TEST_WORKSPACE_ID_B},
+        ).consume()

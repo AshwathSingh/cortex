@@ -15,8 +15,26 @@
   --cortex-accent: #3b67dc;
   --cortex-accent-hover: #315bc9;
   --cortex-accent-bright: #78a0ff;
+  --cortex-composer-background: #0d1016;
   --cortex-page-gutter: clamp(1.25rem, 5vw, 5.75rem);
   --cortex-content-width: 87.5rem;
+
+  /* Logged-in shell defaults. WorkspaceShell can override these per instance. */
+  --cortex-sidebar-width: 15.5rem;
+  --cortex-sidebar-background: rgb(9 14 23 / 58%);
+  --cortex-sidebar-border: rgb(98 136 202 / 18%);
+  --cortex-sidebar-active: linear-gradient(
+    90deg,
+    rgb(59 103 220 / 19%),
+    rgb(59 103 220 / 7%)
+  );
+  --cortex-sidebar-active-border: rgb(120 160 255 / 15%);
+  --cortex-sidebar-hover: rgb(85 112 154 / 9%);
+  --cortex-sidebar-accent: #6e97ff;
+  --cortex-sidebar-text: #a4adbd;
+  --cortex-sidebar-icon: #78849a;
+  --cortex-sidebar-item-radius: 0.625rem;
+  --cortex-sidebar-logo-background: rgb(18 29 46 / 68%);
 
   /* Red and green are reserved for source sync status. */
   --cortex-role-owner: #78a0ff;
@@ -35,6 +53,7 @@
   --cortex-graph-edge-hub: rgb(120 160 255 / 38%);
   --cortex-graph-label: #c7cedd;
   --cortex-graph-label-dim: #8b94a6;
+  --cortex-graph-divider: rgb(98 136 202 / 16%);
 }
 
 @theme inline {
@@ -49,6 +68,7 @@
   --color-accent: var(--cortex-accent);
   --color-accent-hover: var(--cortex-accent-hover);
   --color-accent-bright: var(--cortex-accent-bright);
+  --color-composer: var(--cortex-composer-background);
   --color-role-owner: var(--cortex-role-owner);
   --color-role-editor: var(--cortex-role-editor);
   --color-role-viewer: var(--cortex-role-viewer);
@@ -87,6 +107,20 @@ body {
 :focus-visible {
   outline: 3px solid var(--cortex-accent-bright);
   outline-offset: 3px;
+}
+
+.cortex-composer-input:focus,
+.cortex-composer-input:focus-visible {
+  outline: none;
+  outline-offset: 0;
+}
+
+.graph-scene {
+  background-color: rgb(8 13 22 / 42%);
+  background-image:
+    radial-gradient(circle, rgb(120 160 255 / 9%) 1px, transparent 1px),
+    radial-gradient(circle at 50% 42%, rgb(32 67 132 / 11%), transparent 52%);
+  background-size: 24px 24px, 100% 100%;
 }
 
 ::selection {

@@ -1,19 +1,22 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
+import {
+  Field,
+  fieldControlClassName,
+  FormField,
+} from "@/components/ui/form-field";
+import { PageHeader } from "@/components/ui/page-layout";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { WorkspaceSummary } from "@/lib/api-types";
 
 // Mirrors the limits enforced by POST /api/workspaces.
 export const NAME_MAX_LENGTH = 100;
 export const DESCRIPTION_MAX_LENGTH = 1000;
-
-const fieldClassName =
-  "mt-2 w-full rounded-control border border-border/60 bg-surface/70 px-4 text-[0.95rem] text-foreground outline-none transition placeholder:text-subtle hover:border-border focus:border-accent-bright focus:ring-2 focus:ring-accent-bright/20 disabled:opacity-60";
 
 function validate(name: string, description: string): string | null {
   if (!name) return "Enter a workspace name.";
@@ -39,7 +42,7 @@ function errorMessage(requestError: unknown): string {
     : requestError.message;
 }
 
-export function CreateWorkspaceForm() {
+export function CreateWorkspaceForm({ backHref }: { backHref?: string }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -81,22 +84,13 @@ export function CreateWorkspaceForm() {
 
   return (
     <section aria-labelledby="create-workspace-heading">
-      <Link
-        href="/workspaces"
-        className="text-sm font-medium text-muted transition-colors hover:text-foreground"
-      >
-        ← All workspaces
-      </Link>
-      <h1
-        id="create-workspace-heading"
-        className="mt-10 text-[clamp(2.25rem,6vw,4rem)] font-semibold leading-none tracking-[-0.05em]"
-      >
-        New workspace
-      </h1>
-      <p className="mt-4 text-base leading-7 text-muted">
-        A workspace holds the repositories and project memory for one team or
-        project.
-      </p>
+      <PageHeader
+        backHref={backHref}
+        backLabel={backHref ? "Back to workspace" : undefined}
+        description="A workspace holds the repositories and project memory for one team or project."
+        headingId="create-workspace-heading"
+        title="New workspace"
+      />
 
       <form
         onSubmit={handleSubmit}
@@ -104,40 +98,25 @@ export function CreateWorkspaceForm() {
         aria-label="Create a workspace"
         className="mt-10 space-y-6"
       >
-        <div>
-          <label
-            htmlFor="workspace-name"
-            className="text-sm font-medium text-foreground"
-          >
-            Workspace name
-          </label>
-          <input
-            id="workspace-name"
-            name="name"
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="e.g. Cortex platform"
-            maxLength={NAME_MAX_LENGTH}
-            disabled={isSubmitting}
-            autoComplete="off"
-            required
-            aria-invalid={error !== null && !name.trim() ? true : undefined}
-            className={`${fieldClassName} h-12`}
-          />
-        </div>
+        <FormField
+          id="workspace-name"
+          label="Workspace name"
+          name="name"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder="e.g. Cortex platform"
+          maxLength={NAME_MAX_LENGTH}
+          disabled={isSubmitting}
+          autoComplete="off"
+          required
+          aria-invalid={error !== null && !name.trim() ? true : undefined}
+        />
 
-        <div>
-          <div className="flex items-baseline justify-between gap-4">
-            <label
-              htmlFor="workspace-description"
-              className="text-sm font-medium text-foreground"
-            >
-              Description
-            </label>
-            <span id="workspace-description-hint" className="text-xs text-subtle">
-              Optional · {description.length}/{DESCRIPTION_MAX_LENGTH}
-            </span>
-          </div>
+        <Field
+          id="workspace-description"
+          label="Description"
+          hint={`Optional · ${description.length}/${DESCRIPTION_MAX_LENGTH}`}
+        >
           <textarea
             id="workspace-description"
             name="description"
@@ -148,21 +127,23 @@ export function CreateWorkspaceForm() {
             rows={4}
             disabled={isSubmitting}
             aria-describedby="workspace-description-hint"
-            className={`${fieldClassName} resize-y py-3 leading-6`}
+            className={`${fieldControlClassName} resize-y py-3 leading-6`}
           />
-        </div>
+        </Field>
 
         <div aria-live="polite">
           <FeedbackAlert message={error} />
         </div>
 
-        <button
+        <Button
           type="submit"
           disabled={isSubmitting}
-          className="min-h-12 rounded-control bg-accent px-5 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover disabled:cursor-wait disabled:opacity-60"
+          size="large"
+          variant="primary"
+          className="disabled:cursor-wait"
         >
           {isSubmitting ? "Creating…" : "Create workspace"}
-        </button>
+        </Button>
       </form>
     </section>
   );

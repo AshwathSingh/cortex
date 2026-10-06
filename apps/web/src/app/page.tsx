@@ -2,8 +2,11 @@ import { DecisionPreview } from "@/components/marketing/decision-preview";
 import { HeroIntro } from "@/components/marketing/hero-intro";
 import { HeroPrinciples } from "@/components/marketing/hero-principles";
 import { SiteHeader } from "@/components/marketing/site-header";
+import { redirectAuthenticatedUser } from "@/lib/server-auth";
 
-export default function Home() {
+export default async function Home() {
+  await redirectAuthenticatedUser();
+
   return (
     <main className="min-h-screen">
       <SiteHeader />

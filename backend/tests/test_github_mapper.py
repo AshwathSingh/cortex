@@ -5,6 +5,7 @@ from app.github.mapper import (
     UPSERT_AUTHORS,
     UPSERT_ISSUES,
     UPSERT_PULL_REQUESTS,
+    UPSERT_REPOSITORY,
     build_statements,
     normalise_workspace_id,
     write_graph,
@@ -41,14 +42,19 @@ def build(prs, issues, workspace_id=WS):
 
 def test_statement_order_and_shape():
     stmts = build([pr()], [issue()])
-    assert [s[0] for s in stmts] == [UPSERT_AUTHORS, UPSERT_PULL_REQUESTS, UPSERT_ISSUES]
-    assert stmts[0][1]["rows"] == [
+    assert [s[0] for s in stmts] == [
+        UPSERT_REPOSITORY,
+        UPSERT_AUTHORS,
+        UPSERT_PULL_REQUESTS,
+        UPSERT_ISSUES,
+    ]
+    assert stmts[1][1]["rows"] == [
         {"id": 7, "login": "octocat", "html_url": "https://github.com/octocat"}
     ]
 
 
 def test_pr_props_normalized():
-    props = build([pr()], [])[1][1]["rows"][0]["props"]
+    props = build([pr()], [])[2][1]["rows"][0]["props"]
     assert props["id"] == 100 and props["repo"] == "o/r"
     assert props["body"] == ""  # null body normalized
     assert props["merged_at"].startswith("2024-01-02")
@@ -57,17 +63,19 @@ def test_pr_props_normalized():
 
 def test_authors_deduplicated():
     stmts = build([pr(), pr(id=101, number=3)], [issue()])
-    assert len(stmts[0][1]["rows"]) == 1
+    assert len(stmts[1][1]["rows"]) == 1
 
 
 def test_deleted_user_has_no_author_edge():
     stmts = build([], [issue(user=None)])
-    assert len(stmts) == 1  # no author statement
-    assert stmts[0][1]["rows"][0]["author_id"] is None
+    assert len(stmts) == 2  # repository + issue; no author statement
+    assert stmts[1][1]["rows"][0]["author_id"] is None
 
 
-def test_empty_input_no_statements():
-    assert build([], []) == []
+def test_empty_input_still_records_the_repository():
+    assert build([], []) == [
+        (UPSERT_REPOSITORY, {"repo": "o/r", "workspace_id": WS})
+    ]
 
 
 @pytest.mark.parametrize("bad", [{"id": "x"}, {"title": None}, {"state": "weird"}])
@@ -88,15 +96,20 @@ def test_every_statement_carries_the_workspace_id():
 
 def test_workspace_id_is_stamped_on_node_props():
     stmts = build([pr()], [issue()])
-    pr_props = stmts[1][1]["rows"][0]["props"]
-    issue_props = stmts[2][1]["rows"][0]["props"]
+    pr_props = stmts[2][1]["rows"][0]["props"]
+    issue_props = stmts[3][1]["rows"][0]["props"]
     assert pr_props["workspace_id"] == WS
     assert issue_props["workspace_id"] == WS
 
 
 def test_workspace_id_is_part_of_every_merge_key():
     """Without this, two workspaces ingesting one repo would share nodes."""
-    for cypher in (UPSERT_AUTHORS, UPSERT_PULL_REQUESTS, UPSERT_ISSUES):
+    for cypher in (
+        UPSERT_REPOSITORY,
+        UPSERT_AUTHORS,
+        UPSERT_PULL_REQUESTS,
+        UPSERT_ISSUES,
+    ):
         assert "workspace_id: $workspace_id" in cypher
 
 
@@ -166,8 +179,8 @@ class FakeDriver:
 
 def test_write_graph_runs_all_statements_in_one_transaction():
     d = FakeDriver()
-    assert write_graph(d, "o/r", [pr()], [issue()], workspace_id=WS) == 3
-    assert len(d.tx.calls) == 3 and d.opened == 1
+    assert write_graph(d, "o/r", [pr()], [issue()], workspace_id=WS) == 4
+    assert len(d.tx.calls) == 4 and d.opened == 1
 
 
 def test_invalid_payload_touches_no_database():

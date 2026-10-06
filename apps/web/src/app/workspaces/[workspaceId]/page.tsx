@@ -3,8 +3,8 @@ import type { Metadata } from "next";
 import { WorkspaceDetail } from "@/components/workspaces/workspace-detail";
 
 export const metadata: Metadata = {
-  title: "Workspace | Cortex",
-  description: "View a Cortex workspace.",
+  title: "Home | Cortex",
+  description: "Ask Cortex about your workspace.",
 };
 
 export default async function WorkspacePage({

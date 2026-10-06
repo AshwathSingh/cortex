@@ -1,13 +1,13 @@
-"""Graph schema constraints for GitHub-derived nodes (PRs, Issues, Authors).
+"""Graph schema constraints for GitHub-derived nodes and connected repositories.
 
 Locking these early so downstream consumers of the schema (node/edge detail
 panels, canvas rendering) can build against stable node labels and id
 properties.
 
-Every node is scoped to one workspace by a ``workspace_id`` property, so
-uniqueness is **composite**: ``(id, workspace_id)``. A GitHub id on its own is
-deliberately *not* unique -- two workspaces that ingest the same repo each get
-their own copy of its nodes, and no node is ever shared between workspaces.
+Every node is scoped to one workspace by a ``workspace_id`` property. Graph
+items use ``(id, workspace_id)`` for uniqueness; repository metadata uses
+``(repo, workspace_id)``. Two workspaces can therefore connect the same repo
+without sharing nodes.
 
 Neo4j Community has no existence constraints (and ``IS NODE KEY`` is Enterprise
 only), so "every node carries a workspace_id" is enforced in
@@ -27,6 +27,8 @@ LEGACY_CONSTRAINTS = [
 ]
 
 CONSTRAINTS = [
+    "CREATE CONSTRAINT repository_workspace_unique IF NOT EXISTS "
+    "FOR (r:Repository) REQUIRE (r.repo, r.workspace_id) IS UNIQUE",
     "CREATE CONSTRAINT author_workspace_unique IF NOT EXISTS "
     "FOR (a:Author) REQUIRE (a.id, a.workspace_id) IS UNIQUE",
     "CREATE CONSTRAINT pull_request_workspace_unique IF NOT EXISTS "

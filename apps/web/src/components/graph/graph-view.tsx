@@ -5,31 +5,15 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { GraphCanvas } from "@/components/graph/graph-canvas";
+import { buttonClassName } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { GraphNodeType, WorkspaceGraph } from "@/lib/api-types";
 
-/**
- * The graph itself: fetch, legend, canvas and the loading / empty / error states.
- *
- * Deliberately NOT a page — it carries no <main>, no back-link and no <h1>, so it
- * can be embedded under the workspace page's header (US-41 AC2) as well as on the
- * standalone /graph route. Nesting two <main> elements would be invalid HTML.
- *
- * Only Author / PullRequest / Issue are legended, because that is all the graph
- * holds. Requirement, Decision and Evidence come from the Connection Agent, which
- * is not built.
- *
- * Each swatch repeats the canvas's shape as well as its colour, so the legend is
- * still usable without colour vision. Colours come from the --cortex-graph-*
- * tokens in globals.css, the same ones graph-canvas.tsx resolves.
- */
-
-const LEGEND: {
+const NODE_TYPES: {
   type: GraphNodeType;
   label: string;
   colour: string;
-  /** Mirrors NODE_SHAPES in graph-canvas.tsx. */
   shapeClass: string;
 }[] = [
   {
@@ -57,13 +41,7 @@ type State =
   | { kind: "ready"; graph: WorkspaceGraph }
   | { kind: "error"; message: string };
 
-export function GraphView({
-  workspaceId,
-  height = 560,
-}: {
-  workspaceId: string;
-  height?: number;
-}) {
+export function GraphView({ workspaceId }: { workspaceId: string }) {
   const router = useRouter();
   const [state, setState] = useState<State>({ kind: "loading" });
 
@@ -98,27 +76,23 @@ export function GraphView({
   }, [router, workspaceId]);
 
   const graph = state.kind === "ready" ? state.graph : null;
-  const isEmpty = graph !== null && graph.nodes.length === 0;
+  const isWorkspaceEmpty = graph !== null && graph.nodes.length === 0;
 
   return (
-    <div>
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <p className="text-sm text-muted">
-          {graph
-            ? `${graph.nodes.length} nodes · ${graph.edges.length} connections`
-            : "Loading the knowledge graph…"}
-        </p>
-
-        {graph && !isEmpty ? (
-          <ul className="flex flex-wrap items-center gap-4" aria-label="Node types">
-            {LEGEND.map(({ type, label, colour, shapeClass }) => (
-              <li key={type} className="flex items-center gap-2 text-sm text-muted">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {graph && !isWorkspaceEmpty ? (
+        <div
+          className="flex min-h-14 flex-wrap items-center justify-between gap-4 border-b border-[var(--cortex-graph-divider)] px-6 py-2"
+        >
+          <ul className="flex items-center gap-5" aria-label="Node types">
+            {NODE_TYPES.map(({ type, label, colour, shapeClass }) => (
+              <li key={type} className="flex items-center gap-2 text-xs text-muted">
                 <span
                   aria-hidden="true"
-                  className="inline-flex size-3.5 items-center justify-center"
+                  className="inline-flex size-3 items-center justify-center"
                 >
                   <span
-                    className={`block size-2.5 border-2 ${shapeClass}`}
+                    className={`block size-2 border-2 ${shapeClass}`}
                     style={{ borderColor: colour }}
                   />
                 </span>
@@ -126,44 +100,62 @@ export function GraphView({
               </li>
             ))}
           </ul>
-        ) : null}
-      </div>
 
-      <FeedbackAlert message={state.kind === "error" ? state.message : null} />
-
-      {graph?.truncated ? (
-        <p role="status" className="mt-5 text-sm text-subtle">
-          This workspace is larger than the display limit — showing the first{" "}
-          {graph.nodes.length} nodes.
-        </p>
+          <p className="whitespace-nowrap text-xs text-subtle">
+            {graph.nodes.length} nodes · {graph.edges.length} connections
+          </p>
+        </div>
       ) : null}
 
-      <div className="mt-6" aria-live="polite">
-        {state.kind === "loading" ? (
-          <p className="text-sm text-muted">Building the graph…</p>
-        ) : null}
+      <div className="relative flex min-h-0 flex-1">
+        <div className="graph-scene relative min-w-0 flex-1 overflow-hidden" aria-live="polite">
+          {state.kind === "loading" ? (
+            <div className="grid size-full place-items-center text-sm text-muted">
+              Building the graph…
+            </div>
+          ) : null}
 
-        {isEmpty ? (
-          <section className="rounded-panel border border-border/50 bg-surface/40 px-6 py-14 text-center">
-            <h3 className="text-lg font-semibold text-foreground">
-              Nothing in this workspace yet
-            </h3>
-            <p className="mx-auto mt-3 max-w-prose text-sm text-muted">
-              Add a GitHub repository and its pull requests, issues and authors will
-              appear here as a connected graph.
-            </p>
-            <Link
-              href={`/workspaces/${workspaceId}/ingest`}
-              className="mt-8 inline-flex min-h-11 items-center rounded-control bg-accent px-5 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover"
+          {state.kind === "error" ? (
+            <div className="mx-auto max-w-xl px-6 pt-8">
+              <FeedbackAlert message={state.message} />
+            </div>
+          ) : null}
+
+          {isWorkspaceEmpty ? (
+            <section className="grid size-full place-items-center px-6 text-center">
+              <div>
+                <h2 className="text-xl font-semibold text-foreground">
+                  Your graph starts with a source
+                </h2>
+                <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-muted">
+                  Add a GitHub repository to map its pull requests, issues, and authors.
+                </p>
+                <Link
+                  href={`/workspaces/${workspaceId}/ingest`}
+                  className={buttonClassName({
+                    className: "mt-7",
+                    variant: "primary",
+                  })}
+                >
+                  Add a GitHub repository
+                </Link>
+              </div>
+            </section>
+          ) : null}
+
+          {graph && !isWorkspaceEmpty ? (
+            <GraphCanvas nodes={graph.nodes} edges={graph.edges} />
+          ) : null}
+
+          {graph?.truncated ? (
+            <p
+              role="status"
+              className="absolute right-5 top-5 rounded-md border border-[var(--cortex-graph-divider)] bg-background/80 px-3 py-2 text-xs text-muted backdrop-blur-sm"
             >
-              Add a GitHub repository
-            </Link>
-          </section>
-        ) : null}
-
-        {graph && !isEmpty ? (
-          <GraphCanvas nodes={graph.nodes} edges={graph.edges} height={height} />
-        ) : null}
+              Display limit reached · showing {graph.nodes.length} nodes
+            </p>
+          ) : null}
+        </div>
       </div>
     </div>
   );

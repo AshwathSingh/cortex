@@ -3,9 +3,15 @@
 import Link from "next/link";
 import { type FormEvent, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
+import { FormField } from "@/components/ui/form-field";
+import { PageHeader } from "@/components/ui/page-layout";
+import { useWorkspace } from "@/components/workspaces/workspace-context";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { IngestResult } from "@/lib/api-types";
+import { routes } from "@/lib/routes";
+import { canManageSources } from "@/lib/workspace-permissions";
 
 const fallbackMessages: Record<number, string> = {
   403: "You need edit access to this workspace to add a repository.",
@@ -28,6 +34,7 @@ type Status =
   | { kind: "error"; message: string };
 
 export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
+  const { workspace, isLoading: isWorkspaceLoading } = useWorkspace();
   const [repoUrl, setRepoUrl] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
@@ -60,24 +67,46 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
   }
 
   const isLoading = status.kind === "loading";
+  const header = (
+    <PageHeader
+      backHref={routes.workspace.sources(workspaceId)}
+      backLabel="Back to sources"
+      description="Build project memory from a GitHub repository."
+      headingId="ingest-heading"
+      title="Add a repository"
+    />
+  );
+
+  if (isWorkspaceLoading) {
+    return (
+      <section aria-labelledby="ingest-heading">
+        {header}
+        <p role="status" className="mt-10 text-sm text-muted">
+          Checking workspace access…
+        </p>
+      </section>
+    );
+  }
+
+  if (!canManageSources(workspace?.role)) {
+    return (
+      <section aria-labelledby="ingest-heading">
+        {header}
+        <div className="mt-10 border-y border-border/25 py-8">
+          <h2 className="text-base font-semibold text-foreground">
+            View-only access
+          </h2>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-muted">
+            Ask a workspace owner or editor to connect a GitHub repository.
+          </p>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section aria-labelledby="ingest-heading">
-      <Link
-        href={`/workspaces/${workspaceId}`}
-        className="text-sm font-medium text-muted transition-colors hover:text-foreground"
-      >
-        ← Back to workspace
-      </Link>
-      <h1
-        id="ingest-heading"
-        className="mt-10 text-[clamp(2.25rem,6vw,4rem)] font-semibold leading-none tracking-[-0.05em]"
-      >
-        Add a repository
-      </h1>
-      <p className="mt-4 text-base leading-7 text-muted">
-        Build project memory from a GitHub repository.
-      </p>
+      {header}
 
       <form
         onSubmit={handleSubmit}
@@ -85,11 +114,9 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
         aria-label="Ingest a GitHub repository"
         className="mt-10"
       >
-        <label htmlFor="repo-url" className="text-sm font-medium text-foreground">
-          GitHub repository URL
-        </label>
-        <input
+        <FormField
           id="repo-url"
+          label="GitHub repository URL"
           type="text"
           inputMode="url"
           value={repoUrl}
@@ -98,15 +125,16 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
           disabled={isLoading}
           autoComplete="off"
           spellCheck={false}
-          className="mt-2 h-12 w-full rounded-control border border-border/60 bg-surface/70 px-4 text-foreground outline-none transition placeholder:text-subtle hover:border-border focus:border-accent-bright focus:ring-2 focus:ring-accent-bright/20"
         />
-        <button
+        <Button
           type="submit"
           disabled={isLoading}
-          className="mt-6 min-h-12 rounded-control bg-accent px-5 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover disabled:cursor-wait disabled:opacity-60"
+          size="large"
+          variant="primary"
+          className="mt-6 disabled:cursor-wait"
         >
           {isLoading ? "Ingesting…" : "Ingest repository"}
-        </button>
+        </Button>
 
         <div aria-live="polite">
           {isLoading ? (
@@ -118,10 +146,16 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
             message={status.kind === "error" ? status.message : null}
           />
           {status.kind === "success" ? (
-            <p role="status" className="mt-5 text-sm text-foreground">
-              Ingested <strong>{status.result.repo}</strong>: {status.result.pull_requests}{" "}
-              pull requests, {status.result.issues} issues.
-            </p>
+            <div role="status" className="mt-5 text-sm text-foreground">
+              <p>
+                Ingested <strong>{status.result.repo}</strong>:{" "}
+                {status.result.pull_requests} pull requests, {status.result.issues}{" "}
+                issues.
+              </p>
+              <Link href={routes.workspace.sources(workspaceId)} className="mt-3 inline-block font-semibold text-accent-bright transition-colors hover:text-foreground">
+                View sources →
+              </Link>
+            </div>
           ) : null}
         </div>
       </form>

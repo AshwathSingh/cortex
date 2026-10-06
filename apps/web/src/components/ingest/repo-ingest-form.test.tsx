@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RepoIngestForm } from "@/components/ingest/repo-ingest-form";
+import { WorkspaceProvider } from "@/components/workspaces/workspace-context";
+import type { WorkspaceRole } from "@/lib/api-types";
 
 function mockFetch(
   status: number,
@@ -21,9 +23,31 @@ function mockFetch(
 
 const WORKSPACE_ID = "ccccccc0-0000-4000-8000-00000000c0de";
 
+function renderForm(role: WorkspaceRole = "OWNER") {
+  return render(
+    <WorkspaceProvider
+      value={{
+        workspaceId: WORKSPACE_ID,
+        workspace: {
+          id: WORKSPACE_ID,
+          name: "Cortex",
+          description: null,
+          role,
+          created_at: "2026-09-24T00:00:00Z",
+        },
+        user: null,
+        isLoading: false,
+        error: null,
+      }}
+    >
+      <RepoIngestForm workspaceId={WORKSPACE_ID} />
+    </WorkspaceProvider>,
+  );
+}
+
 async function submit(url: string) {
   const user = userEvent.setup();
-  render(<RepoIngestForm workspaceId={WORKSPACE_ID} />);
+  renderForm();
   if (url) await user.type(screen.getByLabelText(/repository url/i), url);
   await user.click(screen.getByRole("button", { name: /ingest repository/i }));
 }
@@ -31,6 +55,23 @@ async function submit(url: string) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("RepoIngestForm", () => {
+  it("returns to the source inventory", () => {
+    renderForm();
+    expect(screen.getByRole("link", { name: /back to sources/i })).toHaveAttribute(
+      "href",
+      `/workspaces/${WORKSPACE_ID}/sources`,
+    );
+  });
+
+  it("does not render the ingest form for viewers", () => {
+    renderForm("VIEWER");
+
+    expect(screen.getByRole("heading", { name: /view-only access/i })).toBeInTheDocument();
+    expect(screen.getByText(/ask a workspace owner or editor/i)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /ingest repository/i })).not.toBeInTheDocument();
+  });
+
   it("posts the URL and the workspace, and shows the counts on success", async () => {
     const fetchFn = mockFetch(200, { repo: "o/r", pull_requests: 3, issues: 2 });
     await submit("https://github.com/o/r");
@@ -45,6 +86,10 @@ describe("RepoIngestForm", () => {
       repo_url: "https://github.com/o/r",
       workspace_id: WORKSPACE_ID,
     });
+    expect(screen.getByRole("link", { name: /view sources/i })).toHaveAttribute(
+      "href",
+      `/workspaces/${WORKSPACE_ID}/sources`,
+    );
   });
 
   it("adds https:// to a scheme-less GitHub URL", async () => {

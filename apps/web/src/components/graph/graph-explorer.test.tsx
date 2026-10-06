@@ -1,12 +1,16 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { GraphCanvas, nodeShape } from "@/components/graph/graph-canvas";
+import {
+  GraphCanvas,
+  nodeColour,
+  nodeShape,
+} from "@/components/graph/graph-canvas";
 import { GraphExplorer } from "@/components/graph/graph-explorer";
 import type { GraphEdge, GraphNode, WorkspaceGraph } from "@/lib/api-types";
 
 const WORKSPACE_ID = "ccccccc0-0000-4000-8000-00000000c0de";
-/** Halo fill + outline stroke + centre mark: three traced paths per node. */
+/** Each node renders as halo fill + ring stroke + centre mark. */
 const PATHS_PER_NODE = 3;
 
 // The router object must be STABLE across renders. `useRouter` is in the
@@ -104,25 +108,22 @@ afterEach(() => {
 });
 
 describe("GraphCanvas", () => {
-  it("draws a halo, outline and centre mark for every node", () => {
+  it("draws a ring, halo and centre mark for every node", () => {
     const ctx = stubCanvas();
     render(<GraphCanvas nodes={NODES} edges={[]} />);
-    // Counted via beginPath rather than arc: only Author is a circle now.
     expect(ctx.beginPath).toHaveBeenCalledTimes(NODES.length * PATHS_PER_NODE);
     expect(ctx.fill).toHaveBeenCalled();
     expect(ctx.stroke).toHaveBeenCalled();
   });
 
   it("distinguishes node types by shape, not only by colour", () => {
-    // Roughly 1 in 12 men has a red/green deficiency and a canvas offers no
-    // text alternative, so hue alone would make the legend unusable to them.
     expect(new Set(["Author", "PullRequest", "Issue"].map(nodeShape)).size).toBe(3);
 
     const ctx = stubCanvas();
     render(<GraphCanvas nodes={NODES} edges={[]} />);
-    expect(ctx.arc).toHaveBeenCalled(); // Author: circle
-    expect(ctx.rect).toHaveBeenCalled(); // PullRequest: square
-    expect(ctx.closePath).toHaveBeenCalled(); // Issue: diamond
+    expect(ctx.arc).toHaveBeenCalled();
+    expect(ctx.rect).toHaveBeenCalled();
+    expect(ctx.closePath).toHaveBeenCalled();
   });
 
   it("uses a resolvable font and pixel-snapped labels (crispness)", () => {
@@ -143,20 +144,13 @@ describe("GraphCanvas", () => {
   });
 
   it("draws one line per edge", () => {
-    // Author (circle) and PullRequest (square) trace with arc/rect, so moveTo
-    // and lineTo belong to edges alone here. A diamond would also use them.
     const ctx = stubCanvas();
-    const nodes = [
-      node("Author:1", "Author", "alice"),
-      node("PullRequest:100", "PullRequest", "#1 Add thing"),
-    ];
-    const edges: GraphEdge[] = [
-      { source: "Author:1", target: "PullRequest:100", type: "AUTHORED" },
-    ];
+    const nodes = NODES.slice(0, 2); // circle + square; neither uses lineTo
+    const edges = EDGES.slice(0, 1);
     render(<GraphCanvas nodes={nodes} edges={edges} />);
     expect(ctx.moveTo).toHaveBeenCalledTimes(edges.length);
     expect(ctx.lineTo).toHaveBeenCalledTimes(edges.length);
-    // stroke() also outlines each node, so it runs more often than once per edge.
+    // stroke() also draws each node's rim, so it runs more often than once per edge.
     expect(ctx.stroke).toHaveBeenCalled();
   });
 
@@ -204,37 +198,34 @@ describe("GraphCanvas", () => {
     );
   });
 
-  it("re-measures when its container resizes", async () => {
-    // The panel reflows when a sidebar opens or the window resizes; a canvas
-    // that kept its mount-time width would stretch and blur.
-    const observed: Element[] = [];
-    let trigger: (() => void) | null = null;
-    class FakeResizeObserver {
-      constructor(cb: () => void) {
-        trigger = cb;
-      }
-      observe(el: Element) {
-        observed.push(el);
-      }
-      disconnect() {}
-      unobserve() {}
-    }
-    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+  it("remeasures when its container resizes", () => {
+    stubCanvas();
+    let resize: (() => void) | undefined;
+    const observe = vi.fn();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resize = callback;
+        }
+        observe = observe;
+        disconnect = vi.fn();
+      },
+    );
+    render(<GraphCanvas nodes={NODES} edges={EDGES} />);
+    const canvas = screen.getByRole("img") as HTMLCanvasElement;
+    const parent = canvas.parentElement as HTMLElement;
+    Object.defineProperty(parent, "clientWidth", { configurable: true, value: 720 });
 
-    const ctx = stubCanvas();
-    const { container } = render(<GraphCanvas nodes={NODES} edges={[]} />);
-    expect(observed).toHaveLength(1);
-    expect(observed[0]).toBe(container.querySelector("canvas")?.parentElement);
+    resize?.();
 
-    const before = ctx.setTransform.mock.calls.length;
-    Object.defineProperty(observed[0], "clientWidth", {
-      value: 1234,
-      configurable: true,
-    });
-    await act(async () => {
-      trigger?.();
-    });
-    expect(ctx.setTransform.mock.calls.length).toBeGreaterThan(before);
+    expect(observe).toHaveBeenCalledWith(parent);
+    expect(canvas.style.width).toBe("720px");
+  });
+
+  it("gives each existing node type its own colour", () => {
+    const colours = ["Author", "PullRequest", "Issue"].map(nodeColour);
+    expect(new Set(colours).size).toBe(3);
   });
 });
 
@@ -275,7 +266,7 @@ describe("GraphExplorer", () => {
     render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
 
     expect(
-      await screen.findByText(/nothing in this workspace yet/i),
+      await screen.findByText(/your graph starts with a source/i),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: /add a github repository/i }),
@@ -289,7 +280,7 @@ describe("GraphExplorer", () => {
     render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
 
     expect(await screen.findByRole("status")).toHaveTextContent(
-      /larger than the display limit/i,
+      /display limit reached/i,
     );
   });
 
@@ -318,13 +309,12 @@ describe("GraphExplorer", () => {
     );
   });
 
-  it("links back to the workspace", async () => {
+  it("uses the workspace sidebar for navigation instead of a duplicate back link", async () => {
     stubCanvas();
     mockFetch(200, graph());
     render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
 
-    expect(
-      await screen.findByRole("link", { name: /back to workspace/i }),
-    ).toHaveAttribute("href", `/workspaces/${WORKSPACE_ID}`);
+    expect(await screen.findByRole("heading", { name: "Graph" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /back to workspace/i })).not.toBeInTheDocument();
   });
 });

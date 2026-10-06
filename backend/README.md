@@ -58,7 +58,8 @@ pip install -r requirements.txt
 python -m scripts.init_graph_schema
 ```
 
-Applies uniqueness constraints for `Author.id`, `PullRequest.id`, `Issue.id`.
+Applies workspace-scoped uniqueness constraints for connected repositories,
+authors, pull requests, and issues.
 Safe to re-run (`IF NOT EXISTS`).
 
 Verify:

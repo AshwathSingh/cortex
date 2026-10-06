@@ -59,6 +59,23 @@ ORDER BY head(labels(a)), a.id, head(labels(b)), b.id, type(r)
 LIMIT $limit
 """
 
+SOURCES_QUERY = """
+MATCH (source)
+WHERE (source:Repository OR source:PullRequest OR source:Issue)
+  AND source.workspace_id = $workspace_id
+  AND source.repo IS NOT NULL
+WITH DISTINCT source.repo AS repo
+OPTIONAL MATCH (n)
+WHERE (n:PullRequest OR n:Issue)
+  AND n.workspace_id = $workspace_id
+  AND n.repo = repo
+RETURN repo,
+       sum(CASE WHEN n:PullRequest THEN 1 ELSE 0 END) AS pull_requests,
+       sum(CASE WHEN n:Issue THEN 1 ELSE 0 END) AS issues,
+       count(n) AS total_items
+ORDER BY toLower(repo), repo
+"""
+
 
 @dataclass
 class GraphPayload:
@@ -68,6 +85,14 @@ class GraphPayload:
     nodes: list[dict[str, Any]] = field(default_factory=list)
     edges: list[dict[str, Any]] = field(default_factory=list)
     truncated: bool = False
+
+
+@dataclass(frozen=True)
+class SourceSummaryPayload:
+    repo: str
+    pull_requests: int
+    issues: int
+    total_items: int
 
 
 def node_key(labels: list[str] | tuple[str, ...], node_id: Any) -> str:
@@ -156,3 +181,26 @@ def fetch_graph(
     return GraphPayload(
         workspace_id=workspace, nodes=nodes, edges=edges, truncated=truncated
     )
+
+
+def fetch_source_summaries(
+    driver: Driver, workspace_id: str | uuid.UUID
+) -> list[SourceSummaryPayload]:
+    """Summarise connected repositories and their indexed graph items."""
+    workspace = normalise_workspace_id(workspace_id)
+
+    def work(tx) -> list:
+        return list(tx.run(SOURCES_QUERY, workspace_id=workspace))
+
+    with driver.session() as session:
+        records = session.execute_read(work)
+
+    return [
+        SourceSummaryPayload(
+            repo=str(record["repo"]),
+            pull_requests=int(record["pull_requests"]),
+            issues=int(record["issues"]),
+            total_items=int(record["total_items"]),
+        )
+        for record in records
+    ]

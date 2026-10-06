@@ -1,10 +1,9 @@
 import Link from "next/link";
-import type { InputHTMLAttributes, ReactNode } from "react";
+import type { ReactNode } from "react";
 
+import { Button } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
-
-const fieldClassName =
-  "mt-2 h-12 w-full rounded-control border border-border/60 bg-surface/70 px-4 text-[0.95rem] text-foreground outline-none transition placeholder:text-subtle hover:border-border focus:border-accent-bright focus:ring-2 focus:ring-accent-bright/20";
+export { FormField } from "@/components/ui/form-field";
 
 type AuthFormLayoutProps = {
   children: ReactNode;
@@ -76,8 +75,8 @@ export function AuthFormLayout({
 }
 
 function GitHubAuthButton() {
-  // A full-page navigation, not <Link>: the backend answers with a 302 to GitHub
-  // and sets the OAuth state cookie on the way out.
+  // This must be a full-page navigation: the backend sets the OAuth state
+  // cookie before redirecting the browser to GitHub.
   return (
     <a
       href="/api/auth/github/login"
@@ -103,37 +102,6 @@ function AuthDivider() {
   );
 }
 
-type FormFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, "id"> & {
-  hint?: string;
-  id: string;
-  label: string;
-};
-
-export function FormField({ hint, id, label, ...inputProps }: FormFieldProps) {
-  const hintId = hint ? `${id}-hint` : undefined;
-
-  return (
-    <div>
-      <div className={hint ? "flex items-baseline justify-between gap-4" : undefined}>
-        <label htmlFor={id} className="text-sm font-medium text-foreground">
-          {label}
-        </label>
-        {hint ? (
-          <span id={hintId} className="text-xs text-subtle">
-            {hint}
-          </span>
-        ) : null}
-      </div>
-      <input
-        {...inputProps}
-        id={id}
-        aria-describedby={inputProps["aria-describedby"] ?? hintId}
-        className={fieldClassName}
-      />
-    </div>
-  );
-}
-
 export function AuthFormError({ message }: { message: string | null }) {
   return <FeedbackAlert message={message} />;
 }
@@ -146,12 +114,14 @@ export function AuthSubmitButton({
   disabled?: boolean;
 }) {
   return (
-    <button
+    <Button
       type="submit"
       disabled={disabled}
-      className="mt-8 flex min-h-12 w-full items-center justify-center rounded-control bg-accent px-5 text-sm font-semibold text-foreground transition-colors hover:bg-accent-hover disabled:cursor-wait disabled:opacity-60"
+      size="large"
+      variant="primary"
+      className="mt-8 w-full disabled:cursor-wait"
     >
       {children}
-    </button>
+    </Button>
   );
 }
