@@ -90,12 +90,13 @@ def test_node_query_traverses_edges_both_directions_and_is_workspace_scoped():
 
     assert driver.tx.calls[0][1] == {
         "workspace_id": TEST_WORKSPACE_ID, "node_type": "PullRequest", "node_id": 20,
+        "origin_limit": 100,
     }
     assert details["title"] == "#3 Add graph details"
     assert details["content"] == "The full body"
     assert "workspace_id" not in details["attributes"]
     assert details["origins"] == [
-        {"key": "PullRequest:20", "type": "PullRequest", "title": "#3 Add graph details", "url": PULL_REQUEST["props"]["html_url"]},
+        {"key": "PullRequest:20", "type": "PullRequest", "title": "#3 Add graph details", "url": PULL_REQUEST["props"]["html_url"], "relationship": None, "direction": None},
         {"key": "Author:1", "type": "Author", "title": "alice", "url": AUTHOR["props"]["html_url"], "relationship": "AUTHORED", "direction": "incoming"},
     ]
 

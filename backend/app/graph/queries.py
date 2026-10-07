@@ -31,6 +31,7 @@ GRAPH_LABELS: tuple[str, ...] = ("Author", "PullRequest", "Issue")
 # response reports whether either was hit.
 DEFAULT_NODE_LIMIT = 2_000
 DEFAULT_EDGE_LIMIT = 6_000
+DEFAULT_ORIGIN_LIMIT = 100
 
 
 def _label_predicate(variable: str) -> str:
@@ -67,8 +68,14 @@ WHERE ({_label_predicate("n")})
 OPTIONAL MATCH (n)-[r]-(related)
 WHERE ({_label_predicate("related")})
   AND related.workspace_id = $workspace_id
+WITH n, r, related
+ORDER BY head(labels(related)), related.id, type(r)
+LIMIT $origin_limit
 WITH n, collect(CASE WHEN r IS NULL THEN null ELSE {{
-  labels: labels(related), props: properties(related), relationship: type(r),
+  labels: labels(related),
+  props: {{id: related.id, login: related.login, number: related.number,
+          title: related.title, html_url: related.html_url}},
+  relationship: type(r),
   direction: CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END
 }} END) AS connected
 RETURN labels(n) AS labels, properties(n) AS props, connected
@@ -300,6 +307,7 @@ def fetch_node_details(
             workspace_id=workspace,
             node_type=node_type,
             node_id=node_id,
+            origin_limit=DEFAULT_ORIGIN_LIMIT,
         ).single()
 
     with driver.session() as session:
