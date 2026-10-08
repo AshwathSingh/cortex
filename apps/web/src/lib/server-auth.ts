@@ -25,3 +25,9 @@ export async function redirectAuthenticatedUser() {
     redirect(routes.workspaces);
   }
 }
+
+export async function redirectUnauthenticatedUser() {
+  if (!(await hasAuthenticatedSession())) {
+    redirect("/login");
+  }
+}

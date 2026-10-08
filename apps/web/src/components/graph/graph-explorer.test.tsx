@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -47,6 +47,10 @@ function stubCanvas(): Ctx2D {
     fill: vi.fn(),
     fillText: vi.fn(),
     setTransform: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
+    translate: vi.fn(),
+    scale: vi.fn(),
     // Real 2d contexts always have this; the label collision pass needs it.
     measureText: vi.fn((t: string) => ({ width: t.length * 6 })),
   };
@@ -226,6 +230,46 @@ describe("GraphCanvas", () => {
   it("gives each existing node type its own colour", () => {
     const colours = ["Author", "PullRequest", "Issue"].map(nodeColour);
     expect(new Set(colours).size).toBe(3);
+  });
+
+  it("offers accessible zoom controls and restores the default view", () => {
+    const ctx = stubCanvas();
+    render(<GraphCanvas nodes={NODES} edges={EDGES} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(screen.getByText("120%")).toBeInTheDocument();
+    expect(ctx.scale).toHaveBeenLastCalledWith(1.2, 1.2);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset view" }));
+    expect(screen.getByText("100%")).toBeInTheDocument();
+    expect(ctx.translate).toHaveBeenLastCalledWith(0, 0);
+    expect(ctx.scale).toHaveBeenLastCalledWith(1, 1);
+  });
+
+  it("pans the graph without treating the drag as a selection", () => {
+    const ctx = stubCanvas();
+    const onSelectionChange = vi.fn();
+    render(
+      <GraphCanvas
+        nodes={NODES}
+        edges={EDGES}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    const canvas = screen.getByRole("img");
+
+    fireEvent.pointerDown(canvas, {
+      button: 0,
+      pointerId: 1,
+      clientX: 40,
+      clientY: 40,
+    });
+    fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 80, clientY: 65 });
+    fireEvent.pointerUp(canvas, { pointerId: 1, clientX: 80, clientY: 65 });
+    fireEvent.click(canvas, { clientX: 80, clientY: 65 });
+
+    expect(ctx.translate).toHaveBeenLastCalledWith(40, 25);
+    expect(onSelectionChange).not.toHaveBeenCalled();
   });
 });
 

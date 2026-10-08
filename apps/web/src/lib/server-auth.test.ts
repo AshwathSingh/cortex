@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { hasAuthenticatedSession, redirectAuthenticatedUser } from "@/lib/server-auth";
+import {
+  hasAuthenticatedSession,
+  redirectAuthenticatedUser,
+  redirectUnauthenticatedUser,
+} from "@/lib/server-auth";
 
 const { cookieStore, cookiesMock, redirectMock } = vi.hoisted(() => ({
   cookieStore: { toString: vi.fn() },
@@ -42,6 +46,23 @@ describe("server authentication redirect", () => {
     vi.stubGlobal("fetch", fetchFn);
     expect(await hasAuthenticatedSession()).toBe(false);
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("redirects anonymous users away from protected pages", async () => {
+    cookieStore.toString.mockReturnValue("");
+    vi.stubGlobal("fetch", vi.fn());
+
+    await redirectUnauthenticatedUser();
+
+    expect(redirectMock).toHaveBeenCalledWith("/login");
+  });
+
+  it("keeps authenticated users on protected pages", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 200 })));
+
+    await redirectUnauthenticatedUser();
+
+    expect(redirectMock).not.toHaveBeenCalled();
   });
 
   it("does not redirect for an expired session", async () => {

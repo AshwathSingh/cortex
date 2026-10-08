@@ -211,7 +211,9 @@ export function GraphView({ workspaceId }: { workspaceId: string }) {
           ) : null}
 
           <span id="graph-interaction-help" className="sr-only">
-            Click a node or connection to inspect its details. Click empty graph space to close the inspector.
+            Drag to pan, use the mouse wheel or graph controls to zoom, and select a
+            node or connection to inspect its details. Click empty graph space to close
+            the inspector.
           </span>
 
           {graph?.truncated ? (
