@@ -20,8 +20,23 @@ export type IngestResult = {
   issues: number;
 };
 
+/** Mirrors `app.models.data_source.SyncStatus`. */
+export type SourceSyncStatus = "PENDING" | "SUCCESS" | "FAILED";
+
 export type WorkspaceSource = IngestResult & {
   total_items: number;
+  /** "github" — the only source kind that exists. */
+  kind: string;
+  status: SourceSyncStatus;
+  /** ISO-8601. When ingestion last *started*, null for a repo ingested before
+   *  sync state was recorded. */
+  last_attempted_at: string | null;
+  /** ISO-8601. When data last landed. Deliberately separate from the attempt:
+   *  a source can be failing and still be showing three-day-old data. */
+  last_synced_at: string | null;
+  last_error: string | null;
+  last_synced_by: string | null;
+  last_synced_by_name: string | null;
 };
 
 /** The node labels the graph holds today. Requirement/Decision/Evidence come

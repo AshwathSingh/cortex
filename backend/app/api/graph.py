@@ -12,6 +12,7 @@ Neo4j.
 """
 
 import uuid
+from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -29,6 +30,8 @@ from app.graph.queries import (
     fetch_node_details,
     fetch_source_summaries,
 )
+from app.models import SyncStatus
+from app.services.data_sources import build_source_inventory, list_synced_sources
 
 router = APIRouter(prefix="/api/workspaces", tags=["graph"])
 
@@ -58,10 +61,24 @@ class GraphResponse(BaseModel):
 
 
 class SourceSummary(BaseModel):
+    """One connected source: sync state from Postgres, counts from Neo4j.
+
+    ``repo`` is the source's ``external_ref``; ``kind`` is "github", the only
+    kind that exists. The field name predates US-10 and the Sources page builds
+    on it, so it stays.
+    """
+
     repo: str
+    kind: str
+    status: SyncStatus
     pull_requests: int
     issues: int
     total_items: int
+    last_attempted_at: datetime | None = None
+    last_synced_at: datetime | None = None
+    last_error: str | None = None
+    last_synced_by: uuid.UUID | None = None
+    last_synced_by_name: str | None = None
 
 
 class GraphOrigin(BaseModel):
@@ -110,21 +127,40 @@ def read_workspace_sources(
     session: DbSession,
     driver: Driver = Depends(get_neo4j),
 ) -> list[SourceSummary]:
+    """T-10.1: the workspace's sources, with sync status and timestamps.
+
+    ``data_sources`` is the authoritative list -- a repository whose ingestion
+    failed has no graph nodes and must still appear, with zero items, so the UI
+    can flag it. Neo4j supplies the counts.
+
+    A Neo4j outage is still a 503 rather than a degraded list: the counts would
+    read as zero, which is exactly how a failed ingestion looks, and quietly
+    showing that is worse than an error the page already offers a retry for.
+    """
     load_workspace_for_user(session, user, workspace_id)
 
     try:
-        sources = fetch_source_summaries(driver, workspace_id)
+        summaries = fetch_source_summaries(driver, workspace_id)
     except (Neo4jError, DriverError):
         raise HTTPException(status_code=503, detail="Graph database unavailable")
 
     return [
         SourceSummary(
-            repo=source.repo,
-            pull_requests=source.pull_requests,
-            issues=source.issues,
-            total_items=source.total_items,
+            repo=item.repo,
+            kind=item.kind,
+            status=item.status,
+            pull_requests=item.pull_requests,
+            issues=item.issues,
+            total_items=item.total_items,
+            last_attempted_at=item.last_attempted_at,
+            last_synced_at=item.last_synced_at,
+            last_error=item.last_error,
+            last_synced_by=item.last_synced_by,
+            last_synced_by_name=item.last_synced_by_name,
         )
-        for source in sources
+        for item in build_source_inventory(
+            list_synced_sources(session, workspace_id), summaries
+        )
     ]
 
 

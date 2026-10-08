@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { buttonClassName } from "@/components/ui/button";
+import { SourceStatus } from "@/components/sources/source-status";
+import { Button, buttonClassName } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { PageHeader, PageShell } from "@/components/ui/page-layout";
 import { useWorkspace } from "@/components/workspaces/workspace-context";
 import { ApiError, apiRequest } from "@/lib/api";
-import type { WorkspaceSource } from "@/lib/api-types";
+import type { IngestResult, WorkspaceSource } from "@/lib/api-types";
 import { routes } from "@/lib/routes";
 import { canManageSources } from "@/lib/workspace-permissions";
 
@@ -18,6 +19,16 @@ type State =
   | { kind: "loading" }
   | { kind: "ready"; sources: WorkspaceSource[] }
   | { kind: "error"; message: string };
+
+/**
+ * How often the list refreshes while an ingestion is running.
+ *
+ * Ingestion is synchronous server-side (US-7 has no job queue), so a large repo
+ * holds the POST open for minutes and the request can easily outlive the page.
+ * Polling is what gets the row to SUCCESS or FAILED either way -- the server
+ * keeps going, and `data_sources` is where it reports.
+ */
+const SYNC_POLL_MS = 5_000;
 
 function RepositoryIcon() {
   return (
@@ -49,6 +60,11 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
   const { workspace, isLoading: isWorkspaceLoading } = useWorkspace();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [requestVersion, setRequestVersion] = useState(0);
+  const [syncingRepo, setSyncingRepo] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const resyncControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => resyncControllerRef.current?.abort(), []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -86,6 +102,69 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
     (total, source) => total + source.total_items,
     0,
   );
+  // The row the user just clicked counts as syncing before the server reports
+  // it, so polling starts immediately rather than after the first poll.
+  const isSyncing =
+    syncingRepo !== null || sources.some((source) => source.status === "PENDING");
+
+  useEffect(() => {
+    if (!isSyncing) return;
+    // Bumping the version re-runs the loader without flipping back to the
+    // loading state, so a poll never blanks the list.
+    const timer = setInterval(
+      () => setRequestVersion((version) => version + 1),
+      SYNC_POLL_MS,
+    );
+    return () => clearInterval(timer);
+  }, [isSyncing]);
+
+  /**
+   * Re-ingest a repository that is already connected. The repo is known, so
+   * this needs no form -- it is the same `POST /api/ingest/github` the ingest
+   * page sends, which upserts the source to PENDING before it starts fetching.
+   *
+   * One ingestion at a time: it is heavy and shares the workspace's GitHub rate
+   * limit, so every button is disabled while any source in the workspace is
+   * PENDING -- including one somebody else started, which the poll reports.
+   */
+  async function resync(repo: string) {
+    const controller = new AbortController();
+    resyncControllerRef.current = controller;
+    setSyncError(null);
+    setSyncingRepo(repo);
+
+    try {
+      await apiRequest<IngestResult>("/api/ingest/github", {
+        method: "POST",
+        body: JSON.stringify({
+          repo_url: githubUrl(repo),
+          workspace_id: workspaceId,
+        }),
+        signal: controller.signal,
+      });
+    } catch (requestError) {
+      if (controller.signal.aborted) return;
+      if (requestError instanceof ApiError && requestError.status === 401) {
+        router.replace("/login");
+        return;
+      }
+      // The server records its own failures against the source, so the row will
+      // carry the reason. This covers what never reached it.
+      setSyncError(
+        requestError instanceof ApiError
+          ? requestError.message
+          : `Could not re-sync ${repo}. The Cortex server is unreachable.`,
+      );
+    } finally {
+      if (!controller.signal.aborted) {
+        setSyncingRepo(null);
+        setRequestVersion((version) => version + 1);
+      }
+      if (resyncControllerRef.current === controller) {
+        resyncControllerRef.current = null;
+      }
+    }
+  }
 
   return (
     <PageShell>
@@ -162,61 +241,80 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
               </p>
             </div>
           </div>
+
+          <FeedbackAlert message={syncError} />
+
           <ul className="divide-y divide-border/20">
-            {sources.map((source) => (
-              <li
-                key={source.repo}
-                className="grid gap-5 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-              >
-                <div className="flex min-w-0 items-center gap-4">
-                  <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-border/30 bg-surface-raised text-muted">
-                    <RepositoryIcon />
-                  </span>
-                  <div className="min-w-0">
-                    <a
-                      href={githubUrl(source.repo)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex max-w-full items-center gap-1.5 font-medium text-foreground transition-colors hover:text-accent-bright"
-                    >
-                      <span className="truncate">{source.repo}</span>
-                      <ArrowUpRightIcon />
-                      <span className="sr-only"> (opens on GitHub)</span>
-                    </a>
-                    <p className="mt-1 flex items-center gap-2 text-xs text-muted">
-                      <span className="size-1.5 rounded-full bg-emerald-400" />
-                      Indexed
-                    </p>
+            {sources.map((source) => {
+              const isResyncing = syncingRepo === source.repo;
+              return (
+                <li
+                  key={`${source.kind}:${source.repo}`}
+                  className="grid gap-5 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+                >
+                  <div className="flex min-w-0 items-center gap-4">
+                    <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-border/30 bg-surface-raised text-muted">
+                      <RepositoryIcon />
+                    </span>
+                    <div className="min-w-0">
+                      <a
+                        href={githubUrl(source.repo)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex max-w-full items-center gap-1.5 font-medium text-foreground transition-colors hover:text-accent-bright"
+                      >
+                        <span className="truncate">{source.repo}</span>
+                        <ArrowUpRightIcon />
+                        <span className="sr-only"> (opens on GitHub)</span>
+                      </a>
+                      <SourceStatus
+                        source={isResyncing ? { ...source, status: "PENDING" } : source}
+                      />
+                    </div>
                   </div>
-                </div>
-                <dl className="grid grid-cols-3 gap-6 text-right">
-                  <div>
-                    <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-                      Pull requests
-                    </dt>
-                    <dd className="mt-1 font-mono text-sm text-foreground">
-                      {source.pull_requests.toLocaleString()}
-                    </dd>
+                  <div className="flex items-center justify-end gap-6">
+                    <dl className="grid grid-cols-3 gap-6 text-right">
+                      <div>
+                        <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
+                          Pull requests
+                        </dt>
+                        <dd className="mt-1 font-mono text-sm text-foreground">
+                          {source.pull_requests.toLocaleString()}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
+                          Issues
+                        </dt>
+                        <dd className="mt-1 font-mono text-sm text-foreground">
+                          {source.issues.toLocaleString()}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
+                          Indexed
+                        </dt>
+                        <dd className="mt-1 font-mono text-sm text-foreground">
+                          {source.total_items.toLocaleString()}
+                        </dd>
+                      </div>
+                    </dl>
+                    {canAddSources ? (
+                      <Button
+                        type="button"
+                        size="small"
+                        variant="muted"
+                        aria-label={`Re-sync ${source.repo}`}
+                        onClick={() => void resync(source.repo)}
+                        disabled={isSyncing || source.status === "PENDING"}
+                      >
+                        Re-sync
+                      </Button>
+                    ) : null}
                   </div>
-                  <div>
-                    <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-                      Issues
-                    </dt>
-                    <dd className="mt-1 font-mono text-sm text-foreground">
-                      {source.issues.toLocaleString()}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-                      Indexed
-                    </dt>
-                    <dd className="mt-1 font-mono text-sm text-foreground">
-                      {source.total_items.toLocaleString()}
-                    </dd>
-                  </div>
-                </dl>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         </section>
       ) : null}

@@ -145,6 +145,38 @@ repo is ingested.
 The frontend reaches this from `/workspaces/[workspaceId]/ingest`, which supplies
 `workspace_id` from the route.
 
+### Recorded sync state (US-10, T-10.1)
+
+This endpoint is also what writes a workspace's `data_sources` rows
+(`app/services/data_sources.py`). Nothing is recorded until `parse_repo_url`
+succeeds — a 422 means no real source was identified — and after that every exit
+path records an outcome:
+
+| Point | Row |
+|---|---|
+| before the fetch | `PENDING`, `last_attempted_at` stamped, **committed** |
+| 200 | `SUCCESS`, `last_synced_at` and `last_synced_by` set, `last_error` cleared |
+| 404 / 429 / 502 / 503 | `FAILED`, `last_error` set, `last_synced_at` untouched |
+
+Committed before the fetch rather than after, because the call is synchronous and
+a large repo takes minutes: that is what lets the Sources page show "Syncing…"
+while it runs, and what leaves a trace if the request dies half way.
+
+`last_attempted_at` and `last_synced_at` are separate columns on purpose. A repo
+that succeeded on Monday and failed today has to show both "Needs attention" and
+"Synced 3 days ago" — the data on screen really is three days old.
+
+The graph remains authoritative for *contents*; `data_sources` is authoritative
+for *which* sources exist, which is why a failed repo (zero nodes, because
+`write_graph` is all-or-nothing) still appears in
+`GET /api/workspaces/{id}/sources`.
+
+The Sources page re-syncs a connected repository through this same endpoint (it
+already knows the repo, so there is no form) and polls the source list every 5s
+while anything is `PENDING`. That is what makes the synchronous call survivable
+from the browser: the request may time out client-side, but the server keeps
+going and reports the outcome here.
+
 ## Workspace scoping
 
 Every node written carries a `workspace_id` property, and it is part of the MERGE
@@ -186,12 +218,6 @@ Tests use `httpx.MockTransport`, so no network or token is needed.
   error) that the frontend form polls. Until then, set `GITHUB_TOKEN` and ingest small
   repos.
 - Auto-populating new issues during a live session (US-7 acceptance criterion).
-- **Persisting the connected source.** Ingestion is still fire-and-forget: nothing
-  records that a repo was connected to a workspace, so there is no repo list, no
-  re-sync and no `last_synced_at`. US-10's `DataSource` table (carrying
-  `workspace_id`) is the intended home. Deliberately deferred — no current
-  consumer reads it, and the request shape above already takes `workspace_id`, so
-  adding it later needs no API change.
 - Token handling: `GITHUB_CLIENT_ID`/`SECRET` are in `.env.example`, but the
   client takes a plain token argument. OAuth (US-1) must supply it, and tokens
   must be decrypted only in-process and never returned in API responses.

@@ -112,14 +112,18 @@ def test_empty_repo_remains_visible_as_a_source(graph, client):
         "pull_requests": 0,
         "issues": 0,
     }
-    assert client.get(f"/api/workspaces/{TEST_WORKSPACE_ID}/sources").json() == [
-        {
-            "repo": TEST_REPO,
-            "pull_requests": 0,
-            "issues": 0,
-            "total_items": 0,
-        }
-    ]
+    (source,) = client.get(f"/api/workspaces/{TEST_WORKSPACE_ID}/sources").json()
+    assert (source["repo"], source["kind"], source["status"]) == (
+        TEST_REPO,
+        "github",
+        "SUCCESS",
+    )
+    assert (source["pull_requests"], source["issues"], source["total_items"]) == (0, 0, 0)
+    # US-10: the ingestion recorded itself, so a repo that indexed nothing still
+    # has a real sync timestamp and a name against it.
+    assert source["last_synced_at"] is not None
+    assert source["last_synced_by_name"] == "owner"
+    assert source["last_error"] is None
 
 
 def test_node_properties_and_provenance(graph, client):
@@ -211,6 +215,78 @@ def test_failed_reingest_leaves_existing_graph_intact(graph, client):
     use_github(lambda r: httpx.Response(500))
     assert client.post(URL, json=body()).status_code == 502
     assert graph.counts() == before
+
+
+# --------------------------------------------------------------------------
+# Recorded sync state (US-10)
+#
+# The one claim that needs both stores to be real: a failed ingestion writes
+# nothing to Neo4j, so the source is only visible at all because Postgres
+# recorded it.
+# --------------------------------------------------------------------------
+
+
+def sources(client, workspace_id=TEST_WORKSPACE_ID) -> list[dict]:
+    response = client.get(f"/api/workspaces/{workspace_id}/sources")
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_a_failed_ingest_leaves_a_visible_source_with_no_items(graph, client):
+    """AC1: zero graph nodes, but the repo is still listed and flagged."""
+    use_github(lambda r: httpx.Response(404))
+    assert client.post(URL, json=body()).status_code == 404
+    assert sum(graph.counts().values()) == 0
+
+    (source,) = sources(client)
+    assert source["status"] == "FAILED"
+    assert source["total_items"] == 0
+    assert "not found or not accessible" in source["last_error"]
+    assert source["last_synced_at"] is None
+
+
+def test_a_failed_reingest_keeps_the_earlier_sync_timestamp(graph, client):
+    """Succeeded, then failed: both the failure and the real age of the graph
+    data that is still there have to reach the page."""
+    use_github(github_repo([pull_request(1, ALICE)], [issue(2, BOB)]))
+    assert client.post(URL, json=body()).status_code == 200
+    synced_at = sources(client)[0]["last_synced_at"]
+    assert synced_at is not None
+
+    use_github(lambda r: httpx.Response(429, headers={"Retry-After": "99999"}))
+    assert client.post(URL, json=body()).status_code == 429
+
+    (source,) = sources(client)
+    assert source["status"] == "FAILED"
+    assert source["last_synced_at"] == synced_at
+    assert "rate limit" in source["last_error"]
+    # The earlier ingestion's nodes are still indexed, which is exactly why the
+    # stale timestamp must stay on screen.
+    assert source["total_items"] == 2
+
+
+def test_a_successful_reingest_clears_the_failure(graph, client):
+    use_github(lambda r: httpx.Response(404))
+    assert client.post(URL, json=body()).status_code == 404
+
+    use_github(github_repo([pull_request(1, ALICE)], []))
+    assert client.post(URL, json=body()).status_code == 200
+
+    (source,) = sources(client)
+    assert source["status"] == "SUCCESS"
+    assert source["last_error"] is None
+    assert source["total_items"] == 1
+
+
+def test_sync_state_does_not_leak_between_workspaces(graph, client):
+    use_github(github_repo([pull_request(1, ALICE)], []))
+    assert client.post(URL, json=body()).status_code == 200
+
+    use_github(lambda r: httpx.Response(404))
+    assert client.post(URL, json=body(workspace_id=TEST_WORKSPACE_ID_B)).status_code == 404
+
+    assert [s["status"] for s in sources(client)] == ["SUCCESS"]
+    assert [s["status"] for s in sources(client, TEST_WORKSPACE_ID_B)] == ["FAILED"]
 
 
 # --------------------------------------------------------------------------
