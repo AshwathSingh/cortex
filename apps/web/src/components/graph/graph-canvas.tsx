@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type MouseEvent } from "react";
 
-import type { GraphEdge, GraphNode, GraphNodeType } from "@/lib/api-types";
+import type { GraphEdge, GraphNode, GraphNodeType, GraphSelection } from "@/lib/api-types";
 import { GraphSimulation, type NodeSpec } from "@/lib/graph-layout";
 
 /** Fallbacks keep canvas rendering deterministic when CSS variables are unavailable. */
@@ -37,7 +37,45 @@ type GraphCanvasProps = {
   nodes: GraphNode[];
   edges: GraphEdge[];
   height?: number;
+  onSelectionChange?: (selection: GraphSelection) => void;
 };
+
+type HitNode = { key: string; x: number; y: number; radius: number };
+type HitEdge = { edge: GraphEdge; x1: number; y1: number; x2: number; y2: number };
+
+export function hitTestGraph(
+  x: number,
+  y: number,
+  nodes: readonly HitNode[],
+  edges: readonly HitEdge[],
+): GraphSelection {
+  let nearestNode: HitNode | null = null;
+  let nearestNodeDistance = Number.POSITIVE_INFINITY;
+  for (const node of nodes) {
+    const distance = Math.hypot(x - node.x, y - node.y);
+    if (distance <= node.radius + 7 && distance < nearestNodeDistance) {
+      nearestNode = node;
+      nearestNodeDistance = distance;
+    }
+  }
+  if (nearestNode) return { kind: "node", key: nearestNode.key };
+
+  let nearestEdge: HitEdge | null = null;
+  let nearestEdgeDistance = Number.POSITIVE_INFINITY;
+  for (const edge of edges) {
+    const dx = edge.x2 - edge.x1;
+    const dy = edge.y2 - edge.y1;
+    const lengthSquared = dx * dx + dy * dy;
+    const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1,
+      ((x - edge.x1) * dx + (y - edge.y1) * dy) / lengthSquared));
+    const distance = Math.hypot(x - (edge.x1 + t * dx), y - (edge.y1 + t * dy));
+    if (distance <= 8 && distance < nearestEdgeDistance) {
+      nearestEdge = edge;
+      nearestEdgeDistance = distance;
+    }
+  }
+  return nearestEdge ? { kind: "edge", edge: nearestEdge.edge } : null;
+}
 
 export function nodeColour(type: string): string {
   return NODE_COLOURS[type as GraphNodeType] ?? FALLBACK_COLOUR;
@@ -107,9 +145,17 @@ export function GraphCanvas({
   nodes,
   edges,
   height = 560,
+  onSelectionChange,
 }: GraphCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
+  const hitNodesRef = useRef<HitNode[]>([]);
+  const hitEdgesRef = useRef<HitEdge[]>([]);
+  const selectionHandlerRef = useRef(onSelectionChange);
+
+  useEffect(() => {
+    selectionHandlerRef.current = onSelectionChange;
+  }, [onSelectionChange]);
 
   useEffect(() => {
     const maybeCanvas = canvasRef.current;
@@ -216,6 +262,17 @@ export function GraphCanvas({
       function draw() {
         ctx.clearRect(0, 0, width, measuredHeight);
 
+        hitNodesRef.current = simulation.nodes.map(({ key, x, y, radius }) => ({
+          key, x, y, radius,
+        }));
+        hitEdgesRef.current = edges.flatMap((edge) => {
+          const source = simulation.nodeAt(edge.source);
+          const target = simulation.nodeAt(edge.target);
+          return source && target
+            ? [{ edge, x1: source.x, y1: source.y, x2: target.x, y2: target.y }]
+            : [];
+        });
+
         for (const edge of edges) {
           const source = simulation.nodeAt(edge.source);
           const target = simulation.nodeAt(edge.target);
@@ -315,12 +372,31 @@ export function GraphCanvas({
     };
   }, [edges, height, nodes]);
 
+  function selectAt(event: MouseEvent<HTMLCanvasElement>) {
+    const canvas = event.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.clientWidth / (rect.width || canvas.clientWidth || 1);
+    const scaleY = canvas.clientHeight / (rect.height || canvas.clientHeight || 1);
+    selectionHandlerRef.current?.(hitTestGraph(
+      (event.clientX - rect.left) * scaleX,
+      (event.clientY - rect.top) * scaleY,
+      hitNodesRef.current,
+      hitEdgesRef.current,
+    ));
+  }
+
   return (
     <canvas
       ref={canvasRef}
       role="img"
       aria-label={`Knowledge graph: ${nodes.length} nodes, ${edges.length} connections`}
+      aria-describedby="graph-interaction-help"
       className="absolute inset-0 block size-full"
+      onClick={selectAt}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") selectionHandlerRef.current?.(null);
+      }}
+      tabIndex={0}
     />
   );
 }
