@@ -4,13 +4,16 @@ GitHub and Neo4j are faked; the relational half is real (in-memory), so
 `get_current_user` and `load_workspace_for_user` genuinely run.
 """
 
+import uuid
+
 import httpx
 import pytest
+from sqlalchemy import select
 
 from app.api.ingest import get_github_client, get_neo4j
 from app.github.client import GitHubClient
 from app.main import app
-from app.models import Role
+from app.models import DataSource, Role, SyncStatus, User
 from tests.authz import sign_in_with_role
 from tests.payloads import TEST_WORKSPACE_ID
 
@@ -227,3 +230,146 @@ def test_neo4j_down_503(api_db):
 
     c, _ = setup(api_db, ok_handler, FakeDriver(error=ServiceUnavailable("down")))
     assert c.post(URL, json=body()).status_code == 503
+
+
+# --------------------------------------------------------------------------
+# Sync state (US-10, T-10.1)
+#
+# A failed ingestion writes nothing to the graph -- every failure path raises
+# before write_graph, and write_graph is all-or-nothing -- so these rows are the
+# only record that a source was ever connected, and the only thing that can
+# render a red "Needs attention" against it.
+# --------------------------------------------------------------------------
+
+
+def recorded(sessions, workspace_id=TEST_WORKSPACE_ID) -> list[DataSource]:
+    with sessions() as session:
+        return list(
+            session.scalars(
+                select(DataSource)
+                .where(DataSource.workspace_id == uuid.UUID(workspace_id))
+                .order_by(DataSource.external_ref)
+            )
+        )
+
+
+def test_successful_ingest_records_who_synced_the_source(api_db):
+    c, _ = setup(api_db, ok_handler)
+    _, sessions = api_db
+
+    assert c.post(URL, json=body()).status_code == 200
+
+    (source,) = recorded(sessions)
+    assert (source.kind, source.external_ref) == ("github", "o/r")
+    assert source.status is SyncStatus.SUCCESS
+    assert source.last_synced_at is not None
+    assert source.last_error is None
+    with sessions() as session:
+        assert source.last_synced_by == session.scalar(select(User.id))
+
+
+def test_source_is_pending_while_github_is_being_read(api_db):
+    """The attempt is committed before the fetch starts: ingestion is
+    synchronous and a large repository takes minutes, so the Sources page has to
+    be able to show "Syncing…" meanwhile."""
+    _, sessions = api_db
+    during: list[list[SyncStatus]] = []
+
+    def handler(request):
+        during.append([s.status for s in recorded(sessions)])
+        return httpx.Response(200, json=[])
+
+    c, _ = setup(api_db, handler)
+
+    assert c.post(URL, json=body()).status_code == 200
+    assert during[0] == [SyncStatus.PENDING]
+    assert [s.status for s in recorded(sessions)] == [SyncStatus.SUCCESS]
+
+
+@pytest.mark.parametrize(
+    "handler, status_code, detail",
+    [
+        (lambda r: httpx.Response(404), 404, "not found or not accessible"),
+        (
+            lambda r: httpx.Response(429, headers={"Retry-After": "5000"}),
+            429,
+            "rate limit",
+        ),
+        (lambda r: httpx.Response(500), 502, ""),
+        (lambda r: httpx.Response(200, json=[{"id": "bad"}]), 502, "payload shape"),
+    ],
+)
+def test_a_failed_ingest_records_the_source_as_failed(
+    api_db, handler, status_code, detail
+):
+    c, _ = setup(api_db, handler)
+    _, sessions = api_db
+
+    assert c.post(URL, json=body()).status_code == status_code
+
+    (source,) = recorded(sessions)
+    assert source.status is SyncStatus.FAILED
+    assert detail in (source.last_error or "")
+    assert source.last_attempted_at is not None
+    # Never synced, so there is no timestamp to claim.
+    assert source.last_synced_at is None
+
+
+def test_an_unavailable_graph_records_the_source_as_failed(api_db):
+    from neo4j.exceptions import ServiceUnavailable
+
+    c, _ = setup(api_db, ok_handler, FakeDriver(error=ServiceUnavailable("down")))
+    _, sessions = api_db
+
+    assert c.post(URL, json=body()).status_code == 503
+
+    (source,) = recorded(sessions)
+    assert source.status is SyncStatus.FAILED
+    assert source.last_error == "Graph database unavailable"
+
+
+def test_a_later_failure_keeps_the_earlier_success(api_db):
+    """Succeeded, then failed: the source must show both the failure and the
+    real age of the data still in the graph."""
+    c, _ = setup(api_db, ok_handler)
+    _, sessions = api_db
+    assert c.post(URL, json=body()).status_code == 200
+    synced_at = recorded(sessions)[0].last_synced_at
+
+    app.dependency_overrides[get_github_client] = lambda: GitHubClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(404)),
+        sleep=lambda s: None,
+    )
+    assert c.post(URL, json=body()).status_code == 404
+
+    (source,) = recorded(sessions)
+    assert source.status is SyncStatus.FAILED
+    assert source.last_synced_at == synced_at
+
+
+def test_re_ingesting_the_same_repo_updates_one_row(api_db):
+    c, _ = setup(api_db, ok_handler)
+    _, sessions = api_db
+
+    c.post(URL, json=body())
+    c.post(URL, json=body())
+
+    assert len(recorded(sessions)) == 1
+
+
+@pytest.mark.parametrize("url", ["", "not a url", "https://gitlab.com/a/b"])
+def test_an_unparseable_url_records_nothing(api_db, url):
+    """A 422 means no real source was identified, so there is nothing to record."""
+    c, _ = setup(api_db, never_called)
+    _, sessions = api_db
+
+    assert c.post(URL, json=body(repo_url=url)).status_code == 422
+    assert recorded(sessions) == []
+
+
+def test_an_unauthorised_caller_records_nothing(api_db):
+    c, _ = setup(api_db, never_called, role=Role.VIEWER)
+    _, sessions = api_db
+
+    assert c.post(URL, json=body()).status_code == 403
+    assert recorded(sessions) == []

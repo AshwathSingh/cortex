@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
@@ -96,6 +97,32 @@ class TestGraph:
         return rec["id"] if rec else None
 
 
+@contextmanager
+def _relational_database() -> Iterator[sessionmaker[Session]]:
+    """An in-memory SQLite standing in for Postgres, with the real schema."""
+    engine = create_engine(
+        "sqlite://",
+        # One shared connection: the TestClient calls from another thread, and a
+        # second connection would open a different (empty) in-memory database.
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    try:
+        yield sessionmaker(bind=engine, expire_on_commit=False)
+    finally:
+        Base.metadata.drop_all(engine)
+        engine.dispose()
+
+
+@pytest.fixture
+def db_sessions() -> Iterator[sessionmaker[Session]]:
+    """A relational database on its own, for service-level tests. Use `api_db`
+    when the test goes through an endpoint."""
+    with _relational_database() as test_sessions:
+        yield test_sessions
+
+
 @pytest.fixture
 def api_db() -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
     """TestClient plus a relational database, for endpoints behind auth.
@@ -104,30 +131,21 @@ def api_db() -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
     and `test_workspaces_api.py` use: the real queries and the real
     `get_current_user` run, so authorisation is genuinely exercised.
     """
-    engine = create_engine(
-        "sqlite://",
-        # One shared connection: the TestClient calls from another thread, and a
-        # second connection would open a different (empty) in-memory database.
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    test_sessions = sessionmaker(bind=engine, expire_on_commit=False)
-    Base.metadata.create_all(engine)
+    with _relational_database() as test_sessions:
 
-    def override_session() -> Iterator[Session]:
-        with test_sessions() as session:
-            yield session
+        def override_session() -> Iterator[Session]:
+            with test_sessions() as session:
+                yield session
 
-    app.dependency_overrides[get_session] = override_session
-    original_secure_cookies = settings.secure_cookies
-    settings.secure_cookies = False  # TestClient does not send cookies over TLS
-    try:
-        # Deliberately not `with TestClient(app)`: that runs the app lifespan, whose
-        # shutdown calls close_driver() and would close the Neo4j driver shared with
-        # the session-scoped `neo4j_driver` fixture, breaking every later graph test.
-        yield TestClient(app), test_sessions
-    finally:
-        settings.secure_cookies = original_secure_cookies
-        app.dependency_overrides.pop(get_session, None)
-        Base.metadata.drop_all(engine)
-        engine.dispose()
+        app.dependency_overrides[get_session] = override_session
+        original_secure_cookies = settings.secure_cookies
+        settings.secure_cookies = False  # TestClient does not send cookies over TLS
+        try:
+            # Deliberately not `with TestClient(app)`: that runs the app lifespan,
+            # whose shutdown calls close_driver() and would close the Neo4j driver
+            # shared with the session-scoped `neo4j_driver` fixture, breaking every
+            # later graph test.
+            yield TestClient(app), test_sessions
+        finally:
+            settings.secure_cookies = original_secure_cookies
+            app.dependency_overrides.pop(get_session, None)
