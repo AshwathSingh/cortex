@@ -59,6 +59,69 @@ export function syncSummary(
   return source.status === "FAILED" ? "Never synced" : null;
 }
 
+export type WorkspaceSyncSummary = {
+  /** The worst state across the workspace's sources. */
+  status: SourceSyncStatus;
+  /** The most recent successful sync of any source, ISO-8601. */
+  syncedAt: string | null;
+  /** When the newest in-flight attempt started, ISO-8601, or null if none is. */
+  pendingSince: string | null;
+  failing: number;
+  total: number;
+};
+
+/**
+ * Roll the workspace's sources up into one line for the Graph page, which shows
+ * the whole graph rather than any single source.
+ *
+ * Precedence is PENDING > FAILED > SUCCESS: an ingestion in flight is the most
+ * useful thing to say, and one broken source matters more than four healthy
+ * ones. The timestamp is the newest success anywhere, because that is when the
+ * graph on screen last gained anything. Null when nothing is connected -- the
+ * canvas already has an empty state for that.
+ */
+function timestamp(value: string | null): number | null {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? null : time;
+}
+
+export function summariseWorkspaceSync(
+  sources: readonly WorkspaceSource[],
+): WorkspaceSyncSummary | null {
+  if (sources.length === 0) return null;
+
+  let syncedAt: string | null = null;
+  let newestSync = Number.NEGATIVE_INFINITY;
+  let pendingSince: string | null = null;
+  let newestAttempt = Number.NEGATIVE_INFINITY;
+  let failing = 0;
+
+  for (const source of sources) {
+    if (source.status === "FAILED") failing += 1;
+    const syncedTime = timestamp(source.last_synced_at);
+    if (syncedTime !== null && syncedTime > newestSync) {
+      newestSync = syncedTime;
+      syncedAt = source.last_synced_at;
+    }
+    if (source.status !== "PENDING") continue;
+    const attemptTime = timestamp(source.last_attempted_at);
+    if (attemptTime !== null && attemptTime > newestAttempt) {
+      newestAttempt = attemptTime;
+      pendingSince = source.last_attempted_at;
+    }
+  }
+
+  const pending = sources.some((source) => source.status === "PENDING");
+  return {
+    status: pending ? "PENDING" : failing > 0 ? "FAILED" : "SUCCESS",
+    syncedAt,
+    pendingSince,
+    failing,
+    total: sources.length,
+  };
+}
+
 export function SourceStatus({
   source,
   now,

@@ -48,7 +48,14 @@ type State =
   | { kind: "ready"; graph: WorkspaceGraph }
   | { kind: "error"; message: string };
 
-export function GraphView({ workspaceId }: { workspaceId: string }) {
+export function GraphView({
+  workspaceId,
+  reloadToken = 0,
+}: {
+  workspaceId: string;
+  /** Change it to refetch the graph; the header bumps it after an ingestion. */
+  reloadToken?: number;
+}) {
   const router = useRouter();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selection, setSelection] = useState<GraphSelection>(null);
@@ -70,19 +77,23 @@ export function GraphView({ workspaceId }: { workspaceId: string }) {
           router.replace("/login");
           return;
         }
-        setState({
-          kind: "error",
-          message:
-            requestError instanceof ApiError
-              ? requestError.message
-              : "Unable to load the graph.",
-        });
+        const message =
+          requestError instanceof ApiError
+            ? requestError.message
+            : "Unable to load the graph.";
+        // A refresh that fails must not take the graph down with it: what is on
+        // screen is still the last thing the server successfully sent, and
+        // replacing it with an error loses work the user can still read. Only
+        // the first load, which has nothing to fall back on, shows the error.
+        setState((previous) =>
+          previous.kind === "ready" ? previous : { kind: "error", message },
+        );
       }
     }
 
     void load();
     return () => controller.abort();
-  }, [router, workspaceId]);
+  }, [reloadToken, router, workspaceId]);
 
   useEffect(() => {
     if (!selection) return;

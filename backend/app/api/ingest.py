@@ -42,6 +42,7 @@ from app.github.client import (
 )
 from app.github.mapper import write_graph
 from app.services.data_sources import (
+    SyncInProgress,
     record_sync_attempt,
     record_sync_failure,
     record_sync_success,
@@ -113,7 +114,16 @@ def ingest_github(
     # Before the fetch, not after: ingestion is synchronous and a large
     # repository takes minutes, so this is what lets the Sources page show
     # "Syncing…" meanwhile, and what leaves a trace if the request dies.
-    record_sync_attempt(session, workspace_id=body.workspace_id, external_ref=repo)
+    try:
+        record_sync_attempt(session, workspace_id=body.workspace_id, external_ref=repo)
+    except SyncInProgress:
+        # Server-arbitrated: two ingestions of one source would race to write
+        # its final status, and the second would re-spend the GitHub rate limit
+        # the first is already using.
+        raise HTTPException(
+            status_code=409,
+            detail=f"An ingestion of {repo} is already running",
+        )
     session.commit()
 
     try:

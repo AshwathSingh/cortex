@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   SourceStatus,
   sourceIndicator,
+  summariseWorkspaceSync,
   syncSummary,
 } from "@/components/sources/source-status";
 import type { WorkspaceSource } from "@/lib/api-types";
@@ -110,5 +111,66 @@ describe("syncSummary", () => {
 
   it("stays quiet about a first ingestion still in progress", () => {
     expect(syncSummary(source({ status: "PENDING", last_synced_at: null }), NOW)).toBeNull();
+  });
+});
+
+describe("summariseWorkspaceSync", () => {
+  it("has nothing to say about a workspace with no sources", () => {
+    expect(summariseWorkspaceSync([])).toBeNull();
+  });
+
+  it("reports the newest success across every source", () => {
+    const summary = summariseWorkspaceSync([
+      source({ repo: "a", last_synced_at: "2026-10-01T12:00:00Z" }),
+      source({ repo: "b", last_synced_at: "2026-10-08T11:55:00Z" }),
+      source({ repo: "c", last_synced_at: null }),
+    ]);
+
+    // The graph on screen is as new as the newest thing written into it.
+    expect(summary).toMatchObject({
+      status: "SUCCESS",
+      syncedAt: "2026-10-08T11:55:00Z",
+      failing: 0,
+      total: 3,
+    });
+  });
+
+  it("lets one broken source outrank three healthy ones", () => {
+    const summary = summariseWorkspaceSync([
+      source({ repo: "a" }),
+      source({ repo: "b" }),
+      source({ repo: "c", status: "FAILED" }),
+    ]);
+
+    expect(summary).toMatchObject({ status: "FAILED", failing: 1, total: 3 });
+    // Still reports freshness: the healthy sources' data is really on screen.
+    expect(summary?.syncedAt).not.toBeNull();
+  });
+
+  it("lets an ingestion in flight outrank a failure", () => {
+    const summary = summariseWorkspaceSync([
+      source({ repo: "a", status: "FAILED" }),
+      source({ repo: "b", status: "PENDING" }),
+    ]);
+
+    expect(summary?.status).toBe("PENDING");
+    expect(summary?.failing).toBe(1);
+  });
+
+  it("ignores an unparseable timestamp rather than reporting it", () => {
+    const summary = summariseWorkspaceSync([
+      source({ repo: "a", last_synced_at: "not a date" }),
+      source({ repo: "b", last_synced_at: "2026-10-08T11:55:00Z" }),
+    ]);
+
+    expect(summary?.syncedAt).toBe("2026-10-08T11:55:00Z");
+  });
+
+  it("reports no timestamp when nothing has ever synced", () => {
+    const summary = summariseWorkspaceSync([
+      source({ repo: "a", status: "FAILED", last_synced_at: null }),
+    ]);
+
+    expect(summary).toMatchObject({ status: "FAILED", syncedAt: null });
   });
 });
