@@ -16,7 +16,7 @@ comments in ``app.models.data_source``.
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +27,30 @@ from app.models import GITHUB_KIND, DataSource, SyncStatus, User
 
 #: ``last_error`` is shown in the UI next to the source, not used as a log.
 MAX_ERROR_LENGTH = 500
+
+#: How long a PENDING row holds the source against a second ingestion.
+#:
+#: Ingestion is one synchronous request with nowhere to send a heartbeat from,
+#: so this is a lease with a fixed TTL rather than a liveness check: it stops
+#: two ingestions of the same source overlapping, and expires so that a request
+#: killed mid-flight cannot hold the source forever. The window is deliberately
+#: wider than any plausible run -- the GitHub client waits up to 15 minutes for
+#: a single rate-limit reset and may hit several.
+#:
+#: A real heartbeat needs the background job queue that US-7's README defers;
+#: until then an ingestion that outlives the lease can still be overlapped, and
+#: the two runs race to write the final status. The graph itself is safe either
+#: way: every write is a MERGE on the composite key.
+SYNC_LEASE = timedelta(minutes=30)
+
+
+class SyncInProgress(Exception):
+    """Another ingestion of this source is already running."""
+
+    def __init__(self, external_ref: str, started_at: datetime):
+        super().__init__(external_ref)
+        self.external_ref = external_ref
+        self.started_at = started_at
 
 
 @dataclass(frozen=True)
@@ -72,15 +96,16 @@ def _find(
 
 def _upsert(
     session: Session, workspace_id: uuid.UUID, kind: str, external_ref: str
-) -> DataSource:
-    """The row for this source, created as a PENDING attempt if it is new.
+) -> tuple[DataSource, bool]:
+    """The row for this source and whether this call created it.
 
     An existing row is returned untouched: only the three ``record_*``
-    functions below decide what a write means.
+    functions below decide what a write means. The flag matters for the lease --
+    a row this call just created cannot be held by anybody else.
     """
     source = _find(session, workspace_id, kind, external_ref)
     if source is not None:
-        return source
+        return source, False
 
     source = DataSource(
         workspace_id=workspace_id,
@@ -99,8 +124,20 @@ def _upsert(
         existing = _find(session, workspace_id, kind, external_ref)
         if existing is None:  # pragma: no cover - the conflicting row must exist
             raise
-        return existing
-    return source
+        return existing, False
+    return source, True
+
+
+def _holds_lease(source: DataSource, now: datetime) -> bool:
+    if source.status is not SyncStatus.PENDING:
+        return False
+    started = source.last_attempted_at
+    if started is None:
+        return False
+    # SQLite drops the timezone; treat a naive timestamp as the UTC it was.
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return now - started < SYNC_LEASE
 
 
 def record_sync_attempt(
@@ -110,10 +147,19 @@ def record_sync_attempt(
     external_ref: str,
     kind: str = GITHUB_KIND,
 ) -> DataSource:
-    """Upsert the source as PENDING and stamp ``last_attempted_at``."""
-    source = _upsert(session, workspace_id, kind, external_ref)
+    """Take the lease on this source and mark it PENDING.
+
+    Raises ``SyncInProgress`` if another ingestion already holds it. The check
+    is here rather than in the UI because only the server can arbitrate: a
+    client cannot know whether a PENDING row belongs to a live request or a
+    dead one, and two clients cannot agree about it at all.
+    """
+    now = _now()
+    source, created = _upsert(session, workspace_id, kind, external_ref)
+    if not created and _holds_lease(source, now):
+        raise SyncInProgress(external_ref, source.last_attempted_at)
     source.status = SyncStatus.PENDING
-    source.last_attempted_at = _now()
+    source.last_attempted_at = now
     return source
 
 
@@ -127,7 +173,7 @@ def record_sync_success(
 ) -> DataSource:
     """Mark the attempt finished. ``last_attempted_at`` keeps the time the
     attempt *started*; ``last_synced_at`` is when the data actually landed."""
-    source = _upsert(session, workspace_id, kind, external_ref)
+    source, _ = _upsert(session, workspace_id, kind, external_ref)
     source.status = SyncStatus.SUCCESS
     source.last_synced_at = _now()
     source.last_synced_by = user_id
@@ -145,7 +191,7 @@ def record_sync_failure(
 ) -> DataSource:
     """Mark the attempt failed, leaving ``last_synced_at`` alone: the source may
     still be showing data from an earlier success, and the UI has to say so."""
-    source = _upsert(session, workspace_id, kind, external_ref)
+    source, _ = _upsert(session, workspace_id, kind, external_ref)
     source.status = SyncStatus.FAILED
     source.last_error = error[:MAX_ERROR_LENGTH] or None
     return source

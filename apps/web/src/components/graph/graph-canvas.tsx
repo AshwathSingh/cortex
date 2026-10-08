@@ -1,12 +1,12 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
   type MouseEvent,
   type PointerEvent,
-  type WheelEvent,
 } from "react";
 
 import type { GraphEdge, GraphNode, GraphNodeType, GraphSelection } from "@/lib/api-types";
@@ -38,10 +38,22 @@ const LABEL_LINE_HEIGHT = 15;
 const RING_WIDTH = 2;
 const CORE_RATIO = 0.34;
 const HALO_ALPHA = 0.14;
-const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 2.5;
+// 0.25x still reads as a shape on a crowded graph and 4x is close enough to
+// inspect one node's label; the old 0.5x-2.5x range could not do either.
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 4;
 const ZOOM_STEP = 1.2;
 const DRAG_THRESHOLD = 3;
+const WHEEL_SENSITIVITY = 0.0015;
+/**
+ * How much of the layout box must stay on screen while panning. Without it the
+ * graph can be dragged into blank space and "Reset view" becomes the only way
+ * back -- a dead end the user has to discover.
+ */
+const KEEP_VISIBLE = 96;
+/** Clickable halo beyond a node's rim / an edge's line, in screen pixels. */
+const NODE_HIT_SLACK = 7;
+const EDGE_HIT_SLACK = 8;
 
 type Box = { x1: number; y1: number; x2: number; y2: number };
 type Point = { x: number; y: number };
@@ -86,6 +98,27 @@ export function zoomViewport(
   };
 }
 
+/**
+ * Keep part of the layout box inside the viewport. `size` is the canvas in CSS
+ * pixels, which is also the box the simulation was built against; a zero size
+ * means the canvas has not been measured yet, so there is nothing to clamp to.
+ */
+export function clampPan(
+  viewport: GraphViewport,
+  size: { width: number; height: number },
+): GraphViewport {
+  if (size.width <= 0 || size.height <= 0) return viewport;
+  const boxWidth = size.width * viewport.scale;
+  const boxHeight = size.height * viewport.scale;
+  const keepX = Math.min(KEEP_VISIBLE, boxWidth);
+  const keepY = Math.min(KEEP_VISIBLE, boxHeight);
+  return {
+    scale: viewport.scale,
+    offsetX: Math.min(size.width - keepX, Math.max(keepX - boxWidth, viewport.offsetX)),
+    offsetY: Math.min(size.height - keepY, Math.max(keepY - boxHeight, viewport.offsetY)),
+  };
+}
+
 export function graphPointFromCanvas(
   point: Point,
   viewport: GraphViewport,
@@ -96,33 +129,50 @@ export function graphPointFromCanvas(
   };
 }
 
+function canvasSize(canvas: HTMLCanvasElement): { width: number; height: number } {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    width:
+      canvas.clientWidth || rect.width || Number.parseFloat(canvas.style.width) || 1,
+    height:
+      canvas.clientHeight || rect.height || Number.parseFloat(canvas.style.height) || 1,
+  };
+}
+
 function canvasPoint(
   canvas: HTMLCanvasElement,
   clientX: number,
   clientY: number,
 ): Point {
   const rect = canvas.getBoundingClientRect();
-  const width =
-    canvas.clientWidth || rect.width || Number.parseFloat(canvas.style.width) || 1;
-  const height =
-    canvas.clientHeight || rect.height || Number.parseFloat(canvas.style.height) || 1;
+  const { width, height } = canvasSize(canvas);
   return {
     x: (clientX - rect.left) * (width / (rect.width || width)),
     y: (clientY - rect.top) * (height / (rect.height || height)),
   };
 }
 
+/**
+ * Hit-test in graph coordinates. `scale` is the viewport's zoom, used to keep
+ * the clickable halo a constant size on screen: the hit boxes live in graph
+ * space, so without dividing by the zoom the halo shrinks to nothing when
+ * zoomed out and swallows neighbouring nodes when zoomed in.
+ */
 export function hitTestGraph(
   x: number,
   y: number,
   nodes: readonly HitNode[],
   edges: readonly HitEdge[],
+  scale = 1,
 ): GraphSelection {
+  const nodeSlack = NODE_HIT_SLACK / scale;
+  const edgeSlack = EDGE_HIT_SLACK / scale;
+
   let nearestNode: HitNode | null = null;
   let nearestNodeDistance = Number.POSITIVE_INFINITY;
   for (const node of nodes) {
     const distance = Math.hypot(x - node.x, y - node.y);
-    if (distance <= node.radius + 7 && distance < nearestNodeDistance) {
+    if (distance <= node.radius + nodeSlack && distance < nearestNodeDistance) {
       nearestNode = node;
       nearestNodeDistance = distance;
     }
@@ -138,7 +188,7 @@ export function hitTestGraph(
     const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1,
       ((x - edge.x1) * dx + (y - edge.y1) * dy) / lengthSquared));
     const distance = Math.hypot(x - (edge.x1 + t * dx), y - (edge.y1 + t * dy));
-    if (distance <= 8 && distance < nearestEdgeDistance) {
+    if (distance <= edgeSlack && distance < nearestEdgeDistance) {
       nearestEdge = edge;
       nearestEdgeDistance = distance;
     }
@@ -456,11 +506,34 @@ export function GraphCanvas({
     };
   }, [edges, height, nodes]);
 
-  function updateViewport(viewport: GraphViewport) {
-    viewportRef.current = viewport;
-    setZoomPercent(Math.round(viewport.scale * 100));
+  const updateViewport = useCallback((viewport: GraphViewport) => {
+    const canvas = canvasRef.current;
+    const next = canvas ? clampPan(viewport, canvasSize(canvas)) : viewport;
+    viewportRef.current = next;
+    setZoomPercent(Math.round(next.scale * 100));
     redrawRef.current?.();
-  }
+  }, []);
+
+  useEffect(() => {
+    const maybeCanvas = canvasRef.current;
+    if (!maybeCanvas) return;
+    const canvas: HTMLCanvasElement = maybeCanvas;
+
+    // A native listener, because React registers `onWheel` passively at the
+    // root: preventDefault() there is ignored and the page scrolls behind the
+    // zoom.
+    function handleWheel(event: globalThis.WheelEvent) {
+      event.preventDefault();
+      const anchor = canvasPoint(canvas, event.clientX, event.clientY);
+      const factor = Math.exp(-event.deltaY * WHEEL_SENSITIVITY);
+      updateViewport(
+        zoomViewport(viewportRef.current, viewportRef.current.scale * factor, anchor),
+      );
+    }
+
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", handleWheel);
+  }, [updateViewport]);
 
   function zoomAt(requestedScale: number, anchor: Point) {
     updateViewport(zoomViewport(viewportRef.current, requestedScale, anchor));
@@ -469,15 +542,8 @@ export function GraphCanvas({
   function canvasCentre(): Point {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x:
-        (canvas.clientWidth || rect.width || Number.parseFloat(canvas.style.width) || 1) /
-        2,
-      y:
-        (canvas.clientHeight || rect.height || Number.parseFloat(canvas.style.height) || 1) /
-        2,
-    };
+    const { width, height } = canvasSize(canvas);
+    return { x: width / 2, y: height / 2 };
   }
 
   function zoomBy(factor: number) {
@@ -486,13 +552,6 @@ export function GraphCanvas({
 
   function resetView() {
     updateViewport({ ...DEFAULT_VIEWPORT });
-  }
-
-  function zoomWithWheel(event: WheelEvent<HTMLCanvasElement>) {
-    event.preventDefault();
-    const anchor = canvasPoint(event.currentTarget, event.clientX, event.clientY);
-    const factor = Math.exp(-event.deltaY * 0.0015);
-    zoomAt(viewportRef.current.scale * factor, anchor);
   }
 
   function startPan(event: PointerEvent<HTMLCanvasElement>) {
@@ -516,12 +575,13 @@ export function GraphCanvas({
     if (Math.hypot(deltaX, deltaY) >= DRAG_THRESHOLD) {
       didDragRef.current = true;
     }
-    viewportRef.current = {
+    // Offsets come from the gesture start, not the previous frame, so clamping
+    // at the edge cannot accumulate drift.
+    updateViewport({
       ...viewportRef.current,
       offsetX: pan.offsetX + deltaX,
       offsetY: pan.offsetY + deltaY,
-    };
-    redrawRef.current?.();
+    });
   }
 
   function finishPan(event: PointerEvent<HTMLCanvasElement>) {
@@ -545,6 +605,7 @@ export function GraphCanvas({
       point.y,
       hitNodesRef.current,
       hitEdgesRef.current,
+      viewportRef.current.scale,
     ));
   }
 
@@ -561,7 +622,6 @@ export function GraphCanvas({
         onPointerMove={continuePan}
         onPointerUp={finishPan}
         onPointerCancel={finishPan}
-        onWheel={zoomWithWheel}
         onKeyDown={(event) => {
           if (event.key === "Escape") selectionHandlerRef.current?.(null);
           if (event.key === "+" || event.key === "=") {

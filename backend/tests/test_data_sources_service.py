@@ -10,6 +10,8 @@ from app.services import data_sources
 from app.models import GITHUB_KIND, DataSource, Role, SyncStatus
 from app.services.data_sources import (
     MAX_ERROR_LENGTH,
+    SYNC_LEASE,
+    SyncInProgress,
     SyncedSource,
     build_source_inventory,
     list_synced_sources,
@@ -149,15 +151,15 @@ def test_re_syncing_updates_the_same_row(db_sessions, workspace):
     assert source.last_synced_at is not None
 
 
-def test_a_losing_race_reuses_the_winners_row(db_sessions, workspace, monkeypatch):
-    """Two people connecting the same repo at once: the loser has to recover the
-    winner's row, not lose its whole transaction to the unique constraint. The
-    lookup is stubbed to miss once, which is what the race looks like."""
+def test_a_losing_race_is_told_the_winner_is_running(db_sessions, workspace, monkeypatch):
+    """Two people connecting the same repo at once: the loser must not lose its
+    whole transaction to the unique constraint, and must not start a second
+    ingestion either. The lookup is stubbed to miss once, which is what the race
+    looks like from inside."""
     workspace_id, _ = workspace
     with db_sessions() as session:
         record_sync_attempt(session, workspace_id=workspace_id, external_ref=REPO)
         session.commit()
-    winner_id = rows(db_sessions)[0].id
 
     real_find = data_sources._find
     misses = []
@@ -169,13 +171,96 @@ def test_a_losing_race_reuses_the_winners_row(db_sessions, workspace, monkeypatc
     monkeypatch.setattr(data_sources, "_find", find_missing_once)
 
     with db_sessions() as session:
-        recovered = record_sync_attempt(
-            session, workspace_id=workspace_id, external_ref=REPO
-        )
+        with pytest.raises(SyncInProgress):
+            record_sync_attempt(session, workspace_id=workspace_id, external_ref=REPO)
+
+    assert len(rows(db_sessions)) == 1
+
+
+# --------------------------------------------------------------------------
+# The ingestion lease
+# --------------------------------------------------------------------------
+
+
+def backdate(db_sessions, workspace_id, delta: timedelta) -> None:
+    """Move the in-flight attempt back in time, to age its lease."""
+    with db_sessions() as session:
+        source = data_sources._find(session, workspace_id, GITHUB_KIND, REPO)
+        source.last_attempted_at = datetime.now(timezone.utc) - delta
         session.commit()
 
-    assert recovered.id == winner_id
+
+def test_a_second_attempt_is_refused_while_one_is_running(db_sessions, workspace):
+    workspace_id, _ = workspace
+    with db_sessions() as session:
+        record_sync_attempt(session, workspace_id=workspace_id, external_ref=REPO)
+        session.commit()
+
+    with db_sessions() as session:
+        with pytest.raises(SyncInProgress) as refused:
+            record_sync_attempt(session, workspace_id=workspace_id, external_ref=REPO)
+
+    assert refused.value.external_ref == REPO
+    # The first attempt's own record is untouched.
+    assert rows(db_sessions)[0].status is SyncStatus.PENDING
+
+
+def test_the_lease_expires_so_a_dead_request_cannot_hold_a_source(db_sessions, workspace):
+    """Nothing clears the row if the server dies mid-ingestion, so the lease has
+    to time out or the source would be unsyncable forever."""
+    workspace_id, _ = workspace
+    with db_sessions() as session:
+        record_sync_attempt(session, workspace_id=workspace_id, external_ref=REPO)
+        session.commit()
+    backdate(db_sessions, workspace_id, SYNC_LEASE + timedelta(minutes=1))
+
+    with db_sessions() as session:
+        record_sync_attempt(session, workspace_id=workspace_id, external_ref=REPO)
+        session.commit()
+
     assert len(rows(db_sessions)) == 1
+
+
+def test_a_long_running_ingestion_keeps_its_lease(db_sessions, workspace):
+    """The GitHub client waits up to 15 minutes for one rate-limit reset, so a
+    live ingestion can be minutes old and must still hold the source."""
+    workspace_id, _ = workspace
+    with db_sessions() as session:
+        record_sync_attempt(session, workspace_id=workspace_id, external_ref=REPO)
+        session.commit()
+    backdate(db_sessions, workspace_id, SYNC_LEASE - timedelta(minutes=1))
+
+    with db_sessions() as session:
+        with pytest.raises(SyncInProgress):
+            record_sync_attempt(session, workspace_id=workspace_id, external_ref=REPO)
+
+
+@pytest.mark.parametrize("finish", [record_sync_success, record_sync_failure])
+def test_a_finished_source_can_be_re_synced_immediately(db_sessions, workspace, finish):
+    workspace_id, _ = workspace
+    with db_sessions() as session:
+        record_sync_attempt(session, workspace_id=workspace_id, external_ref=REPO)
+        kwargs = {"error": "boom"} if finish is record_sync_failure else {}
+        finish(session, workspace_id=workspace_id, external_ref=REPO, **kwargs)
+        session.commit()
+
+    with db_sessions() as session:
+        record_sync_attempt(session, workspace_id=workspace_id, external_ref=REPO)
+        session.commit()
+
+    assert rows(db_sessions)[0].status is SyncStatus.PENDING
+
+
+def test_the_lease_does_not_reach_across_workspaces(db_sessions, workspace):
+    workspace_id, _ = workspace
+    other = uuid.UUID(TEST_WORKSPACE_ID_B)
+    with db_sessions() as session:
+        record_sync_attempt(session, workspace_id=workspace_id, external_ref=REPO)
+        record_sync_attempt(session, workspace_id=other, external_ref=REPO)
+        session.commit()
+
+    assert len(rows(db_sessions)) == 1
+    assert len(rows(db_sessions, other)) == 1
 
 
 def test_the_same_repo_in_two_workspaces_is_two_sources(db_sessions, workspace):

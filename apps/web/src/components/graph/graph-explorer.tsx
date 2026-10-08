@@ -1,8 +1,16 @@
 "use client";
 
+import { useState } from "react";
+
+import { GraphSyncStatus } from "@/components/graph/graph-sync-status";
 import { GraphView } from "@/components/graph/graph-view";
 
 export function GraphExplorer({ workspaceId }: { workspaceId: string }) {
+  // Bumped when an ingestion lands new data. The canvas is fetched once on
+  // mount, so without this a finished re-sync would leave it showing the graph
+  // from before the sync it just reported.
+  const [graphVersion, setGraphVersion] = useState(0);
+
   return (
     <main
       aria-labelledby="graph-title"
@@ -20,12 +28,18 @@ export function GraphExplorer({ workspaceId }: { workspaceId: string }) {
             Graph
           </h1>
         </div>
-        <p className="pb-1 text-sm text-muted">
-          Explore the people and work connected in this workspace.
-        </p>
+        <div className="flex flex-col items-end gap-2 pb-1">
+          <p className="text-sm text-muted">
+            Explore the people and work connected in this workspace.
+          </p>
+          <GraphSyncStatus
+            workspaceId={workspaceId}
+            onGraphChanged={() => setGraphVersion((version) => version + 1)}
+          />
+        </div>
       </header>
 
-      <GraphView workspaceId={workspaceId} />
+      <GraphView workspaceId={workspaceId} reloadToken={graphVersion} />
     </main>
   );
 }

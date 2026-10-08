@@ -5,6 +5,7 @@ GitHub and Neo4j are faked; the relational half is real (in-memory), so
 """
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -14,6 +15,7 @@ from app.api.ingest import get_github_client, get_neo4j
 from app.github.client import GitHubClient
 from app.main import app
 from app.models import DataSource, Role, SyncStatus, User
+from app.services.data_sources import SYNC_LEASE, record_sync_attempt
 from tests.authz import sign_in_with_role
 from tests.payloads import TEST_WORKSPACE_ID
 
@@ -355,6 +357,42 @@ def test_re_ingesting_the_same_repo_updates_one_row(api_db):
     c.post(URL, json=body())
 
     assert len(recorded(sessions)) == 1
+
+
+def test_a_second_ingestion_of_a_running_source_is_refused(api_db):
+    """Two overlapping ingestions would race to write the source's final status
+    and re-spend the same GitHub rate limit."""
+    c, _ = setup(api_db, ok_handler)
+    _, sessions = api_db
+    with sessions() as session:
+        record_sync_attempt(
+            session, workspace_id=uuid.UUID(TEST_WORKSPACE_ID), external_ref="o/r"
+        )
+        session.commit()
+
+    r = c.post(URL, json=body())
+
+    assert r.status_code == 409
+    assert "already running" in r.json()["detail"]
+    # The in-flight attempt's record is left exactly as it was.
+    (source,) = recorded(sessions)
+    assert source.status is SyncStatus.PENDING
+
+
+def test_an_abandoned_ingestion_does_not_block_the_source_forever(api_db):
+    """Nothing clears the row if the server dies mid-ingestion, so the lease
+    expires rather than making the source unsyncable."""
+    c, _ = setup(api_db, ok_handler)
+    _, sessions = api_db
+    with sessions() as session:
+        source = record_sync_attempt(
+            session, workspace_id=uuid.UUID(TEST_WORKSPACE_ID), external_ref="o/r"
+        )
+        source.last_attempted_at = datetime.now(timezone.utc) - SYNC_LEASE - timedelta(minutes=1)
+        session.commit()
+
+    assert c.post(URL, json=body()).status_code == 200
+    assert recorded(sessions)[0].status is SyncStatus.SUCCESS
 
 
 @pytest.mark.parametrize("url", ["", "not a url", "https://gitlab.com/a/b"])

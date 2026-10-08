@@ -72,6 +72,36 @@ describe("GraphView inspector flow", () => {
     await waitFor(() => expect(screen.queryByRole("complementary", { name: /node details/i })).not.toBeInTheDocument());
   });
 
+  it("keeps the graph on screen when a background refresh fails", async () => {
+    let graphReads = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (!String(input).endsWith("/graph")) return Promise.resolve(jsonResponse(nodeDetails));
+      graphReads += 1;
+      return Promise.resolve(
+        graphReads === 1
+          ? jsonResponse(graph)
+          : new Response(JSON.stringify({ detail: "Graph database unavailable" }), {
+              status: 503,
+              headers: { "Content-Type": "application/json" },
+            }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rerender } = render(<GraphView workspaceId={WORKSPACE_ID} reloadToken={0} />);
+    await screen.findByRole("button", { name: "Select node" });
+
+    // A re-sync bumps the token, so the graph is refetched -- and this time the
+    // server is down.
+    rerender(<GraphView workspaceId={WORKSPACE_ID} reloadToken={1} />);
+    await waitFor(() => expect(graphReads).toBe(2));
+
+    // What is on screen is still the last thing the server successfully sent;
+    // replacing it with an error would lose work the user can still read.
+    expect(screen.getByRole("button", { name: "Select node" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("requests selected edge evidence and renders its connected sources", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);

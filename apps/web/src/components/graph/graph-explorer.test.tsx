@@ -7,6 +7,7 @@ import {
   nodeShape,
 } from "@/components/graph/graph-canvas";
 import { GraphExplorer } from "@/components/graph/graph-explorer";
+import { WorkspaceProvider } from "@/components/workspaces/workspace-context";
 import type { GraphEdge, GraphNode, WorkspaceGraph } from "@/lib/api-types";
 
 const WORKSPACE_ID = "ccccccc0-0000-4000-8000-00000000c0de";
@@ -74,6 +75,29 @@ const EDGES: GraphEdge[] = [
   { source: "Author:1", target: "Issue:200", type: "AUTHORED" },
 ];
 
+/** GraphExplorer reads the caller's role, so it needs the shell's provider. */
+function renderExplorer(role: "OWNER" | "EDITOR" | "VIEWER" = "OWNER") {
+  return render(
+    <WorkspaceProvider
+      value={{
+        workspaceId: WORKSPACE_ID,
+        workspace: {
+          id: WORKSPACE_ID,
+          name: "Cortex",
+          description: null,
+          role,
+          created_at: "2026-09-24T00:00:00Z",
+        },
+        user: null,
+        isLoading: false,
+        error: null,
+      }}
+    >
+      <GraphExplorer workspaceId={WORKSPACE_ID} />
+    </WorkspaceProvider>,
+  );
+}
+
 function graph(over: Partial<WorkspaceGraph> = {}): WorkspaceGraph {
   return {
     workspace_id: WORKSPACE_ID,
@@ -85,14 +109,31 @@ function graph(over: Partial<WorkspaceGraph> = {}): WorkspaceGraph {
 }
 
 function mockFetch(status: number, body: unknown) {
-  const fn = vi.fn().mockResolvedValue(
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    }),
+  const fn = vi.fn((input: RequestInfo | URL) =>
+    // The header's sync status reads /sources; these tests are about the graph,
+    // so the workspace has none and the status bar renders nothing.
+    Promise.resolve(
+      String(input).endsWith("/sources")
+        ? new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } })
+        : new Response(JSON.stringify(body), {
+            status,
+            headers: { "Content-Type": "application/json" },
+          }),
+    ),
   );
   vi.stubGlobal("fetch", fn);
   return fn;
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function graphCalls(fetchFn: ReturnType<typeof mockFetch>) {
+  return fetchFn.mock.calls.filter(([url]) => String(url).endsWith("/graph"));
 }
 
 beforeEach(() => {
@@ -277,10 +318,10 @@ describe("GraphExplorer", () => {
   it("fetches the graph for the active workspace only", async () => {
     stubCanvas();
     const fetchFn = mockFetch(200, graph());
-    render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
+    renderExplorer();
 
-    await waitFor(() => expect(fetchFn).toHaveBeenCalled());
-    expect(fetchFn.mock.calls[0][0]).toBe(
+    await waitFor(() => expect(graphCalls(fetchFn)).toHaveLength(1));
+    expect(graphCalls(fetchFn)[0][0]).toBe(
       `/api/workspaces/${WORKSPACE_ID}/graph`,
     );
   });
@@ -288,7 +329,7 @@ describe("GraphExplorer", () => {
   it("renders the canvas with node and connection counts", async () => {
     stubCanvas();
     mockFetch(200, graph());
-    render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
+    renderExplorer();
 
     expect(await screen.findByRole("img")).toBeInTheDocument();
     expect(screen.getByText("3 nodes · 2 connections")).toBeInTheDocument();
@@ -297,7 +338,7 @@ describe("GraphExplorer", () => {
   it("legends only the node types that exist today", async () => {
     stubCanvas();
     mockFetch(200, graph());
-    render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
+    renderExplorer();
 
     const legend = await screen.findByRole("list", { name: /node types/i });
     expect(legend).toHaveTextContent("Author");
@@ -307,7 +348,7 @@ describe("GraphExplorer", () => {
 
   it("offers ingestion when the workspace is empty", async () => {
     mockFetch(200, graph({ nodes: [], edges: [] }));
-    render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
+    renderExplorer();
 
     expect(
       await screen.findByText(/your graph starts with a source/i),
@@ -321,7 +362,7 @@ describe("GraphExplorer", () => {
   it("warns when the server truncated the graph", async () => {
     stubCanvas();
     mockFetch(200, graph({ truncated: true }));
-    render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
+    renderExplorer();
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       /display limit reached/i,
@@ -330,7 +371,7 @@ describe("GraphExplorer", () => {
 
   it("shows the server message when access is refused", async () => {
     mockFetch(403, { detail: "You do not have access to this workspace" });
-    render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
+    renderExplorer();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /do not have access/i,
@@ -339,24 +380,61 @@ describe("GraphExplorer", () => {
 
   it("redirects to login on 401", async () => {
     mockFetch(401, { detail: "Not authenticated" });
-    render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
+    renderExplorer();
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/login"));
   });
 
   it("reports an unreachable server", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network")));
-    render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
+    renderExplorer();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /unable to load the graph/i,
     );
   });
 
+  it("reloads the canvas after a re-sync, instead of leaving it stale", async () => {
+    stubCanvas();
+    const source = {
+      repo: "openai/cortex", kind: "github", status: "SUCCESS" as const,
+      pull_requests: 8, issues: 3, total_items: 11,
+      last_attempted_at: "2026-10-08T11:55:00Z",
+      last_synced_at: "2026-10-08T11:55:00Z",
+      last_error: null, last_synced_by: null, last_synced_by_name: null,
+    };
+    let reads = 0;
+    const fetchFn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST") {
+        return Promise.resolve(json({ repo: "openai/cortex", pull_requests: 8, issues: 3 }));
+      }
+      if (url.endsWith("/sources")) {
+        reads += 1;
+        // The second read is after the ingestion, so it reports a newer sync.
+        return Promise.resolve(json([
+          reads === 1 ? source : { ...source, last_synced_at: "2026-10-08T12:30:00Z" },
+        ]));
+      }
+      return Promise.resolve(json(graph()));
+    });
+    vi.stubGlobal("fetch", fetchFn);
+
+    renderExplorer();
+    await screen.findByRole("button", { name: /re-sync/i });
+    await waitFor(() => expect(graphCalls(fetchFn)).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /re-sync/i }));
+
+    // The canvas is fetched once on mount, so without the reload it would keep
+    // showing the graph from before the sync the header just reported.
+    await waitFor(() => expect(graphCalls(fetchFn)).toHaveLength(2));
+  });
+
   it("uses the workspace sidebar for navigation instead of a duplicate back link", async () => {
     stubCanvas();
     mockFetch(200, graph());
-    render(<GraphExplorer workspaceId={WORKSPACE_ID} />);
+    renderExplorer();
 
     expect(await screen.findByRole("heading", { name: "Graph" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /back to workspace/i })).not.toBeInTheDocument();
