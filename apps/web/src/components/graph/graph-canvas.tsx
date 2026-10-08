@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, type MouseEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+  type PointerEvent,
+  type WheelEvent,
+} from "react";
 
 import type { GraphEdge, GraphNode, GraphNodeType, GraphSelection } from "@/lib/api-types";
 import { GraphSimulation, type NodeSpec } from "@/lib/graph-layout";
@@ -31,8 +38,18 @@ const LABEL_LINE_HEIGHT = 15;
 const RING_WIDTH = 2;
 const CORE_RATIO = 0.34;
 const HALO_ALPHA = 0.14;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 2.5;
+const ZOOM_STEP = 1.2;
+const DRAG_THRESHOLD = 3;
 
 type Box = { x1: number; y1: number; x2: number; y2: number };
+type Point = { x: number; y: number };
+export type GraphViewport = {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+};
 type GraphCanvasProps = {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -42,6 +59,58 @@ type GraphCanvasProps = {
 
 type HitNode = { key: string; x: number; y: number; radius: number };
 type HitEdge = { edge: GraphEdge; x1: number; y1: number; x2: number; y2: number };
+type PanGesture = {
+  pointerId: number;
+  start: Point;
+  offsetX: number;
+  offsetY: number;
+};
+
+const DEFAULT_VIEWPORT: GraphViewport = { scale: 1, offsetX: 0, offsetY: 0 };
+
+function clampZoom(scale: number): number {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, scale));
+}
+
+export function zoomViewport(
+  viewport: GraphViewport,
+  requestedScale: number,
+  anchor: Point,
+): GraphViewport {
+  const scale = clampZoom(requestedScale);
+  const ratio = scale / viewport.scale;
+  return {
+    scale,
+    offsetX: anchor.x - (anchor.x - viewport.offsetX) * ratio,
+    offsetY: anchor.y - (anchor.y - viewport.offsetY) * ratio,
+  };
+}
+
+export function graphPointFromCanvas(
+  point: Point,
+  viewport: GraphViewport,
+): Point {
+  return {
+    x: (point.x - viewport.offsetX) / viewport.scale,
+    y: (point.y - viewport.offsetY) / viewport.scale,
+  };
+}
+
+function canvasPoint(
+  canvas: HTMLCanvasElement,
+  clientX: number,
+  clientY: number,
+): Point {
+  const rect = canvas.getBoundingClientRect();
+  const width =
+    canvas.clientWidth || rect.width || Number.parseFloat(canvas.style.width) || 1;
+  const height =
+    canvas.clientHeight || rect.height || Number.parseFloat(canvas.style.height) || 1;
+  return {
+    x: (clientX - rect.left) * (width / (rect.width || width)),
+    y: (clientY - rect.top) * (height / (rect.height || height)),
+  };
+}
 
 export function hitTestGraph(
   x: number,
@@ -152,6 +221,11 @@ export function GraphCanvas({
   const hitNodesRef = useRef<HitNode[]>([]);
   const hitEdgesRef = useRef<HitEdge[]>([]);
   const selectionHandlerRef = useRef(onSelectionChange);
+  const viewportRef = useRef<GraphViewport>(DEFAULT_VIEWPORT);
+  const redrawRef = useRef<(() => void) | null>(null);
+  const panRef = useRef<PanGesture | null>(null);
+  const didDragRef = useRef(false);
+  const [zoomPercent, setZoomPercent] = useState(100);
 
   useEffect(() => {
     selectionHandlerRef.current = onSelectionChange;
@@ -190,16 +264,18 @@ export function GraphCanvas({
       const ratio = window.devicePixelRatio || 1;
       const deviceWidth = Math.round(width * ratio);
       const deviceHeight = Math.round(measuredHeight * ratio);
+      const deviceScaleX = deviceWidth / width;
+      const deviceScaleY = deviceHeight / measuredHeight;
 
       canvas.width = deviceWidth;
       canvas.height = deviceHeight;
       canvas.style.width = `${width}px`;
       canvas.style.height = `${measuredHeight}px`;
       ctx.setTransform(
-        deviceWidth / width,
+        deviceScaleX,
         0,
         0,
-        deviceHeight / measuredHeight,
+        deviceScaleY,
         0,
         0,
       );
@@ -260,7 +336,12 @@ export function GraphCanvas({
       );
 
       function draw() {
+        ctx.setTransform(deviceScaleX, 0, 0, deviceScaleY, 0, 0);
         ctx.clearRect(0, 0, width, measuredHeight);
+        ctx.save();
+        const viewport = viewportRef.current;
+        ctx.translate(viewport.offsetX, viewport.offsetY);
+        ctx.scale(viewport.scale, viewport.scale);
 
         hitNodesRef.current = simulation.nodes.map(({ key, x, y, radius }) => ({
           key, x, y, radius,
@@ -336,8 +417,10 @@ export function GraphCanvas({
           ctx.fillStyle = isHub ? labelColour : dimLabelColour;
           ctx.fillText(text, cx, top);
         }
-
+        ctx.restore();
       }
+
+      redrawRef.current = draw;
 
       function frame() {
         simulation.tick();
@@ -369,34 +452,171 @@ export function GraphCanvas({
       disposed = true;
       resizeObserver?.disconnect();
       cancelFrame();
+      redrawRef.current = null;
     };
   }, [edges, height, nodes]);
 
-  function selectAt(event: MouseEvent<HTMLCanvasElement>) {
-    const canvas = event.currentTarget;
+  function updateViewport(viewport: GraphViewport) {
+    viewportRef.current = viewport;
+    setZoomPercent(Math.round(viewport.scale * 100));
+    redrawRef.current?.();
+  }
+
+  function zoomAt(requestedScale: number, anchor: Point) {
+    updateViewport(zoomViewport(viewportRef.current, requestedScale, anchor));
+  }
+
+  function canvasCentre(): Point {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.clientWidth / (rect.width || canvas.clientWidth || 1);
-    const scaleY = canvas.clientHeight / (rect.height || canvas.clientHeight || 1);
+    return {
+      x:
+        (canvas.clientWidth || rect.width || Number.parseFloat(canvas.style.width) || 1) /
+        2,
+      y:
+        (canvas.clientHeight || rect.height || Number.parseFloat(canvas.style.height) || 1) /
+        2,
+    };
+  }
+
+  function zoomBy(factor: number) {
+    zoomAt(viewportRef.current.scale * factor, canvasCentre());
+  }
+
+  function resetView() {
+    updateViewport({ ...DEFAULT_VIEWPORT });
+  }
+
+  function zoomWithWheel(event: WheelEvent<HTMLCanvasElement>) {
+    event.preventDefault();
+    const anchor = canvasPoint(event.currentTarget, event.clientX, event.clientY);
+    const factor = Math.exp(-event.deltaY * 0.0015);
+    zoomAt(viewportRef.current.scale * factor, anchor);
+  }
+
+  function startPan(event: PointerEvent<HTMLCanvasElement>) {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    panRef.current = {
+      pointerId: event.pointerId,
+      start: canvasPoint(event.currentTarget, event.clientX, event.clientY),
+      offsetX: viewportRef.current.offsetX,
+      offsetY: viewportRef.current.offsetY,
+    };
+    didDragRef.current = false;
+  }
+
+  function continuePan(event: PointerEvent<HTMLCanvasElement>) {
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) return;
+    const point = canvasPoint(event.currentTarget, event.clientX, event.clientY);
+    const deltaX = point.x - pan.start.x;
+    const deltaY = point.y - pan.start.y;
+    if (Math.hypot(deltaX, deltaY) >= DRAG_THRESHOLD) {
+      didDragRef.current = true;
+    }
+    viewportRef.current = {
+      ...viewportRef.current,
+      offsetX: pan.offsetX + deltaX,
+      offsetY: pan.offsetY + deltaY,
+    };
+    redrawRef.current?.();
+  }
+
+  function finishPan(event: PointerEvent<HTMLCanvasElement>) {
+    if (panRef.current?.pointerId !== event.pointerId) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    panRef.current = null;
+  }
+
+  function selectAt(event: MouseEvent<HTMLCanvasElement>) {
+    if (didDragRef.current) {
+      didDragRef.current = false;
+      return;
+    }
+    const canvas = event.currentTarget;
+    const point = graphPointFromCanvas(
+      canvasPoint(canvas, event.clientX, event.clientY),
+      viewportRef.current,
+    );
     selectionHandlerRef.current?.(hitTestGraph(
-      (event.clientX - rect.left) * scaleX,
-      (event.clientY - rect.top) * scaleY,
+      point.x,
+      point.y,
       hitNodesRef.current,
       hitEdgesRef.current,
     ));
   }
 
   return (
-    <canvas
-      ref={canvasRef}
-      role="img"
-      aria-label={`Knowledge graph: ${nodes.length} nodes, ${edges.length} connections`}
-      aria-describedby="graph-interaction-help"
-      className="absolute inset-0 block size-full"
-      onClick={selectAt}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") selectionHandlerRef.current?.(null);
-      }}
-      tabIndex={0}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        role="img"
+        aria-label={`Knowledge graph: ${nodes.length} nodes, ${edges.length} connections`}
+        aria-describedby="graph-interaction-help"
+        className="absolute inset-0 block size-full touch-none cursor-grab active:cursor-grabbing"
+        onClick={selectAt}
+        onPointerDown={startPan}
+        onPointerMove={continuePan}
+        onPointerUp={finishPan}
+        onPointerCancel={finishPan}
+        onWheel={zoomWithWheel}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") selectionHandlerRef.current?.(null);
+          if (event.key === "+" || event.key === "=") {
+            event.preventDefault();
+            zoomBy(ZOOM_STEP);
+          }
+          if (event.key === "-") {
+            event.preventDefault();
+            zoomBy(1 / ZOOM_STEP);
+          }
+          if (event.key === "0") {
+            event.preventDefault();
+            resetView();
+          }
+        }}
+        tabIndex={0}
+      />
+      <div
+        role="group"
+        aria-label="Graph view controls"
+        className="absolute bottom-4 left-4 z-10 flex items-center gap-1 rounded-xl border border-[var(--cortex-graph-divider)] bg-background/85 p-1 shadow-lg backdrop-blur-sm"
+      >
+        <button
+          type="button"
+          aria-label="Zoom out"
+          title="Zoom out"
+          onClick={() => zoomBy(1 / ZOOM_STEP)}
+          className="grid size-9 place-items-center rounded-lg text-lg text-muted transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          −
+        </button>
+        <span
+          aria-label={`Zoom level ${zoomPercent}%`}
+          className="min-w-12 px-1 text-center font-mono text-[0.6875rem] text-subtle"
+        >
+          {zoomPercent}%
+        </span>
+        <button
+          type="button"
+          aria-label="Zoom in"
+          title="Zoom in"
+          onClick={() => zoomBy(ZOOM_STEP)}
+          className="grid size-9 place-items-center rounded-lg text-lg text-muted transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          +
+        </button>
+        <span aria-hidden="true" className="mx-1 h-5 w-px bg-[var(--cortex-graph-divider)]" />
+        <button
+          type="button"
+          onClick={resetView}
+          className="min-h-9 rounded-lg px-3 text-xs font-medium text-muted transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        >
+          Reset view
+        </button>
+      </div>
+    </>
   );
 }

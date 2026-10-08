@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { hitTestGraph } from "@/components/graph/graph-canvas";
+import {
+  graphPointFromCanvas,
+  hitTestGraph,
+  zoomViewport,
+} from "@/components/graph/graph-canvas";
 import type { GraphEdge } from "@/lib/api-types";
 
 const edge: GraphEdge = {
@@ -27,5 +31,25 @@ describe("graph canvas hit testing", () => {
 
   it("returns no selection on blank graph space", () => {
     expect(hitTestGraph(240, 180, nodes, edges)).toBeNull();
+  });
+
+  it("keeps the zoom anchor fixed and maps pointer coordinates back to graph space", () => {
+    const viewport = zoomViewport(
+      { scale: 1, offsetX: 0, offsetY: 0 },
+      2,
+      { x: 100, y: 80 },
+    );
+
+    expect(viewport).toEqual({ scale: 2, offsetX: -100, offsetY: -80 });
+    expect(graphPointFromCanvas({ x: 40, y: 20 }, viewport)).toEqual({
+      x: 70,
+      y: 50,
+    });
+  });
+
+  it("clamps zoom to demo-safe limits", () => {
+    const viewport = { scale: 1, offsetX: 0, offsetY: 0 };
+    expect(zoomViewport(viewport, 10, { x: 0, y: 0 }).scale).toBe(2.5);
+    expect(zoomViewport(viewport, 0.1, { x: 0, y: 0 }).scale).toBe(0.5);
   });
 });
