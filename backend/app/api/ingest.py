@@ -7,8 +7,8 @@ Pipeline: authorise the workspace -> parse URL -> fetch PRs/issues (T-7.3) ->
 validate + write graph (T-7.4). Ingested nodes are stamped with
 ``workspace_id`` so the Graph Explorer (US-14) can filter by workspace.
 
-The caller must hold OWNER or EDITOR on the workspace; ingestion writes nodes, so
-a VIEWER may not trigger it. That check runs before any network or database call,
+The caller's role must carry ``sources.write``; ingestion writes nodes, so a
+VIEWER (or any custom role without it) may not trigger it. That check runs before any network or database call,
 so an unauthorised caller cannot use this endpoint to reach GitHub or spend the
 server's rate limit. The URL is validated next, and payloads are validated before
 the write transaction, so a failed request creates no nodes.
@@ -29,7 +29,7 @@ from neo4j.exceptions import DriverError, Neo4jError
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
-from app.api.deps import WRITER_ROLES, CurrentUser, DbSession, load_workspace_for_user
+from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
 from app.config import settings
 from app.db.neo4j_driver import get_driver
 from app.github.client import (
@@ -41,6 +41,7 @@ from app.github.client import (
     parse_repo_url,
 )
 from app.github.mapper import write_graph
+from app.permissions import Permission
 from app.services.data_sources import (
     SyncInProgress,
     record_sync_attempt,
@@ -103,7 +104,9 @@ def ingest_github(
     client: GitHubClient = Depends(get_github_client),
     driver: Driver = Depends(get_neo4j),
 ) -> IngestResponse:
-    load_workspace_for_user(session, user, body.workspace_id, require=WRITER_ROLES)
+    load_workspace_for_user(
+        session, user, body.workspace_id, permission=Permission.SOURCES_WRITE
+    )
 
     try:
         owner, name = parse_repo_url(body.repo_url)

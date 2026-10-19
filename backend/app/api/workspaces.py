@@ -17,6 +17,12 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
 from app.models import Role, Workspace, WorkspaceMembership
+from app.permissions import (
+    SYSTEM_ROLE_PERMISSIONS,
+    membership_permissions,
+    permission_values,
+    role_label,
+)
 from app.services.workspaces import WorkspaceNameTaken, create_workspace
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
@@ -30,7 +36,8 @@ class WorkspaceSummary(BaseModel):
     id: uuid.UUID
     name: str
     description: str | None
-    role: Role  # the caller's role, not the workspace's
+    role: str  # the caller's role name, not the workspace's
+    permissions: list[str]  # what that role lets the caller do
     created_at: datetime
 
 
@@ -49,12 +56,13 @@ class WorkspaceCreate(BaseModel):
         return v or None
 
 
-def _summarise(workspace: Workspace, role: Role) -> WorkspaceSummary:
+def _summarise(workspace: Workspace, membership: WorkspaceMembership) -> WorkspaceSummary:
     return WorkspaceSummary(
         id=workspace.id,
         name=workspace.name,
         description=workspace.description,
-        role=role,
+        role=role_label(membership),
+        permissions=permission_values(membership_permissions(membership)),
         created_at=workspace.created_at,
     )
 
@@ -65,13 +73,13 @@ def list_workspaces(user: CurrentUser, session: DbSession) -> list[WorkspaceSumm
     Returns empty if user has access to no workspaces.
     """
     rows = session.execute(
-        select(Workspace, WorkspaceMembership.role)
+        select(Workspace, WorkspaceMembership)
         .join(WorkspaceMembership, WorkspaceMembership.workspace_id == Workspace.id)
         .where(WorkspaceMembership.user_id == user.id)
         .order_by(Workspace.name)
     ).all()
 
-    return [_summarise(workspace, role) for workspace, role in rows]
+    return [_summarise(workspace, membership) for workspace, membership in rows]
 
 
 @router.post("", response_model=WorkspaceSummary, status_code=status.HTTP_201_CREATED)
@@ -96,7 +104,14 @@ def create_new_workspace(
 
     # created_at is a server default, so read it back after the insert.
     session.refresh(workspace)
-    return _summarise(workspace, Role.OWNER)
+    return WorkspaceSummary(
+        id=workspace.id,
+        name=workspace.name,
+        description=workspace.description,
+        role=Role.OWNER.value,
+        permissions=permission_values(SYSTEM_ROLE_PERMISSIONS[Role.OWNER]),
+        created_at=workspace.created_at,
+    )
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceSummary)
@@ -109,5 +124,5 @@ def get_workspace(
         to return the same 403 (to prevent anyone knowing which workspaces exist and
     which don't)
     """
-    workspace, role = load_workspace_for_user(session, user, workspace_id)
-    return _summarise(workspace, role)
+    workspace, membership = load_workspace_for_user(session, user, workspace_id)
+    return _summarise(workspace, membership)

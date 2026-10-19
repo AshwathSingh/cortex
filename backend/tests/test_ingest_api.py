@@ -127,7 +127,7 @@ def test_viewer_cannot_ingest(api_db):
     c, driver = setup(api_db, never_called, role=Role.VIEWER)
     r = c.post(URL, json=body())
     assert r.status_code == 403
-    assert "OWNER or EDITOR" in r.json()["detail"]
+    assert "sources.write" in r.json()["detail"]
     assert driver.sessions == 0
 
 
