@@ -1,8 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
+import { CortexMark } from "@/components/brand/cortex-mark";
 import { routes } from "@/lib/routes";
 
 import { useWorkspace } from "./workspace-context";
@@ -14,12 +21,19 @@ const promptSuggestions = [
 ];
 
 const placeholderResponse =
-  "This is a placeholder response from Cortex. Graph-aware answers will appear here once the assistant service is connected.";
+  "This placeholder demonstrates how Cortex will present a concise, evidence-backed answer. Once the assistant service is connected, each claim will be grounded in the project graph and its indexed sources.";
 
-type ChatMessage = {
+type ChatReference = {
+  label: string;
+  description: string;
+  href: string;
+};
+
+type ConversationTurn = {
   id: number;
-  role: "user" | "assistant";
-  content: string;
+  question: string;
+  answer: string;
+  references: ChatReference[];
 };
 
 const headingVariants = [
@@ -104,14 +118,33 @@ function PlusIcon() {
   );
 }
 
+function ReferenceArrowIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      fill="none"
+      className="size-4 shrink-0"
+    >
+      <path
+        d="M5 10h10m-4-4 4 4-4 4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const { workspace } = useWorkspace();
   const promptInput = useRef<HTMLTextAreaElement>(null);
   const conversationHistory = useRef<HTMLDivElement>(null);
-  const nextMessageId = useRef(0);
+  const nextTurnId = useRef(0);
   const [headingVariantIndex, setHeadingVariantIndex] = useState(0);
   const [prompt, setPrompt] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [turns, setTurns] = useState<ConversationTurn[]>([]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -126,7 +159,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
     if (history) {
       history.scrollTop = history.scrollHeight;
     }
-  }, [messages]);
+  }, [turns]);
 
   function selectSuggestion(suggestion: string) {
     setPrompt(suggestion);
@@ -138,24 +171,43 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
     const question = prompt.trim();
     if (!question) return;
 
-    setMessages((currentMessages) => [
-      ...currentMessages,
+    setTurns((currentTurns) => [
+      ...currentTurns,
       {
-        id: nextMessageId.current++,
-        role: "user",
-        content: question,
-      },
-      {
-        id: nextMessageId.current++,
-        role: "assistant",
-        content: placeholderResponse,
+        id: nextTurnId.current++,
+        question,
+        answer: placeholderResponse,
+        references: [
+          {
+            label: "Graph explorer",
+            description: "Inspect entities and relationships",
+            href: routes.workspace.graph(workspaceId),
+          },
+          {
+            label: "Project sources",
+            description: "Review the indexed source material",
+            href: routes.workspace.sources(workspaceId),
+          },
+        ],
       },
     ]);
     setPrompt("");
+    promptInput.current?.focus();
+  }
+
+  function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.nativeEvent.isComposing
+    ) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
   }
 
   const [headingPrefix, headingSuffix] = headingVariants[headingVariantIndex];
-  const hasMessages = messages.length > 0;
+  const hasMessages = turns.length > 0;
 
   return (
     <main className="h-screen overflow-hidden">
@@ -191,35 +243,88 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
             <div
               ref={conversationHistory}
               aria-label="Conversation history"
-              className="mt-6 min-h-0 flex-1 overflow-y-auto pr-2"
+              className="mt-5 min-h-0 flex-1 overflow-y-auto pr-2"
             >
-              <ol aria-live="polite" className="space-y-6 py-2">
-                {messages.map((message) => {
-                  const isUser = message.role === "user";
+              <ol aria-live="polite" className="divide-y divide-border/20">
+                {turns.map((turn, turnIndex) => (
+                  <li key={turn.id} className="py-8 first:pt-3">
+                    <article aria-label={`Conversation turn ${turnIndex + 1}`}>
+                      <header className="border-l-2 border-accent-bright/50 pl-4">
+                        <p className="font-mono text-[0.625rem] font-semibold uppercase tracking-[0.13em] text-subtle">
+                          You asked
+                        </p>
+                        <h2 className="mt-2 text-lg font-medium leading-7 tracking-[-0.02em] text-foreground">
+                          {turn.question}
+                        </h2>
+                      </header>
 
-                  return (
-                    <li
-                      key={message.id}
-                      className={`flex ${isUser ? "justify-end" : "justify-start"}`}
-                    >
-                      <article
-                        aria-label={isUser ? "You" : "Cortex"}
-                        className={`max-w-[85%] rounded-2xl border px-4 py-3 ${
-                          isUser
-                            ? "border-accent-bright/20 bg-accent/20"
-                            : "border-border/25 bg-surface/70"
-                        }`}
+                      <section
+                        aria-label="Cortex response"
+                        className="mt-6 grid grid-cols-[2rem_minmax(0,1fr)] gap-3.5"
                       >
-                        <p className="font-mono text-[0.625rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-                          {isUser ? "You" : "Cortex"}
-                        </p>
-                        <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-foreground">
-                          {message.content}
-                        </p>
-                      </article>
-                    </li>
-                  );
-                })}
+                        <CortexMark className="size-8" />
+                        <div className="min-w-0 pt-0.5">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-sm font-semibold text-foreground">
+                              Cortex
+                            </h3>
+                            <span className="rounded-full border border-border/25 bg-surface/60 px-2 py-0.5 font-mono text-[0.5625rem] font-semibold uppercase tracking-[0.1em] text-subtle">
+                              Placeholder answer
+                            </span>
+                          </div>
+
+                          <p className="mt-3 text-[0.9375rem] leading-7 text-muted">
+                            {turn.answer}{" "}
+                            {turn.references.map((reference, referenceIndex) => (
+                              <Link
+                                key={reference.href}
+                                href={reference.href}
+                                aria-label={`Reference ${referenceIndex + 1}: ${reference.label}`}
+                                className="font-mono text-xs font-semibold text-accent-bright underline decoration-accent-bright/35 underline-offset-4 transition-colors hover:text-foreground"
+                              >
+                                [{referenceIndex + 1}]
+                              </Link>
+                            ))}
+                          </p>
+
+                          <nav
+                            aria-label={`References for question ${turnIndex + 1}`}
+                            className="mt-6"
+                          >
+                            <p className="font-mono text-[0.625rem] font-semibold uppercase tracking-[0.13em] text-subtle">
+                              References
+                            </p>
+                            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                              {turn.references.map((reference, referenceIndex) => (
+                                <Link
+                                  key={reference.href}
+                                  href={reference.href}
+                                  aria-label={reference.label}
+                                  className="group flex min-w-0 items-center gap-3 rounded-xl border border-border/25 bg-surface/35 px-3.5 py-3 transition-[background,border-color] hover:border-border/55 hover:bg-surface/65"
+                                >
+                                  <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-accent/15 font-mono text-[0.625rem] font-semibold text-accent-bright">
+                                    {referenceIndex + 1}
+                                  </span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block text-xs font-semibold text-foreground">
+                                      {reference.label}
+                                    </span>
+                                    <span className="mt-0.5 block truncate text-[0.6875rem] text-subtle">
+                                      {reference.description}
+                                    </span>
+                                  </span>
+                                  <span className="text-subtle transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-foreground">
+                                    <ReferenceArrowIcon />
+                                  </span>
+                                </Link>
+                              ))}
+                            </div>
+                          </nav>
+                        </div>
+                      </section>
+                    </article>
+                  </li>
+                ))}
               </ol>
             </div>
           ) : null}
@@ -239,6 +344,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
                 id="cortex-question"
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                onKeyDown={handlePromptKeyDown}
                 autoComplete="off"
                 rows={hasMessages ? 2 : 3}
                 placeholder="Ask about a decision, contradiction, or source"
@@ -262,9 +368,10 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
 
                 <button
                   type="submit"
+                  disabled={!prompt.trim()}
                   aria-disabled={!prompt.trim()}
                   aria-label="Send question"
-                  className="grid size-9 shrink-0 place-items-center rounded-full bg-accent text-foreground transition-[background,opacity,transform] hover:bg-accent-hover active:scale-[0.96] aria-disabled:cursor-not-allowed aria-disabled:opacity-25"
+                  className="grid size-9 shrink-0 place-items-center rounded-full bg-accent text-foreground transition-[background,opacity,transform] enabled:hover:bg-accent-hover enabled:active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-25"
                 >
                   <ArrowUpIcon />
                 </button>

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -108,15 +108,25 @@ describe("WorkspaceDetail", () => {
     await user.click(screen.getByRole("button", { name: /send question/i }));
 
     expect(screen.getByLabelText("Conversation history")).toBeInTheDocument();
-    expect(screen.getByRole("article", { name: "You" })).toHaveTextContent(
-      "Why Neo4j?",
+    const turn = screen.getByRole("article", { name: "Conversation turn 1" });
+    expect(
+      within(turn).getByRole("heading", { name: "Why Neo4j?" }),
+    ).toBeInTheDocument();
+    expect(within(turn).getByRole("region", { name: "Cortex response" })).toHaveTextContent(
+      /evidence-backed answer/i,
     );
-    expect(screen.getByRole("article", { name: "Cortex" })).toHaveTextContent(
-      /placeholder response from Cortex/i,
+    expect(within(turn).getByRole("link", { name: "Graph explorer" })).toHaveAttribute(
+      "href",
+      `/workspaces/${WORKSPACE.id}/graph`,
+    );
+    expect(within(turn).getByRole("link", { name: "Project sources" })).toHaveAttribute(
+      "href",
+      `/workspaces/${WORKSPACE.id}/sources`,
     );
     expect(screen.getByLabelText(/ask cortex about this workspace/i)).toHaveValue(
       "",
     );
+    expect(screen.getByLabelText(/ask cortex about this workspace/i)).toHaveFocus();
   });
 
   it("keeps earlier messages when a follow-up question is submitted", async () => {
@@ -129,11 +139,24 @@ describe("WorkspaceDetail", () => {
     await user.type(input, "What data is stored there?");
     await user.click(screen.getByRole("button", { name: /send question/i }));
 
-    const messages = screen.getAllByRole("article");
-    expect(messages).toHaveLength(4);
-    expect(messages[0]).toHaveTextContent("Why Neo4j?");
-    expect(messages[1]).toHaveAccessibleName("Cortex");
-    expect(messages[2]).toHaveTextContent("What data is stored there?");
-    expect(messages[3]).toHaveAccessibleName("Cortex");
+    const turns = screen.getAllByRole("article");
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toHaveTextContent("Why Neo4j?");
+    expect(turns[1]).toHaveTextContent("What data is stored there?");
+  });
+
+  it("submits with Enter while keeping Shift+Enter available for a new line", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceDetail();
+    const input = screen.getByLabelText(/ask cortex about this workspace/i);
+
+    await user.type(input, "First line{Shift>}{Enter}{/Shift}Second line");
+    expect(input).toHaveValue("First line\nSecond line");
+
+    await user.type(input, "{Enter}");
+
+    expect(screen.getByRole("article", { name: "Conversation turn 1" })).toHaveTextContent(
+      "First line Second line",
+    );
   });
 });
