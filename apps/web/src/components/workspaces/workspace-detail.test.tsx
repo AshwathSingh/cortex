@@ -97,7 +97,7 @@ describe("WorkspaceDetail", () => {
     );
   });
 
-  it("explains that assistant responses are not connected yet", async () => {
+  it("adds the user question and a placeholder assistant response", async () => {
     const user = userEvent.setup();
     renderWorkspaceDetail();
 
@@ -107,6 +107,33 @@ describe("WorkspaceDetail", () => {
     );
     await user.click(screen.getByRole("button", { name: /send question/i }));
 
-    expect(screen.getByText(/assistant service is connected/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Conversation history")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "You" })).toHaveTextContent(
+      "Why Neo4j?",
+    );
+    expect(screen.getByRole("article", { name: "Cortex" })).toHaveTextContent(
+      /placeholder response from Cortex/i,
+    );
+    expect(screen.getByLabelText(/ask cortex about this workspace/i)).toHaveValue(
+      "",
+    );
+  });
+
+  it("keeps earlier messages when a follow-up question is submitted", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceDetail();
+    const input = screen.getByLabelText(/ask cortex about this workspace/i);
+
+    await user.type(input, "Why Neo4j?");
+    await user.click(screen.getByRole("button", { name: /send question/i }));
+    await user.type(input, "What data is stored there?");
+    await user.click(screen.getByRole("button", { name: /send question/i }));
+
+    const messages = screen.getAllByRole("article");
+    expect(messages).toHaveLength(4);
+    expect(messages[0]).toHaveTextContent("Why Neo4j?");
+    expect(messages[1]).toHaveAccessibleName("Cortex");
+    expect(messages[2]).toHaveTextContent("What data is stored there?");
+    expect(messages[3]).toHaveAccessibleName("Cortex");
   });
 });

@@ -13,6 +13,15 @@ const promptSuggestions = [
   "Summarize recent decisions",
 ];
 
+const placeholderResponse =
+  "This is a placeholder response from Cortex. Graph-aware answers will appear here once the assistant service is connected.";
+
+type ChatMessage = {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+};
+
 const headingVariants = [
   ["What should we explore in", "?"],
   ["What would you like to understand about", "?"],
@@ -98,9 +107,11 @@ function PlusIcon() {
 export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const { workspace } = useWorkspace();
   const promptInput = useRef<HTMLTextAreaElement>(null);
+  const conversationHistory = useRef<HTMLDivElement>(null);
+  const nextMessageId = useRef(0);
   const [headingVariantIndex, setHeadingVariantIndex] = useState(0);
   const [prompt, setPrompt] = useState("");
-  const [submissionNotice, setSubmissionNotice] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -110,41 +121,110 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
     return () => window.clearTimeout(timeout);
   }, [workspaceId]);
 
+  useEffect(() => {
+    const history = conversationHistory.current;
+    if (history) {
+      history.scrollTop = history.scrollHeight;
+    }
+  }, [messages]);
+
   function selectSuggestion(suggestion: string) {
     setPrompt(suggestion);
-    setSubmissionNotice(null);
     promptInput.current?.focus();
   }
 
   function submitQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!prompt.trim()) return;
+    const question = prompt.trim();
+    if (!question) return;
 
-    setSubmissionNotice(
-      "Your question is ready. Cortex responses will be enabled when the assistant service is connected.",
-    );
+    setMessages((currentMessages) => [
+      ...currentMessages,
+      {
+        id: nextMessageId.current++,
+        role: "user",
+        content: question,
+      },
+      {
+        id: nextMessageId.current++,
+        role: "assistant",
+        content: placeholderResponse,
+      },
+    ]);
+    setPrompt("");
   }
 
   const [headingPrefix, headingSuffix] = headingVariants[headingVariantIndex];
+  const hasMessages = messages.length > 0;
 
   return (
-    <main className="min-h-screen overflow-hidden">
-      <div className="mx-auto flex min-h-screen w-full max-w-[76rem] flex-col px-[var(--cortex-page-gutter)] pb-10">
+    <main className="h-screen overflow-hidden">
+      <div className="mx-auto flex h-full w-full max-w-[76rem] flex-col px-[var(--cortex-page-gutter)] pb-8 pt-8">
         <section
           aria-labelledby="ask-cortex-heading"
-          className="mx-auto flex w-full max-w-[51rem] flex-1 flex-col justify-center pb-24"
+          className={`mx-auto flex min-h-0 w-full max-w-[51rem] flex-1 flex-col ${
+            hasMessages ? "" : "justify-center pb-24"
+          }`}
         >
           <h1
             id="ask-cortex-heading"
-            className="text-center text-[clamp(1.65rem,3vw,2.25rem)] font-medium leading-tight tracking-[-0.035em] text-foreground"
+            className={`font-medium leading-tight tracking-[-0.035em] text-foreground ${
+              hasMessages
+                ? "text-xl"
+                : "text-center text-[clamp(1.65rem,3vw,2.25rem)]"
+            }`}
           >
-            {headingPrefix}{" "}
-            <span className="decoration-border decoration-dotted underline underline-offset-4">
-              {workspace?.name ?? "this workspace"}
-            </span>
-            {headingSuffix}
+            {hasMessages ? (
+              "Graph-Aware Assistant"
+            ) : (
+              <>
+                {headingPrefix}{" "}
+                <span className="decoration-border decoration-dotted underline underline-offset-4">
+                  {workspace?.name ?? "this workspace"}
+                </span>
+                {headingSuffix}
+              </>
+            )}
           </h1>
-          <div className="mt-9">
+
+          {hasMessages ? (
+            <div
+              ref={conversationHistory}
+              aria-label="Conversation history"
+              className="mt-6 min-h-0 flex-1 overflow-y-auto pr-2"
+            >
+              <ol aria-live="polite" className="space-y-6 py-2">
+                {messages.map((message) => {
+                  const isUser = message.role === "user";
+
+                  return (
+                    <li
+                      key={message.id}
+                      className={`flex ${isUser ? "justify-end" : "justify-start"}`}
+                    >
+                      <article
+                        aria-label={isUser ? "You" : "Cortex"}
+                        className={`max-w-[85%] rounded-2xl border px-4 py-3 ${
+                          isUser
+                            ? "border-accent-bright/20 bg-accent/20"
+                            : "border-border/25 bg-surface/70"
+                        }`}
+                      >
+                        <p className="font-mono text-[0.625rem] font-semibold uppercase tracking-[0.12em] text-subtle">
+                          {isUser ? "You" : "Cortex"}
+                        </p>
+                        <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-foreground">
+                          {message.content}
+                        </p>
+                      </article>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+          ) : null}
+
+          <div className={hasMessages ? "mt-6 shrink-0" : "mt-9"}>
             <form
               onSubmit={submitQuestion}
               aria-label="Ask Cortex"
@@ -158,14 +238,13 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
                 ref={promptInput}
                 id="cortex-question"
                 value={prompt}
-                onChange={(event) => {
-                  setPrompt(event.target.value);
-                  setSubmissionNotice(null);
-                }}
+                onChange={(event) => setPrompt(event.target.value)}
                 autoComplete="off"
-                rows={3}
+                rows={hasMessages ? 2 : 3}
                 placeholder="Ask about a decision, contradiction, or source"
-                className="cortex-composer-input block min-h-28 w-full resize-none bg-transparent px-5 pb-3 pt-5 text-[0.95rem] leading-6 text-foreground placeholder:text-subtle"
+                className={`cortex-composer-input block w-full resize-none bg-transparent px-5 pb-3 pt-5 text-[0.95rem] leading-6 text-foreground placeholder:text-subtle ${
+                  hasMessages ? "min-h-20" : "min-h-28"
+                }`}
               />
 
               <div className="flex min-h-13 items-center justify-between gap-4 px-3.5 pb-3">
@@ -205,31 +284,25 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
             </div>
           </div>
 
-          <div aria-live="polite">
-            {submissionNotice ? (
-              <p className="mt-4 text-center text-xs text-subtle">
-                {submissionNotice}
-              </p>
-            ) : null}
-          </div>
-
-          <section aria-labelledby="prompt-suggestions" className="mt-6">
-            <h2 id="prompt-suggestions" className="sr-only">
-              Try asking
-            </h2>
-            <div className="flex items-center justify-center gap-1 text-xs text-subtle">
-              {promptSuggestions.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  type="button"
-                  onClick={() => selectSuggestion(suggestion)}
-                  className="min-h-8 rounded-lg px-3 transition-colors hover:bg-surface/45 hover:text-muted"
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
-          </section>
+          {!hasMessages ? (
+            <section aria-labelledby="prompt-suggestions" className="mt-6">
+              <h2 id="prompt-suggestions" className="sr-only">
+                Try asking
+              </h2>
+              <div className="flex items-center justify-center gap-1 text-xs text-subtle">
+                {promptSuggestions.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    onClick={() => selectSuggestion(suggestion)}
+                    className="min-h-8 rounded-lg px-3 transition-colors hover:bg-surface/45 hover:text-muted"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </section>
       </div>
     </main>
