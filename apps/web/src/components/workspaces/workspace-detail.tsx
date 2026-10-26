@@ -118,25 +118,6 @@ function PlusIcon() {
   );
 }
 
-function ReferenceArrowIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      fill="none"
-      className="size-4 shrink-0"
-    >
-      <path
-        d="M5 10h10m-4-4 4 4-4 4"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const { workspace } = useWorkspace();
   const promptInput = useRef<HTMLTextAreaElement>(null);
@@ -249,7 +230,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
                 {turns.map((turn, turnIndex) => (
                   <li key={turn.id} className="py-8 first:pt-3">
                     <article aria-label={`Conversation turn ${turnIndex + 1}`}>
-                      <header className="border-l-2 border-accent-bright/50 pl-4">
+                      <header className="pl-[2.875rem]">
                         <p className="font-mono text-[0.625rem] font-semibold uppercase tracking-[0.13em] text-subtle">
                           You asked
                         </p>
@@ -274,51 +255,44 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
                           </div>
 
                           <p className="mt-3 text-[0.9375rem] leading-7 text-muted">
-                            {turn.answer}{" "}
-                            {turn.references.map((reference, referenceIndex) => (
-                              <Link
-                                key={reference.href}
-                                href={reference.href}
-                                aria-label={`Reference ${referenceIndex + 1}: ${reference.label}`}
-                                className="font-mono text-xs font-semibold text-accent-bright underline decoration-accent-bright/35 underline-offset-4 transition-colors hover:text-foreground"
-                              >
-                                [{referenceIndex + 1}]
-                              </Link>
-                            ))}
+                            {turn.answer}
                           </p>
 
                           <nav
                             aria-label={`References for question ${turnIndex + 1}`}
-                            className="mt-6"
+                            className="mt-5 flex flex-wrap items-center gap-y-2"
                           >
-                            <p className="font-mono text-[0.625rem] font-semibold uppercase tracking-[0.13em] text-subtle">
-                              References
+                            <p className="mr-3 font-mono text-[0.5625rem] font-semibold uppercase tracking-[0.12em] text-subtle">
+                              Evidence
                             </p>
-                            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                            <ol className="flex flex-wrap items-center gap-y-2">
                               {turn.references.map((reference, referenceIndex) => (
-                                <Link
+                                <li
                                   key={reference.href}
-                                  href={reference.href}
-                                  aria-label={reference.label}
-                                  className="group flex min-w-0 items-center gap-3 rounded-xl border border-border/25 bg-surface/35 px-3.5 py-3 transition-[background,border-color] hover:border-border/55 hover:bg-surface/65"
+                                  className="flex items-center"
                                 >
-                                  <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-accent/15 font-mono text-[0.625rem] font-semibold text-accent-bright">
-                                    {referenceIndex + 1}
-                                  </span>
-                                  <span className="min-w-0 flex-1">
-                                    <span className="block text-xs font-semibold text-foreground">
+                                  {referenceIndex > 0 ? (
+                                    <span
+                                      aria-hidden="true"
+                                      className="h-px w-4 bg-border/35"
+                                    />
+                                  ) : null}
+                                  <Link
+                                    href={reference.href}
+                                    aria-label={reference.label}
+                                    title={reference.description}
+                                    className="group inline-flex min-h-7 items-center gap-1.5 rounded-full px-1.5 text-xs text-subtle transition-colors hover:text-foreground"
+                                  >
+                                    <span className="grid size-3.5 shrink-0 place-items-center rounded-full border border-accent-bright/45 transition-[background,border-color] group-hover:border-accent-bright group-hover:bg-accent/15">
+                                      <span className="size-1.5 rounded-full bg-accent-bright" />
+                                    </span>
+                                    <span className="underline decoration-border/40 underline-offset-4 group-hover:decoration-accent-bright/60">
                                       {reference.label}
                                     </span>
-                                    <span className="mt-0.5 block truncate text-[0.6875rem] text-subtle">
-                                      {reference.description}
-                                    </span>
-                                  </span>
-                                  <span className="text-subtle transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-foreground">
-                                    <ReferenceArrowIcon />
-                                  </span>
-                                </Link>
+                                  </Link>
+                                </li>
                               ))}
-                            </div>
+                            </ol>
                           </nav>
                         </div>
                       </section>
