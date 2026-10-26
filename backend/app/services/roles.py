@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import Session
 
 from app.models import Role, WorkspaceMembership, WorkspaceRole
@@ -207,13 +207,28 @@ def assign_role(
             WorkspaceMembership.role == Role.OWNER,
         )
         .with_for_update()
+        # The session already holds the caller's membership from the request's
+        # authorisation check; without this, a role change committed while we waited
+        # for the lock would be hidden behind the stale cached row.
+        .execution_options(populate_existing=True)
     ).all()
 
+    # Re-check the caller against the now-locked, current state: a concurrent
+    # request may have demoted or removed them since the route authorised them.
+    try:
+        session.refresh(actor)
+    except InvalidRequestError:  # membership deleted while we waited
+        raise NotPermitted("You no longer have access to this workspace")
+    if Permission.MEMBERS_MANAGE not in membership_permissions(actor):
+        raise NotPermitted("You no longer have permission to change member roles")
+
     target = session.scalar(
-        select(WorkspaceMembership).where(
+        select(WorkspaceMembership)
+        .where(
             WorkspaceMembership.workspace_id == workspace_id,
             WorkspaceMembership.user_id == target_user_id,
         )
+        .execution_options(populate_existing=True)
     )
     if target is None:
         raise NotFound("That user is not a member of this workspace")
@@ -228,7 +243,7 @@ def assign_role(
     _ensure_can_grant(actor, choice.permissions)
 
     target.role = choice.builtin
-    target.custom_role = choice.custom
     target.custom_role_id = choice.custom.id if choice.custom else None
     session.flush()
+    session.refresh(target)  # reload the read-only custom_role relationship
     return target

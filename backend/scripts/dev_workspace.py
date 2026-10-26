@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db.postgres import dispose_engine, get_session_factory
 from app.models import Role, User, Workspace, WorkspaceMembership
+from app.permissions import role_label
 from app.security import hash_password
 from app.services.workspaces import WorkspaceNameTaken, create_workspace
 
@@ -97,7 +98,7 @@ def _list(session, args: argparse.Namespace) -> None:
     for workspace, membership, user in rows:
         print(
             f"  {workspace.id}  {workspace.name:<20} "
-            f"{_user_name(user)} = {membership.role.value}"
+            f"{_user_name(user)} = {role_label(membership)}"
         )
 
 

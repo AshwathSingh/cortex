@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     String,
     Text,
@@ -63,6 +64,10 @@ class WorkspaceRole(Base):
     """
 
     __tablename__ = "workspace_roles"
+    __table_args__ = (
+        # Target of the composite foreign key on memberships (see there).
+        UniqueConstraint("id", "workspace_id", name="uq_workspace_roles_id_workspace"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -98,6 +103,17 @@ class WorkspaceMembership(Base):
     __tablename__ = "workspace_memberships"
     __table_args__ = (
         UniqueConstraint("user_id", "workspace_id", name="uq_membership_user_workspace"),
+        # A custom role must belong to the membership's own workspace: the pair
+        # (custom_role_id, workspace_id) has to match a role row's (id, workspace_id).
+        # A NULL custom_role_id (built-in role) skips the check. No ON DELETE action:
+        # NO ACTION is checked at end of statement, so a workspace delete may cascade
+        # to roles and memberships together, while deleting a role still in use is
+        # refused. RESTRICT would fire mid-cascade and block workspace deletion.
+        ForeignKeyConstraint(
+            ["custom_role_id", "workspace_id"],
+            ["workspace_roles.id", "workspace_roles.workspace_id"],
+            name="fk_membership_custom_role",
+        ),
         # A member holds a built-in role or a custom one, never both and never neither.
         CheckConstraint(
             "(role IS NULL) <> (custom_role_id IS NULL)",
@@ -122,11 +138,9 @@ class WorkspaceMembership(Base):
     )
     # Built-in role, or None when ``custom_role_id`` is set.
     role: Mapped[Role | None] = mapped_column(Enum(Role, name="workspace_role"))
-    # RESTRICT: a role still assigned to someone cannot be deleted from under them.
+    # Foreign key is composite and declared in __table_args__.
     custom_role_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("workspace_roles.id", ondelete="RESTRICT"),
-        index=True,
+        UUID(as_uuid=True), index=True
     )
     invited_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -134,4 +148,10 @@ class WorkspaceMembership(Base):
 
     user: Mapped["User"] = relationship(back_populates="memberships")
     workspace: Mapped[Workspace] = relationship(back_populates="memberships")
-    custom_role: Mapped[WorkspaceRole | None] = relationship()
+    # Read-only: the composite foreign key also spans workspace_id, which this
+    # relationship must never write. Assign roles through ``custom_role_id``.
+    custom_role: Mapped[WorkspaceRole | None] = relationship(
+        primaryjoin="WorkspaceMembership.custom_role_id == WorkspaceRole.id",
+        foreign_keys="WorkspaceMembership.custom_role_id",
+        viewonly=True,
+    )
