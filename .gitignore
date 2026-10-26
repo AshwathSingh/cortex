@@ -9,3 +9,4 @@ output/
 graphify-out/
 .infisical.json
 .s3*
+.DS_Store
