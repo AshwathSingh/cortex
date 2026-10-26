@@ -7,7 +7,7 @@ import {
   WorkspaceProvider,
   type WorkspaceContextValue,
 } from "@/components/workspaces/workspace-context";
-import type { WorkspaceSummary } from "@/lib/api-types";
+import type { AuthenticatedUser, WorkspaceSummary } from "@/lib/api-types";
 
 const WORKSPACE = {
   id: "workspace-1",
@@ -17,6 +17,12 @@ const WORKSPACE = {
   created_at: "2026-09-28T00:00:00Z",
 } satisfies WorkspaceSummary;
 
+const USER = {
+  id: "user-1",
+  email: "ash@example.com",
+  display_name: "Ash Ketchum",
+} satisfies AuthenticatedUser;
+
 function renderWorkspaceDetail(
   overrides: Partial<WorkspaceContextValue> = {},
 ) {
@@ -25,7 +31,7 @@ function renderWorkspaceDetail(
       value={{
         workspaceId: WORKSPACE.id,
         workspace: WORKSPACE,
-        user: null,
+        user: USER,
         isLoading: false,
         error: null,
         ...overrides,
@@ -109,9 +115,9 @@ describe("WorkspaceDetail", () => {
 
     expect(screen.getByLabelText("Conversation history")).toBeInTheDocument();
     const turn = screen.getByRole("article", { name: "Conversation turn 1" });
-    expect(
-      within(turn).getByRole("heading", { name: "Why Neo4j?" }),
-    ).toBeInTheDocument();
+    const userMessage = within(turn).getByRole("region", { name: "Your message" });
+    expect(userMessage).toHaveTextContent(USER.display_name);
+    expect(userMessage).toHaveTextContent("Why Neo4j?");
     expect(within(turn).getByRole("region", { name: "Cortex response" })).toHaveTextContent(
       /evidence-backed answer/i,
     );

@@ -81,6 +81,18 @@ function chooseHeadingVariant(workspaceId: string) {
   return nextVariant;
 }
 
+function initialsFor(label: string) {
+  const initials = label
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+
+  return initials || "Y";
+}
+
 function ArrowUpIcon() {
   return (
     <svg
@@ -119,7 +131,7 @@ function PlusIcon() {
 }
 
 export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
-  const { workspace } = useWorkspace();
+  const { user, workspace } = useWorkspace();
   const promptInput = useRef<HTMLTextAreaElement>(null);
   const conversationHistory = useRef<HTMLDivElement>(null);
   const nextTurnId = useRef(0);
@@ -189,6 +201,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
 
   const [headingPrefix, headingSuffix] = headingVariants[headingVariantIndex];
   const hasMessages = turns.length > 0;
+  const userLabel = user?.display_name?.trim() || user?.email || "You";
 
   return (
     <main className="h-screen overflow-hidden">
@@ -230,18 +243,34 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
                 {turns.map((turn, turnIndex) => (
                   <li key={turn.id} className="py-8 first:pt-3">
                     <article aria-label={`Conversation turn ${turnIndex + 1}`}>
-                      <header className="pl-[2.875rem]">
-                        <p className="font-mono text-[0.625rem] font-semibold uppercase tracking-[0.13em] text-subtle">
-                          You asked
-                        </p>
-                        <h2 className="mt-2 text-lg font-medium leading-7 tracking-[-0.02em] text-foreground">
-                          {turn.question}
-                        </h2>
-                      </header>
+                      <section
+                        aria-label="Your message"
+                        className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3.5"
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="grid size-8 place-items-center rounded-lg border border-border/25 bg-surface/55 font-mono text-[0.625rem] font-semibold text-muted"
+                        >
+                          {initialsFor(userLabel)}
+                        </span>
+                        <div className="min-w-0 pt-0.5">
+                          <p className="text-sm font-semibold text-foreground">
+                            {userLabel}
+                            {userLabel !== "You" ? (
+                              <span className="ml-2 text-xs font-normal text-subtle">
+                                You
+                              </span>
+                            ) : null}
+                          </p>
+                          <p className="mt-2 whitespace-pre-wrap text-[0.9375rem] leading-7 text-foreground">
+                            {turn.question}
+                          </p>
+                        </div>
+                      </section>
 
                       <section
                         aria-label="Cortex response"
-                        className="mt-6 grid grid-cols-[2rem_minmax(0,1fr)] gap-3.5"
+                        className="mt-7 grid grid-cols-[2rem_minmax(0,1fr)] gap-3.5"
                       >
                         <CortexMark className="size-8" />
                         <div className="min-w-0 pt-0.5">
