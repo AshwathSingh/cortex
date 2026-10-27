@@ -372,3 +372,77 @@ def test_composite_key_migration_refuses_existing_cross_workspace_rows(scratch_u
             command.upgrade(cfg, "head")
     finally:
         engine.dispose()
+
+
+# --- invites (US-03 T-1.1) ---------------------------------------------------
+
+
+def _invite(ws_id, email, status="PENDING", role="EDITOR", custom_role_id=None):
+    return {
+        "i": uuid.uuid4(),
+        "w": ws_id,
+        "e": email,
+        "h": uuid.uuid4().hex + uuid.uuid4().hex,
+        "r": None if custom_role_id else role,
+        "c": custom_role_id,
+        "s": status,
+    }
+
+
+_INSERT_INVITE = text(
+    "INSERT INTO workspace_invites "
+    "(id, workspace_id, email, token_hash, role, custom_role_id, expires_at, status) "
+    "VALUES (:i, :w, :e, :h, :r, :c, now() + interval '1 day', :s)"
+)
+
+
+def test_postgres_one_pending_invite_per_workspace_and_email(pg):
+    with Session(pg) as s:
+        ws = Workspace(name="W")
+        s.add(ws)
+        s.commit()
+        ws_id = ws.id
+    with pg.begin() as c:  # history rows never conflict
+        c.execute(_INSERT_INVITE, _invite(ws_id, "x@example.com", "ACCEPTED"))
+        c.execute(_INSERT_INVITE, _invite(ws_id, "x@example.com", "REVOKED"))
+        c.execute(_INSERT_INVITE, _invite(ws_id, "x@example.com", "PENDING"))
+    with pytest.raises(IntegrityError):
+        with pg.begin() as c:
+            c.execute(_INSERT_INVITE, _invite(ws_id, "x@example.com", "PENDING"))
+
+
+def test_postgres_invite_cannot_use_a_role_from_another_workspace(pg):
+    with Session(pg) as s:
+        a, b = Workspace(name="A"), Workspace(name="B")
+        s.add_all([a, b])
+        s.flush()
+        role_in_b = WorkspaceRole(workspace_id=b.id, name="R", permissions=[])
+        s.add(role_in_b)
+        s.commit()
+        a_id, b_id, role_id = a.id, b.id, role_in_b.id
+    with pytest.raises(IntegrityError):
+        with pg.begin() as c:
+            c.execute(_INSERT_INVITE, _invite(a_id, "x@example.com", custom_role_id=role_id))
+    with pg.begin() as c:
+        c.execute(_INSERT_INVITE, _invite(b_id, "x@example.com", custom_role_id=role_id))
+
+
+def test_postgres_workspace_delete_removes_invites_and_role_in_use_is_protected(pg):
+    with Session(pg) as s:
+        ws = Workspace(name="W")
+        s.add(ws)
+        s.flush()
+        role = WorkspaceRole(workspace_id=ws.id, name="R", permissions=[])
+        s.add(role)
+        s.commit()
+        ws_id, role_id = ws.id, role.id
+    with pg.begin() as c:
+        c.execute(_INSERT_INVITE, _invite(ws_id, "x@example.com", custom_role_id=role_id))
+    with pytest.raises(IntegrityError):  # a pending invite still offers the role
+        with pg.begin() as c:
+            c.execute(text("DELETE FROM workspace_roles WHERE id = :i"), {"i": role_id})
+    with pg.begin() as c:
+        c.execute(text("DELETE FROM workspaces WHERE id = :i"), {"i": ws_id})
+    with pg.connect() as c:
+        assert c.scalar(text("SELECT count(*) FROM workspace_invites")) == 0
+        assert c.scalar(text("SELECT count(*) FROM workspace_roles")) == 0

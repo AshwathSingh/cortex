@@ -69,7 +69,7 @@ class RoleChoice:
         return self.builtin is Role.OWNER
 
 
-def _ensure_can_grant(
+def ensure_can_grant(
     actor: WorkspaceMembership, wanted: frozenset[Permission]
 ) -> None:
     missing = wanted - membership_permissions(actor)
@@ -124,7 +124,7 @@ def create_role(
     permissions: list[Permission],
 ) -> WorkspaceRole:
     stored = _clean_permissions(permissions)
-    _ensure_can_grant(actor, frozenset(permissions))
+    ensure_can_grant(actor, frozenset(permissions))
     _reject_builtin_name(name)
     if _name_taken(session, workspace_id, name):
         raise Conflict(f"This workspace already has a role named '{name}'")
@@ -158,7 +158,7 @@ def update_role(
         # Only *newly added* permissions need to be ones the actor holds; taking
         # permissions away never escalates anyone.
         added = frozenset(permissions) - parse_permissions(role.permissions)
-        _ensure_can_grant(actor, added)
+        ensure_can_grant(actor, added)
         role.permissions = stored
     if name is not None and name != role.name:
         _reject_builtin_name(name)
@@ -240,7 +240,7 @@ def assign_role(
         raise NotPermitted("Only an owner can grant or change the owner role")
     if target_is_owner and not choice.is_owner and len(owners) <= 1:
         raise Conflict("A workspace must keep at least one owner")
-    _ensure_can_grant(actor, choice.permissions)
+    ensure_can_grant(actor, choice.permissions)
 
     target.role = choice.builtin
     target.custom_role_id = choice.custom.id if choice.custom else None
