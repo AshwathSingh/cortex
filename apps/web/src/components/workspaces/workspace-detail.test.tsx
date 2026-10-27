@@ -54,8 +54,11 @@ describe("WorkspaceDetail", () => {
     renderWorkspaceDetail();
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      WORKSPACE.name,
+      "Graph-Aware Assistant",
     );
+    expect(
+      screen.getByRole("heading", { level: 2, name: new RegExp(WORKSPACE.name) }),
+    ).toBeInTheDocument();
     expect(screen.getByText(`Workspace · ${WORKSPACE.name}`)).toBeInTheDocument();
     expect(screen.getByText(/trace project decisions/i)).toBeInTheDocument();
     const context = screen.getByRole("navigation", {
@@ -80,9 +83,12 @@ describe("WorkspaceDetail", () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
 
     const firstPage = renderWorkspaceDetail();
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      "What should we explore in",
-    );
+    expect(
+      screen.getByRole("heading", {
+        level: 2,
+        name: /What should we explore in/,
+      }),
+    ).toBeInTheDocument();
     await vi.waitFor(() =>
       expect(
         window.sessionStorage.getItem(`cortex:home-heading:${WORKSPACE.id}`),
@@ -92,9 +98,12 @@ describe("WorkspaceDetail", () => {
 
     renderWorkspaceDetail();
     await vi.waitFor(() =>
-      expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-        "What would you like to understand about",
-      ),
+      expect(
+        screen.getByRole("heading", {
+          level: 2,
+          name: /What would you like to understand about/,
+        }),
+      ).toBeInTheDocument(),
     );
   });
 
@@ -145,6 +154,27 @@ describe("WorkspaceDetail", () => {
       "",
     );
     expect(screen.getByLabelText(/ask cortex about this workspace/i)).toHaveFocus();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      "Why Neo4j?",
+    );
+  });
+
+  it("starts a new conversation from the session header", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceDetail();
+    const input = screen.getByLabelText(/ask cortex about this workspace/i);
+
+    await user.type(input, "Why Neo4j?");
+    await user.click(screen.getByRole("button", { name: /send question/i }));
+    await user.click(
+      screen.getByRole("button", { name: "New conversation" }),
+    );
+
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      "Graph-Aware Assistant",
+    );
+    expect(input).toHaveFocus();
   });
 
   it("turns suggested follow-ups into editable questions", async () => {

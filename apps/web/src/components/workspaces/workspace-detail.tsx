@@ -207,9 +207,21 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
     }
   }, [turns]);
 
+  useEffect(() => {
+    if (turns.length === 0 && nextTurnId.current > 0) {
+      promptInput.current?.focus();
+    }
+  }, [turns.length]);
+
   function selectSuggestion(suggestion: string) {
     setPrompt(suggestion);
     promptInput.current?.focus();
+  }
+
+  function startNewConversation() {
+    setTurns([]);
+    setPrompt("");
+    setCopiedTurnId(null);
   }
 
   async function copyAnswer(turn: ConversationTurn) {
@@ -264,45 +276,65 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const [headingPrefix, headingSuffix] = headingVariants[headingVariantIndex];
   const hasMessages = turns.length > 0;
   const userLabel = user?.display_name?.trim() || user?.email || "You";
+  const conversationTitle = turns[0]?.question ?? "Graph-Aware Assistant";
 
   return (
-    <main className="h-screen overflow-hidden">
-      <div className="mx-auto flex h-full w-full max-w-[76rem] flex-col px-[var(--cortex-page-gutter)] pb-8 pt-8">
+    <main className="flex h-screen flex-col overflow-hidden">
+      <header className="flex h-[4.25rem] shrink-0 items-center justify-between gap-6 border-b border-border/20 px-[var(--cortex-page-gutter)]">
+        <div className="flex min-w-0 items-center gap-3">
+          <CortexMark className="size-7 shrink-0" />
+          <span className="shrink-0 text-sm font-medium text-muted">Cortex</span>
+          <span aria-hidden="true" className="text-lg text-subtle/70">
+            /
+          </span>
+          <h1
+            id="assistant-session-heading"
+            title={conversationTitle}
+            className="truncate text-base font-medium tracking-[-0.015em] text-foreground"
+          >
+            {conversationTitle}
+          </h1>
+        </div>
+
+        {hasMessages ? (
+          <button
+            type="button"
+            onClick={startNewConversation}
+            className="flex min-h-9 shrink-0 items-center gap-2 rounded-lg border border-border/30 bg-surface/35 px-3 text-xs font-medium text-muted transition-[background,border-color,color] hover:border-border/55 hover:bg-surface/65 hover:text-foreground"
+          >
+            <PlusIcon />
+            New conversation
+          </button>
+        ) : null}
+      </header>
+
+      <div className="mx-auto flex min-h-0 w-full max-w-[76rem] flex-1 flex-col px-[var(--cortex-page-gutter)] pb-8 pt-6">
         <section
-          aria-labelledby="ask-cortex-heading"
+          aria-labelledby={
+            hasMessages ? "assistant-session-heading" : "ask-cortex-heading"
+          }
           className={`mx-auto flex min-h-0 w-full max-w-[51rem] flex-1 flex-col ${
             hasMessages ? "" : "justify-center pb-24"
           }`}
         >
-          <h1
-            id="ask-cortex-heading"
-            className={`font-medium leading-tight tracking-[-0.035em] text-foreground ${
-              hasMessages
-                ? "text-xl"
-                : "text-center text-[clamp(1.65rem,3vw,2.25rem)]"
-            }`}
-          >
-            {hasMessages ? (
-              "Graph-Aware Assistant"
-            ) : (
-              <>
+          {!hasMessages ? (
+            <>
+              <h2
+                id="ask-cortex-heading"
+                className="text-center text-[clamp(1.65rem,3vw,2.25rem)] font-medium leading-tight tracking-[-0.035em] text-foreground"
+              >
                 {headingPrefix}{" "}
                 <span className="decoration-border decoration-dotted underline underline-offset-4">
                   {workspace?.name ?? "this workspace"}
                 </span>
                 {headingSuffix}
-              </>
-            )}
-          </h1>
-
-          <p
-            className={`mt-2 text-sm leading-6 text-subtle ${
-              hasMessages ? "" : "mx-auto max-w-[38rem] text-center"
-            }`}
-          >
-            Trace project decisions, surface contradictions, and connect answers
-            to workspace evidence.
-          </p>
+              </h2>
+              <p className="mx-auto mt-3 max-w-[38rem] text-center text-sm leading-6 text-subtle">
+                Trace project decisions, surface contradictions, and connect
+                answers to workspace evidence.
+              </p>
+            </>
+          ) : null}
 
           {hasMessages ? (
             <div

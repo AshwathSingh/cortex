@@ -76,9 +76,12 @@ describe("WorkspaceShell", () => {
       </WorkspaceShell>,
     );
 
-    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent(
-      WORKSPACE.name,
-    );
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: new RegExp(WORKSPACE.name),
+      }),
+    ).toBeInTheDocument();
     expect(
       fetchMock.mock.calls.filter(
         ([input]) => String(input) === "/api/workspaces",
