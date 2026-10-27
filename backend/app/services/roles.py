@@ -51,6 +51,10 @@ class Conflict(RoleError):
     status_code = 409
 
 
+class Gone(RoleError):
+    status_code = 410
+
+
 @dataclass(frozen=True)
 class RoleChoice:
     """The role an assignment targets: exactly one of the two fields is set."""

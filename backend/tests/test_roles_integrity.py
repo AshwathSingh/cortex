@@ -446,3 +446,58 @@ def test_postgres_workspace_delete_removes_invites_and_role_in_use_is_protected(
     with pg.connect() as c:
         assert c.scalar(text("SELECT count(*) FROM workspace_invites")) == 0
         assert c.scalar(text("SELECT count(*) FROM workspace_roles")) == 0
+
+
+def test_postgres_concurrent_accepts_of_one_token_let_exactly_one_win(pg):
+    from app.services.invites import accept_invite, create_invite
+
+    with Session(pg) as s:
+        ws = Workspace(name="W")
+        owner = User(github_id=1, github_login="o", email="o@example.com")
+        users = [
+            User(github_id=10 + i, github_login=f"u{i}", email=f"u{i}@example.com")
+            for i in range(4)
+        ]
+        s.add_all([ws, owner, *users])
+        s.flush()
+        actor = WorkspaceMembership(
+            workspace_id=ws.id, user_id=owner.id, role=Role.OWNER
+        )
+        s.add(actor)
+        s.flush()
+        _, token = create_invite(
+            s, workspace_id=ws.id, actor=actor, email="x@example.com", choice=None
+        )
+        s.commit()
+        ws_id, user_ids = ws.id, [u.id for u in users]
+
+    barrier = threading.Barrier(len(user_ids))
+    outcomes: list = [None] * len(user_ids)
+
+    def run(i, uid):
+        with Session(pg) as s:
+            user = s.get(User, uid)
+            barrier.wait()
+            try:
+                accept_invite(s, token=token, user=user)
+                s.commit()
+                outcomes[i] = "ok"
+            except RoleError as e:
+                s.rollback()
+                outcomes[i] = e.status_code
+
+    threads = [
+        threading.Thread(target=run, args=(i, u)) for i, u in enumerate(user_ids)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert outcomes.count("ok") == 1 and outcomes.count(409) == 3, outcomes
+    with Session(pg) as s:
+        count = s.scalar(
+            text("SELECT count(*) FROM workspace_memberships WHERE workspace_id=:w"),
+            {"w": ws_id},
+        )
+    assert count == 2  # owner + the single winner

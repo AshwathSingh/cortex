@@ -265,3 +265,114 @@ def test_new_memberships_default_to_active_with_no_inviter(w):
         assert memberships and all(
             m.status == "active" and m.invited_by is None for m in memberships
         )
+
+
+# --- T-1.3 / T-1.4: accepting an invite -------------------------------------
+
+
+def accept(w, who, token):
+    return w.as_(who).post(f"/api/invites/{token}/accept")
+
+
+def outsider(w, name="guest"):
+    from tests.authz import make_user
+
+    with w.sessions() as s:
+        w.users[name] = make_user(s, f"{name}@example.com")
+        s.commit()
+    return name
+
+
+def members(w) -> list[WorkspaceMembership]:
+    with w.sessions() as s:
+        return list(s.scalars(select(WorkspaceMembership)))
+
+
+def test_accept_adds_member_with_invite_role_and_grants_access(w):
+    token = invite(w, "owner", role="VIEWER").json()["token"]
+    guest = outsider(w)
+    assert w.as_(guest).get(f"/api/workspaces/{WS}/members").status_code == 403
+
+    r = accept(w, guest, token)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"workspace_id": WS, "role": "VIEWER"}
+
+    row = next(m for m in members(w) if m.user_id == w.users[guest].id)
+    assert row.role is Role.VIEWER and row.invited_by == w.users["owner"].id
+    assert row.status == "active"
+    assert w.as_(guest).get(f"/api/workspaces/{WS}/members").status_code == 200
+    (inv,) = stored(w)
+    assert inv.status is InviteStatus.ACCEPTED and inv.accepted_at is not None
+
+
+def test_accept_custom_role_invite(w):
+    role = w.role("Reviewer", ["sources.write"])
+    token = invite(w, "owner", role_id=role["id"]).json()["token"]
+    r = accept(w, outsider(w), token)
+    assert r.status_code == 200 and r.json()["role"] == "Reviewer"
+
+
+def test_accept_requires_login(w):
+    token = invite(w, "owner").json()["token"]
+    w.client.cookies.clear()
+    assert w.client.post(f"/api/invites/{token}/accept").status_code == 401
+    assert stored(w)[0].status is InviteStatus.PENDING
+
+
+def test_unknown_token_is_404_and_creates_nothing(w):
+    before = len(members(w))
+    r = accept(w, outsider(w), "nope")
+    assert r.status_code == 404
+    assert len(members(w)) == before
+
+
+def test_expired_token_is_410_marked_expired_and_creates_no_member(w):
+    token = invite(w, "owner").json()["token"]
+    with w.sessions() as s:
+        inv = s.scalars(select(WorkspaceInvite)).one()
+        inv.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        s.commit()
+    before = len(members(w))
+    guest = outsider(w)
+    r = accept(w, guest, token)
+    assert r.status_code == 410 and "expired" in r.json()["detail"]
+    assert len(members(w)) == before
+    assert stored(w)[0].status is InviteStatus.EXPIRED
+    assert accept(w, guest, token).status_code == 410  # stays rejected
+
+
+def test_used_token_is_409_and_creates_no_second_member(w):
+    token = invite(w, "owner").json()["token"]
+    assert accept(w, outsider(w, "a"), token).status_code == 200
+    before = len(members(w))
+    r = accept(w, outsider(w, "b"), token)
+    assert r.status_code == 409 and "already been used" in r.json()["detail"]
+    assert len(members(w)) == before
+
+
+def test_revoked_token_is_409(w):
+    token = invite(w, "owner").json()["token"]
+    with w.sessions() as s:
+        s.scalars(select(WorkspaceInvite)).one().status = InviteStatus.REVOKED
+        s.commit()
+    before = len(members(w))
+    r = accept(w, outsider(w), token)
+    assert r.status_code == 409 and "revoked" in r.json()["detail"]
+    assert len(members(w)) == before
+
+
+def test_existing_member_consumes_invite_without_duplicate_row(w):
+    token = invite(w, "owner", email="x@example.com", role="VIEWER").json()["token"]
+    w.add("ed", role=Role.EDITOR)
+    before = len(members(w))
+    r = accept(w, "ed", token)
+    assert r.status_code == 200 and r.json()["role"] == "EDITOR"  # role unchanged
+    assert len(members(w)) == before
+    assert stored(w)[0].status is InviteStatus.ACCEPTED
+
+
+def test_invite_for_one_workspace_does_not_leak_to_others(w):
+    token = invite(w, "owner").json()["token"]
+    guest = outsider(w)
+    accept(w, guest, token)
+    assert all(str(m.workspace_id) == WS for m in members(w))

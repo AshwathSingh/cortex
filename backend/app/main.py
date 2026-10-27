@@ -24,6 +24,7 @@ app.include_router(workspaces.router)
 app.include_router(roles.catalogue_router)
 app.include_router(roles.router)
 app.include_router(invites.router)
+app.include_router(invites.accept_router)
 # After workspaces.router: both own /api/workspaces, and the more specific
 # /{workspace_id}/graph must not be shadowed by /{workspace_id}.
 app.include_router(graph.router)

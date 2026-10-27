@@ -24,6 +24,8 @@ from app.models import (
 from app.security import hash_invite_token, new_invite_token
 from app.services.roles import (
     Conflict,
+    Gone,
+    NotFound,
     NotPermitted,
     RoleChoice,
     ensure_can_grant,
@@ -113,3 +115,76 @@ def create_invite(
         raise Conflict(f"{email} already has a pending invitation to this workspace")
     session.refresh(invite)
     return invite, token
+
+
+def accept_invite(
+    session: Session, *, token: str, user: User
+) -> tuple[WorkspaceInvite, WorkspaceMembership]:
+    """Redeem an invite token for ``user``.
+
+    Any logged-in holder of the token may redeem it; the invite email is not
+    matched against the account, since GitHub sign-in emails often differ.
+
+    The pending -> accepted flip is a single conditional UPDATE, so two concurrent
+    accepts can't both win. It and the membership insert share one transaction: any
+    rejection leaves no membership row. If the user is already a member the invite
+    is still consumed but no second row is created.
+
+    Raises ``NotFound`` (404), ``Gone`` (410, expired) or ``Conflict`` (409, already
+    accepted or revoked).
+    """
+    token_hash = hash_invite_token(token)
+    now = datetime.now(timezone.utc)
+
+    claimed = session.scalar(
+        update(WorkspaceInvite)
+        .where(
+            WorkspaceInvite.token_hash == token_hash,
+            WorkspaceInvite.status == InviteStatus.PENDING,
+            WorkspaceInvite.expires_at > now,
+        )
+        .values(status=InviteStatus.ACCEPTED, accepted_at=now)
+        .returning(WorkspaceInvite.id)
+    )
+    if claimed is None:
+        _explain_rejection(session, token_hash, now)  # always raises
+
+    invite = session.scalar(
+        select(WorkspaceInvite)
+        .where(WorkspaceInvite.id == claimed)
+        .execution_options(populate_existing=True)
+    )
+    membership = session.scalar(
+        select(WorkspaceMembership).where(
+            WorkspaceMembership.workspace_id == invite.workspace_id,
+            WorkspaceMembership.user_id == user.id,
+        )
+    )
+    if membership is None:
+        membership = WorkspaceMembership(
+            workspace_id=invite.workspace_id,
+            user_id=user.id,
+            role=invite.role,
+            custom_role_id=invite.custom_role_id,
+            invited_by=invite.invited_by,
+        )
+        session.add(membership)
+        session.flush()
+    session.refresh(membership)
+    return invite, membership
+
+
+def _explain_rejection(session: Session, token_hash: str, now: datetime):
+    invite = session.scalar(
+        select(WorkspaceInvite).where(WorkspaceInvite.token_hash == token_hash)
+    )
+    if invite is None:
+        raise NotFound("This invitation link is not valid")
+    if invite.status is InviteStatus.PENDING or invite.status is InviteStatus.EXPIRED:
+        if invite.status is InviteStatus.PENDING:
+            invite.status = InviteStatus.EXPIRED
+            session.commit()  # keep the retirement even though we reject
+        raise Gone("This invitation has expired; ask for a new one")
+    if invite.status is InviteStatus.ACCEPTED:
+        raise Conflict("This invitation has already been used")
+    raise Conflict("This invitation has been revoked")
