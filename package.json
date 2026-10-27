@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "npm --prefix apps/web run dev",
+    "dev:watch": "bash scripts/dev_watchdog.sh",
     "build": "npm --prefix apps/web run build",
     "start": "npm --prefix apps/web run start",
     "lint": "npm --prefix apps/web run lint",
