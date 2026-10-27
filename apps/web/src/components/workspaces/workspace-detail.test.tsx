@@ -57,6 +57,18 @@ describe("WorkspaceDetail", () => {
       WORKSPACE.name,
     );
     expect(screen.getByText(`Workspace · ${WORKSPACE.name}`)).toBeInTheDocument();
+    expect(screen.getByText(/trace project decisions/i)).toBeInTheDocument();
+    const context = screen.getByRole("navigation", {
+      name: "Available answer context",
+    });
+    expect(within(context).getByRole("link", { name: "Graph" })).toHaveAttribute(
+      "href",
+      `/workspaces/${WORKSPACE.id}/graph`,
+    );
+    expect(within(context).getByRole("link", { name: "Sources" })).toHaveAttribute(
+      "href",
+      `/workspaces/${WORKSPACE.id}/sources`,
+    );
     expect(screen.getByLabelText(/ask cortex about this workspace/i)).toBeEnabled();
     expect(screen.getByRole("button", { name: /send question/i })).toHaveAttribute(
       "aria-disabled",
@@ -133,6 +145,21 @@ describe("WorkspaceDetail", () => {
       "",
     );
     expect(screen.getByLabelText(/ask cortex about this workspace/i)).toHaveFocus();
+  });
+
+  it("turns suggested follow-ups into editable questions", async () => {
+    const user = userEvent.setup();
+    renderWorkspaceDetail();
+    const input = screen.getByLabelText(/ask cortex about this workspace/i);
+
+    await user.type(input, "Why Neo4j?");
+    await user.click(screen.getByRole("button", { name: /send question/i }));
+    await user.click(
+      screen.getByRole("button", { name: "Trace the related decisions" }),
+    );
+
+    expect(input).toHaveValue("Trace the related decisions");
+    expect(input).toHaveFocus();
   });
 
   it("keeps earlier messages when a follow-up question is submitted", async () => {

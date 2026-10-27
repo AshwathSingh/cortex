@@ -20,6 +20,12 @@ const promptSuggestions = [
   "Summarize recent decisions",
 ];
 
+const followUpSuggestions = [
+  "Trace the related decisions",
+  "Show the supporting sources",
+  "Find possible contradictions",
+];
+
 const placeholderResponse =
   "This placeholder demonstrates how Cortex will present a concise, evidence-backed answer. Once the assistant service is connected, each claim will be grounded in the project graph and its indexed sources.";
 
@@ -130,6 +136,52 @@ function PlusIcon() {
   );
 }
 
+function CopyIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      fill="none"
+      className="size-3.5"
+    >
+      <rect
+        x="6.5"
+        y="6.5"
+        width="9"
+        height="9"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.4"
+      />
+      <path
+        d="M5 12.5h-.5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2V5"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      fill="none"
+      className="size-3.5"
+    >
+      <path
+        d="m4.5 10.25 3.4 3.4 7.6-7.6"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const { user, workspace } = useWorkspace();
   const promptInput = useRef<HTMLTextAreaElement>(null);
@@ -138,6 +190,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const [headingVariantIndex, setHeadingVariantIndex] = useState(0);
   const [prompt, setPrompt] = useState("");
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
+  const [copiedTurnId, setCopiedTurnId] = useState<number | null>(null);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -157,6 +210,15 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   function selectSuggestion(suggestion: string) {
     setPrompt(suggestion);
     promptInput.current?.focus();
+  }
+
+  async function copyAnswer(turn: ConversationTurn) {
+    try {
+      await navigator.clipboard.writeText(turn.answer);
+      setCopiedTurnId(turn.id);
+    } catch {
+      setCopiedTurnId(null);
+    }
   }
 
   function submitQuestion(event: FormEvent<HTMLFormElement>) {
@@ -233,6 +295,15 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
             )}
           </h1>
 
+          <p
+            className={`mt-2 text-sm leading-6 text-subtle ${
+              hasMessages ? "" : "mx-auto max-w-[38rem] text-center"
+            }`}
+          >
+            Trace project decisions, surface contradictions, and connect answers
+            to workspace evidence.
+          </p>
+
           {hasMessages ? (
             <div
               ref={conversationHistory}
@@ -279,7 +350,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
                               Cortex
                             </h3>
                             <span className="rounded-full border border-border/25 bg-surface/60 px-2 py-0.5 font-mono text-[0.5625rem] font-semibold uppercase tracking-[0.1em] text-subtle">
-                              Placeholder answer
+                              Preview
                             </span>
                           </div>
 
@@ -323,6 +394,52 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
                               ))}
                             </ol>
                           </nav>
+
+                          <div className="mt-4 flex items-center gap-2 border-t border-border/15 pt-3">
+                            <button
+                              type="button"
+                              onClick={() => void copyAnswer(turn)}
+                              className="inline-flex min-h-7 items-center gap-1.5 rounded-md px-2 text-[0.6875rem] font-medium text-subtle transition-colors hover:bg-surface/55 hover:text-foreground"
+                            >
+                              {copiedTurnId === turn.id ? (
+                                <CheckIcon />
+                              ) : (
+                                <CopyIcon />
+                              )}
+                              {copiedTurnId === turn.id ? "Copied" : "Copy answer"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => promptInput.current?.focus()}
+                              className="min-h-7 rounded-md px-2 text-[0.6875rem] font-medium text-subtle transition-colors hover:bg-surface/55 hover:text-foreground"
+                            >
+                              Ask a follow-up
+                            </button>
+                          </div>
+
+                          <section
+                            aria-labelledby={`follow-up-heading-${turn.id}`}
+                            className="mt-5"
+                          >
+                            <h4
+                              id={`follow-up-heading-${turn.id}`}
+                              className="font-mono text-[0.5625rem] font-semibold uppercase tracking-[0.12em] text-subtle"
+                            >
+                              Continue exploring
+                            </h4>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {followUpSuggestions.map((suggestion) => (
+                                <button
+                                  key={suggestion}
+                                  type="button"
+                                  onClick={() => selectSuggestion(suggestion)}
+                                  className="min-h-8 rounded-full border border-border/20 bg-surface/30 px-3 text-xs text-muted transition-[background,border-color,color] hover:border-border/45 hover:bg-surface/60 hover:text-foreground"
+                                >
+                                  {suggestion}
+                                </button>
+                              ))}
+                            </div>
+                          </section>
                         </div>
                       </section>
                     </article>
@@ -385,12 +502,22 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
               <span className="min-w-0 truncate">
                 Workspace · {workspace?.name ?? "Loading…"}
               </span>
-              <Link
-                href={routes.workspace.sources(workspaceId)}
-                className="shrink-0 transition-colors hover:text-foreground"
-              >
-                All sources
-              </Link>
+              <nav aria-label="Available answer context" className="flex shrink-0 items-center gap-2.5">
+                <Link
+                  href={routes.workspace.graph(workspaceId)}
+                  className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
+                >
+                  <span className="size-1.5 rounded-full bg-accent-bright" />
+                  Graph
+                </Link>
+                <Link
+                  href={routes.workspace.sources(workspaceId)}
+                  className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
+                >
+                  <span className="size-1.5 rounded-full bg-accent-bright" />
+                  Sources
+                </Link>
+              </nav>
             </div>
           </div>
 
