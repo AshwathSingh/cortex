@@ -187,14 +187,28 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const promptInput = useRef<HTMLTextAreaElement>(null);
   const conversationHistory = useRef<HTMLDivElement>(null);
   const nextTurnId = useRef(0);
+  const previousWorkspaceId = useRef(workspaceId);
   const [headingVariantIndex, setHeadingVariantIndex] = useState(0);
   const [prompt, setPrompt] = useState("");
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [copiedTurnId, setCopiedTurnId] = useState<number | null>(null);
 
   useEffect(() => {
+    const workspaceChanged = previousWorkspaceId.current !== workspaceId;
+    previousWorkspaceId.current = workspaceId;
+
+    if (workspaceChanged) {
+      nextTurnId.current = 0;
+      setPrompt("");
+      setTurns([]);
+      setCopiedTurnId(null);
+    }
+
     const timeout = window.setTimeout(() => {
       setHeadingVariantIndex(chooseHeadingVariant(workspaceId));
+      if (workspaceChanged) {
+        promptInput.current?.focus();
+      }
     }, 0);
 
     return () => window.clearTimeout(timeout);
@@ -280,23 +294,23 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
 
   return (
     <main className="flex h-screen flex-col overflow-hidden">
-      <header className="flex h-[4.25rem] shrink-0 items-center justify-between gap-6 border-b border-border/20 px-[var(--cortex-page-gutter)]">
-        <div className="flex min-w-0 items-center gap-3">
-          <CortexMark className="size-7 shrink-0" />
-          <span className="shrink-0 text-sm font-medium text-muted">Cortex</span>
-          <span aria-hidden="true" className="text-lg text-subtle/70">
-            /
-          </span>
-          <h1
-            id="assistant-session-heading"
-            title={conversationTitle}
-            className="truncate text-base font-medium tracking-[-0.015em] text-foreground"
-          >
-            {conversationTitle}
-          </h1>
-        </div>
+      {hasMessages ? (
+        <header className="flex h-[4.25rem] shrink-0 items-center justify-between gap-6 border-b border-border/20 px-[var(--cortex-page-gutter)]">
+          <div className="flex min-w-0 items-center gap-3">
+            <CortexMark className="size-7 shrink-0" />
+            <span className="shrink-0 text-sm font-medium text-muted">Cortex</span>
+            <span aria-hidden="true" className="text-lg text-subtle/70">
+              /
+            </span>
+            <h1
+              id="assistant-session-heading"
+              title={conversationTitle}
+              className="truncate text-base font-medium tracking-[-0.015em] text-foreground"
+            >
+              {conversationTitle}
+            </h1>
+          </div>
 
-        {hasMessages ? (
           <button
             type="button"
             onClick={startNewConversation}
@@ -305,8 +319,8 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
             <PlusIcon />
             New conversation
           </button>
-        ) : null}
-      </header>
+        </header>
+      ) : null}
 
       <div className="mx-auto flex min-h-0 w-full max-w-[76rem] flex-1 flex-col px-[var(--cortex-page-gutter)] pb-8 pt-6">
         <section
@@ -319,7 +333,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
         >
           {!hasMessages ? (
             <>
-              <h2
+              <h1
                 id="ask-cortex-heading"
                 className="text-center text-[clamp(1.65rem,3vw,2.25rem)] font-medium leading-tight tracking-[-0.035em] text-foreground"
               >
@@ -328,7 +342,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
                   {workspace?.name ?? "this workspace"}
                 </span>
                 {headingSuffix}
-              </h2>
+              </h1>
               <p className="mx-auto mt-3 max-w-[38rem] text-center text-sm leading-6 text-subtle">
                 Trace project decisions, surface contradictions, and connect
                 answers to workspace evidence.

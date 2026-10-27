@@ -78,7 +78,7 @@ describe("WorkspaceShell", () => {
 
     expect(
       await screen.findByRole("heading", {
-        level: 2,
+        level: 1,
         name: new RegExp(WORKSPACE.name),
       }),
     ).toBeInTheDocument();

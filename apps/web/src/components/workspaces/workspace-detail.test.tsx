@@ -17,6 +17,12 @@ const WORKSPACE = {
   created_at: "2026-09-28T00:00:00Z",
 } satisfies WorkspaceSummary;
 
+const SECOND_WORKSPACE = {
+  ...WORKSPACE,
+  id: "workspace-2",
+  name: "Platform Engineering",
+} satisfies WorkspaceSummary;
+
 const USER = {
   id: "user-1",
   email: "ash@example.com",
@@ -53,12 +59,10 @@ describe("WorkspaceDetail", () => {
   it("renders the shared workspace in the Cortex composer", () => {
     renderWorkspaceDetail();
 
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      "Graph-Aware Assistant",
-    );
     expect(
-      screen.getByRole("heading", { level: 2, name: new RegExp(WORKSPACE.name) }),
+      screen.getByRole("heading", { level: 1, name: new RegExp(WORKSPACE.name) }),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Graph-Aware Assistant")).not.toBeInTheDocument();
     expect(screen.getByText(`Workspace · ${WORKSPACE.name}`)).toBeInTheDocument();
     expect(screen.getByText(/trace project decisions/i)).toBeInTheDocument();
     const context = screen.getByRole("navigation", {
@@ -85,7 +89,7 @@ describe("WorkspaceDetail", () => {
     const firstPage = renderWorkspaceDetail();
     expect(
       screen.getByRole("heading", {
-        level: 2,
+        level: 1,
         name: /What should we explore in/,
       }),
     ).toBeInTheDocument();
@@ -100,7 +104,7 @@ describe("WorkspaceDetail", () => {
     await vi.waitFor(() =>
       expect(
         screen.getByRole("heading", {
-          level: 2,
+          level: 1,
           name: /What would you like to understand about/,
         }),
       ).toBeInTheDocument(),
@@ -171,9 +175,48 @@ describe("WorkspaceDetail", () => {
     );
 
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      "Graph-Aware Assistant",
+    expect(
+      screen.getByRole("heading", { level: 1, name: new RegExp(WORKSPACE.name) }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "New conversation" }),
+    ).not.toBeInTheDocument();
+    expect(input).toHaveFocus();
+  });
+
+  it("starts with a blank conversation when the workspace changes", async () => {
+    const user = userEvent.setup();
+    const page = renderWorkspaceDetail();
+    const input = screen.getByLabelText(/ask cortex about this workspace/i);
+
+    await user.type(input, "Why Neo4j?");
+    await user.click(screen.getByRole("button", { name: /send question/i }));
+
+    page.rerender(
+      <WorkspaceProvider
+        value={{
+          workspaceId: SECOND_WORKSPACE.id,
+          workspace: SECOND_WORKSPACE,
+          user: USER,
+          isLoading: false,
+          error: null,
+        }}
+      >
+        <WorkspaceDetail workspaceId={SECOND_WORKSPACE.id} />
+      </WorkspaceProvider>,
     );
+
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("article")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: new RegExp(SECOND_WORKSPACE.name),
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(`Workspace · ${SECOND_WORKSPACE.name}`)).toBeInTheDocument();
+    expect(input).toHaveValue("");
     expect(input).toHaveFocus();
   });
 
