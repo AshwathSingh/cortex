@@ -35,6 +35,15 @@ def hash_session_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def new_invite_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_invite_token(token: str) -> str:
+    """SHA-256 hex. Only this is stored; the raw token is shown once at creation."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def _fernet(env_name: str, key: str) -> Fernet:
     try:
         return Fernet(key)
