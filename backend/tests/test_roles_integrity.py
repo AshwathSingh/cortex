@@ -501,3 +501,24 @@ def test_postgres_concurrent_accepts_of_one_token_let_exactly_one_win(pg):
             {"w": ws_id},
         )
     assert count == 2  # owner + the single winner
+
+
+def test_postgres_deleting_a_role_removes_its_invites_instead_of_failing(pg):
+    from app.services.roles import delete_role
+
+    with Session(pg) as s:
+        ws = Workspace(name="W")
+        s.add(ws)
+        s.flush()
+        role = WorkspaceRole(workspace_id=ws.id, name="R", permissions=[])
+        s.add(role)
+        s.flush()
+        for status, email in (("PENDING", "a@example.com"), ("ACCEPTED", "b@example.com")):
+            s.execute(
+                _INSERT_INVITE, _invite(ws.id, email, status, custom_role_id=role.id)
+            )
+        s.commit()
+        delete_role(s, role=role)
+        s.commit()
+        assert s.scalar(text("SELECT count(*) FROM workspace_invites")) == 0
+        assert s.scalar(text("SELECT count(*) FROM workspace_roles")) == 0
