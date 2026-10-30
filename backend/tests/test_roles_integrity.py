@@ -522,3 +522,58 @@ def test_postgres_deleting_a_role_removes_its_invites_instead_of_failing(pg):
         s.commit()
         assert s.scalar(text("SELECT count(*) FROM workspace_invites")) == 0
         assert s.scalar(text("SELECT count(*) FROM workspace_roles")) == 0
+
+
+@pytest.mark.parametrize("attempt", range(5))
+def test_postgres_two_owners_removing_each_other_at_once_leaves_one(pg, attempt):
+    from app.services.members import remove_member
+
+    with Session(pg) as s:
+        ws = Workspace(name="W")
+        users = [
+            User(github_id=100 + i, github_login=f"o{i}", email=f"o{i}@example.com")
+            for i in range(2)
+        ]
+        s.add_all([ws, *users])
+        s.flush()
+        s.add_all(
+            WorkspaceMembership(workspace_id=ws.id, user_id=u.id, role=Role.OWNER)
+            for u in users
+        )
+        s.commit()
+        ws_id, ids = ws.id, [u.id for u in users]
+
+    barrier = threading.Barrier(2)
+    outcomes: list = [None, None]
+
+    def run(i, actor_id, target_id):
+        with Session(pg) as s:
+            actor = s.scalar(
+                select(WorkspaceMembership).where(
+                    WorkspaceMembership.workspace_id == ws_id,
+                    WorkspaceMembership.user_id == actor_id,
+                )
+            )
+            barrier.wait()
+            try:
+                remove_member(
+                    s, workspace_id=ws_id, actor=actor, target_user_id=target_id
+                )
+                s.commit()
+                outcomes[i] = "ok"
+            except RoleError as e:
+                s.rollback()
+                outcomes[i] = e.status_code
+
+    threads = [
+        threading.Thread(target=run, args=(0, ids[0], ids[1])),
+        threading.Thread(target=run, args=(1, ids[1], ids[0])),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert all(not t.is_alive() for t in threads), "deadlock or hang"
+
+    assert _owner_count(pg, ws_id) == 1, outcomes
+    assert "ok" in outcomes
