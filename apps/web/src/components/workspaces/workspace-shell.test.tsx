@@ -119,6 +119,40 @@ describe("WorkspaceShell", () => {
     );
   });
 
+  it("adds conversations to the sidebar and reopens them", async () => {
+    mockWorkspaceRequests();
+    const user = userEvent.setup();
+
+    render(
+      <WorkspaceShell workspaceId={WORKSPACE.id}>
+        <WorkspaceDetail workspaceId={WORKSPACE.id} />
+      </WorkspaceShell>,
+    );
+
+    const input = await screen.findByLabelText(
+      /ask cortex about this workspace/i,
+    );
+    await user.type(input, "Why was Neo4j selected?");
+    await user.click(screen.getByRole("button", { name: /send question/i }));
+
+    const recentConversation = screen.getByRole("button", {
+      name: "Why was Neo4j selected?",
+    });
+    expect(recentConversation).toHaveAttribute("aria-current", "page");
+
+    await user.click(
+      screen.getByRole("button", { name: "New conversation" }),
+    );
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(recentConversation).not.toHaveAttribute("aria-current");
+
+    await user.click(recentConversation);
+    expect(
+      screen.getByRole("article", { name: "Conversation turn 1" }),
+    ).toHaveTextContent("Why was Neo4j selected?");
+    expect(recentConversation).toHaveAttribute("aria-current", "page");
+  });
+
   it("returns expired sessions to login", async () => {
     mockWorkspaceRequests(401, { detail: "Not authenticated" });
 

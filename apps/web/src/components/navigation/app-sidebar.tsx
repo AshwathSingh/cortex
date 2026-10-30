@@ -19,7 +19,8 @@ export type SidebarLink = {
 export type SidebarConversation = {
   id: string;
   label: string;
-  href: string;
+  isActive: boolean;
+  onSelect: () => void;
 };
 
 type AppSidebarProps = {
@@ -267,17 +268,16 @@ export function AppSidebar({
             {recentConversations.length > 0 ? (
               <nav aria-label="Recent conversations" className="mt-2 space-y-0.5">
                 {recentConversations.slice(0, 5).map((conversation) => {
-                  const isActive = activePath === conversation.href;
-
                   return (
-                    <Link
+                    <button
                       key={conversation.id}
-                      href={conversation.href}
-                      aria-current={isActive ? "page" : undefined}
-                      className="block truncate rounded-[var(--cortex-sidebar-item-radius)] px-3 py-2 text-xs leading-5 text-[var(--cortex-sidebar-text)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground aria-[current=page]:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:text-foreground"
+                      type="button"
+                      onClick={conversation.onSelect}
+                      aria-current={conversation.isActive ? "page" : undefined}
+                      className="block min-h-9 w-full truncate rounded-[var(--cortex-sidebar-item-radius)] px-3 py-2 text-left text-xs leading-5 text-[var(--cortex-sidebar-text)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground aria-[current=page]:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:text-foreground"
                     >
                       {conversation.label}
-                    </Link>
+                    </button>
                   );
                 })}
               </nav>

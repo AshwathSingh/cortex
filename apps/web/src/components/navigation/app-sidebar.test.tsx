@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AppSidebar } from "@/components/navigation/app-sidebar";
 import {
@@ -107,5 +107,31 @@ describe("AppSidebar", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("selects a recent conversation", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(
+      <AppSidebar
+        {...baseProps}
+        activePath="/workspaces/demo"
+        recentConversations={[
+          {
+            id: "conversation-1",
+            label: "Why was Neo4j selected?",
+            isActive: true,
+            onSelect,
+          },
+        ]}
+      />,
+    );
+
+    const conversation = screen.getByRole("button", {
+      name: "Why was Neo4j selected?",
+    });
+    expect(conversation).toHaveAttribute("aria-current", "page");
+    await user.click(conversation);
+    expect(onSelect).toHaveBeenCalledOnce();
   });
 });

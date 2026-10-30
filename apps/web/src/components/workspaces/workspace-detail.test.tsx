@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AssistantConversationProvider } from "@/components/workspaces/assistant-conversation-context";
 import { WorkspaceDetail } from "@/components/workspaces/workspace-detail";
 import {
   WorkspaceProvider,
@@ -43,7 +44,9 @@ function renderWorkspaceDetail(
         ...overrides,
       }}
     >
-      <WorkspaceDetail workspaceId={WORKSPACE.id} />
+      <AssistantConversationProvider workspaceId={WORKSPACE.id}>
+        <WorkspaceDetail workspaceId={WORKSPACE.id} />
+      </AssistantConversationProvider>
     </WorkspaceProvider>,
   );
 }
@@ -202,7 +205,9 @@ describe("WorkspaceDetail", () => {
           error: null,
         }}
       >
-        <WorkspaceDetail workspaceId={SECOND_WORKSPACE.id} />
+        <AssistantConversationProvider workspaceId={SECOND_WORKSPACE.id}>
+          <WorkspaceDetail workspaceId={SECOND_WORKSPACE.id} />
+        </AssistantConversationProvider>
       </WorkspaceProvider>,
     );
 

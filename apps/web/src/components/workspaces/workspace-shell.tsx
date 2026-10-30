@@ -21,6 +21,10 @@ import type { AuthenticatedUser, WorkspaceSummary } from "@/lib/api-types";
 import { rememberLastWorkspace } from "@/lib/last-workspace";
 import { routes } from "@/lib/routes";
 
+import {
+  AssistantConversationProvider,
+  useAssistantConversations,
+} from "./assistant-conversation-context";
 import { WorkspaceProvider } from "./workspace-context";
 
 export type SidebarAppearance = {
@@ -66,13 +70,118 @@ function sidebarStyles(
   };
 }
 
+function WorkspaceShellFrame({
+  workspaceId,
+  workspace,
+  workspaces,
+  user,
+  error,
+  reviewCount,
+  sidebarAppearance,
+  children,
+}: {
+  workspaceId: string;
+  workspace: WorkspaceSummary | null;
+  workspaces: WorkspaceSummary[];
+  user: AuthenticatedUser | null;
+  error: string | null;
+  reviewCount?: number;
+  sidebarAppearance?: SidebarAppearance;
+  children: ReactNode;
+}) {
+  const activePath = usePathname();
+  const {
+    conversations,
+    activeConversationId,
+    selectConversation,
+  } = useAssistantConversations();
+
+  const primaryLinks: SidebarLink[] = [
+    {
+      label: "Home",
+      href: routes.workspace.home(workspaceId),
+      icon: HomeIcon,
+      exact: true,
+    },
+    {
+      label: "Graph",
+      href: routes.workspace.graph(workspaceId),
+      icon: GraphIcon,
+    },
+    {
+      label: "Review queue",
+      href: routes.workspace.review(workspaceId),
+      icon: ReviewIcon,
+      badge: reviewCount,
+    },
+    {
+      label: "Sources",
+      href: routes.workspace.sources(workspaceId),
+      icon: SourcesIcon,
+    },
+  ];
+
+  const secondaryLinks: SidebarLink[] = [
+    {
+      label: "Workspace settings",
+      href: routes.workspace.manage(workspaceId),
+      icon: ManageIcon,
+    },
+  ];
+
+  return (
+    <div
+      data-workspace-id={workspaceId}
+      style={sidebarStyles(sidebarAppearance)}
+      className="grid min-h-screen min-w-[64rem] grid-cols-[var(--cortex-sidebar-width)_minmax(0,1fr)]"
+    >
+      <AppSidebar
+        productLabel="Cortex"
+        workspace={{
+          id: workspaceId,
+          label: workspace?.name ?? "Workspace",
+          options: workspaces.map((option) => ({
+            id: option.id,
+            label: option.name,
+            detail: option.role,
+            href: routes.workspace.home(option.id),
+          })),
+          createHref: routes.newWorkspaceFrom(workspaceId),
+        }}
+        account={{
+          label: user?.display_name ?? user?.email ?? "Your account",
+          detail: user?.display_name ? user.email : "Personal settings",
+          href: routes.workspace.account(workspaceId),
+        }}
+        activePath={activePath}
+        primaryLinks={primaryLinks}
+        secondaryLinks={secondaryLinks}
+        recentConversations={conversations.map((conversation) => ({
+          id: conversation.id,
+          label: conversation.title,
+          isActive: conversation.id === activeConversationId,
+          onSelect: () => selectConversation(conversation.id),
+        }))}
+      />
+      <div className="min-w-0">
+        {error ? (
+          <main className="min-h-screen px-[var(--cortex-page-gutter)] py-8">
+            <FeedbackAlert message={error} />
+          </main>
+        ) : (
+          children
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function WorkspaceShell({
   workspaceId,
   children,
   reviewCount,
   sidebarAppearance,
 }: WorkspaceShellProps) {
-  const activePath = usePathname();
   const router = useRouter();
   const [workspace, setWorkspace] = useState<WorkspaceSummary | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
@@ -134,78 +243,21 @@ export function WorkspaceShell({
     [error, isLoading, user, workspace, workspaceId],
   );
 
-  const primaryLinks: SidebarLink[] = [
-    {
-      label: "Home",
-      href: routes.workspace.home(workspaceId),
-      icon: HomeIcon,
-      exact: true,
-    },
-    {
-      label: "Graph",
-      href: routes.workspace.graph(workspaceId),
-      icon: GraphIcon,
-    },
-    {
-      label: "Review queue",
-      href: routes.workspace.review(workspaceId),
-      icon: ReviewIcon,
-      badge: reviewCount,
-    },
-    {
-      label: "Sources",
-      href: routes.workspace.sources(workspaceId),
-      icon: SourcesIcon,
-    },
-  ];
-
-  const secondaryLinks: SidebarLink[] = [
-    {
-      label: "Workspace settings",
-      href: routes.workspace.manage(workspaceId),
-      icon: ManageIcon,
-    },
-  ];
-
   return (
     <WorkspaceProvider value={workspaceContext}>
-      <div
-        data-workspace-id={workspaceId}
-        style={sidebarStyles(sidebarAppearance)}
-        className="grid min-h-screen min-w-[64rem] grid-cols-[var(--cortex-sidebar-width)_minmax(0,1fr)]"
-      >
-        <AppSidebar
-          productLabel="Cortex"
-          workspace={{
-            id: workspaceId,
-            label: workspace?.name ?? "Workspace",
-            options: workspaces.map((option) => ({
-              id: option.id,
-              label: option.name,
-              detail: option.role,
-              href: routes.workspace.home(option.id),
-            })),
-            createHref: routes.newWorkspaceFrom(workspaceId),
-          }}
-          account={{
-            label: user?.display_name ?? user?.email ?? "Your account",
-            detail: user?.display_name ? user.email : "Personal settings",
-            href: routes.workspace.account(workspaceId),
-          }}
-          activePath={activePath}
-          primaryLinks={primaryLinks}
-          secondaryLinks={secondaryLinks}
-        />
-        <div className="min-w-0">
-          {error ? (
-            <main className="min-h-screen px-[var(--cortex-page-gutter)] py-8">
-              <FeedbackAlert message={error} />
-            </main>
-          ) : (
-            children
-          )}
-        </div>
-      </div>
+      <AssistantConversationProvider workspaceId={workspaceId}>
+        <WorkspaceShellFrame
+          workspaceId={workspaceId}
+          workspace={workspace}
+          workspaces={workspaces}
+          user={user}
+          error={error}
+          reviewCount={reviewCount}
+          sidebarAppearance={sidebarAppearance}
+        >
+          {children}
+        </WorkspaceShellFrame>
+      </AssistantConversationProvider>
     </WorkspaceProvider>
   );
 }

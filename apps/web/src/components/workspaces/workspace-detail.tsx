@@ -12,6 +12,10 @@ import {
 import { CortexMark } from "@/components/brand/cortex-mark";
 import { routes } from "@/lib/routes";
 
+import {
+  type AssistantTurn,
+  useAssistantConversations,
+} from "./assistant-conversation-context";
 import { useWorkspace } from "./workspace-context";
 
 const promptSuggestions = [
@@ -28,19 +32,6 @@ const followUpSuggestions = [
 
 const placeholderResponse =
   "This placeholder demonstrates how Cortex will present a concise, evidence-backed answer. Once the assistant service is connected, each claim will be grounded in the project graph and its indexed sources.";
-
-type ChatReference = {
-  label: string;
-  description: string;
-  href: string;
-};
-
-type ConversationTurn = {
-  id: number;
-  question: string;
-  answer: string;
-  references: ChatReference[];
-};
 
 const headingVariants = [
   ["What should we explore in", "?"],
@@ -184,23 +175,26 @@ function CheckIcon() {
 
 export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const { user, workspace } = useWorkspace();
+  const {
+    activeConversation,
+    addTurn,
+    startNewConversation: beginNewConversation,
+  } = useAssistantConversations();
   const promptInput = useRef<HTMLTextAreaElement>(null);
   const conversationHistory = useRef<HTMLDivElement>(null);
-  const nextTurnId = useRef(0);
   const previousWorkspaceId = useRef(workspaceId);
+  const previousConversationId = useRef<string | null>(null);
   const [headingVariantIndex, setHeadingVariantIndex] = useState(0);
   const [prompt, setPrompt] = useState("");
-  const [turns, setTurns] = useState<ConversationTurn[]>([]);
-  const [copiedTurnId, setCopiedTurnId] = useState<number | null>(null);
+  const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
+  const turns = activeConversation?.turns ?? [];
 
   useEffect(() => {
     const workspaceChanged = previousWorkspaceId.current !== workspaceId;
     previousWorkspaceId.current = workspaceId;
 
     if (workspaceChanged) {
-      nextTurnId.current = 0;
       setPrompt("");
-      setTurns([]);
       setCopiedTurnId(null);
     }
 
@@ -219,13 +213,14 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
     if (history) {
       history.scrollTop = history.scrollHeight;
     }
-  }, [turns]);
+  }, [activeConversation?.turns]);
 
   useEffect(() => {
-    if (turns.length === 0 && nextTurnId.current > 0) {
+    if (previousConversationId.current && !activeConversation) {
       promptInput.current?.focus();
     }
-  }, [turns.length]);
+    previousConversationId.current = activeConversation?.id ?? null;
+  }, [activeConversation]);
 
   function selectSuggestion(suggestion: string) {
     setPrompt(suggestion);
@@ -233,12 +228,12 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   }
 
   function startNewConversation() {
-    setTurns([]);
+    beginNewConversation();
     setPrompt("");
     setCopiedTurnId(null);
   }
 
-  async function copyAnswer(turn: ConversationTurn) {
+  async function copyAnswer(turn: AssistantTurn) {
     try {
       await navigator.clipboard.writeText(turn.answer);
       setCopiedTurnId(turn.id);
@@ -252,26 +247,22 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
     const question = prompt.trim();
     if (!question) return;
 
-    setTurns((currentTurns) => [
-      ...currentTurns,
-      {
-        id: nextTurnId.current++,
-        question,
-        answer: placeholderResponse,
-        references: [
-          {
-            label: "Graph explorer",
-            description: "Inspect entities and relationships",
-            href: routes.workspace.graph(workspaceId),
-          },
-          {
-            label: "Project sources",
-            description: "Review the indexed source material",
-            href: routes.workspace.sources(workspaceId),
-          },
-        ],
-      },
-    ]);
+    addTurn({
+      question,
+      answer: placeholderResponse,
+      references: [
+        {
+          label: "Graph explorer",
+          description: "Inspect entities and relationships",
+          href: routes.workspace.graph(workspaceId),
+        },
+        {
+          label: "Project sources",
+          description: "Review the indexed source material",
+          href: routes.workspace.sources(workspaceId),
+        },
+      ],
+    });
     setPrompt("");
     promptInput.current?.focus();
   }
@@ -290,7 +281,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const [headingPrefix, headingSuffix] = headingVariants[headingVariantIndex];
   const hasMessages = turns.length > 0;
   const userLabel = user?.display_name?.trim() || user?.email || "You";
-  const conversationTitle = turns[0]?.question ?? "Graph-Aware Assistant";
+  const conversationTitle = activeConversation?.title ?? "Graph-Aware Assistant";
 
   return (
     <main className="flex h-screen flex-col overflow-hidden">
