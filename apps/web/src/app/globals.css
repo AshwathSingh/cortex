@@ -20,20 +20,20 @@
   --cortex-content-width: 87.5rem;
 
   /* Logged-in shell defaults. WorkspaceShell can override these per instance. */
-  --cortex-sidebar-width: 15.5rem;
-  --cortex-sidebar-background: rgb(9 14 23 / 58%);
-  --cortex-sidebar-border: rgb(98 136 202 / 18%);
+  --cortex-sidebar-width: 15rem;
+  --cortex-sidebar-background: rgb(8 13 21 / 84%);
+  --cortex-sidebar-border: rgb(98 136 202 / 14%);
   --cortex-sidebar-active: linear-gradient(
     90deg,
-    rgb(59 103 220 / 19%),
-    rgb(59 103 220 / 7%)
+    rgb(59 103 220 / 14%),
+    rgb(59 103 220 / 5%)
   );
-  --cortex-sidebar-active-border: rgb(120 160 255 / 15%);
-  --cortex-sidebar-hover: rgb(85 112 154 / 9%);
+  --cortex-sidebar-active-border: rgb(120 160 255 / 11%);
+  --cortex-sidebar-hover: rgb(85 112 154 / 8%);
   --cortex-sidebar-accent: #6e97ff;
-  --cortex-sidebar-text: #a4adbd;
-  --cortex-sidebar-icon: #78849a;
-  --cortex-sidebar-item-radius: 0.625rem;
+  --cortex-sidebar-text: #abb4c4;
+  --cortex-sidebar-icon: #7f8ba1;
+  --cortex-sidebar-item-radius: 0.5rem;
   --cortex-sidebar-logo-background: rgb(18 29 46 / 68%);
 
   /* Red and green are reserved for source sync status. */

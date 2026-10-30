@@ -69,7 +69,9 @@ describe("AppSidebar", () => {
     expect(
       screen.getByRole("heading", { name: "Recent conversations" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/recent questions will appear here/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/conversations you start here/i),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Workspace settings" }),
     ).toHaveAttribute("href", "/workspaces/demo/manage");
@@ -112,10 +114,12 @@ describe("AppSidebar", () => {
   it("selects a recent conversation", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
+    const onNewConversation = vi.fn();
     render(
       <AppSidebar
         {...baseProps}
         activePath="/workspaces/demo"
+        onNewConversation={onNewConversation}
         recentConversations={[
           {
             id: "conversation-1",
@@ -133,5 +137,10 @@ describe("AppSidebar", () => {
     expect(conversation).toHaveAttribute("aria-current", "page");
     await user.click(conversation);
     expect(onSelect).toHaveBeenCalledOnce();
+
+    await user.click(
+      screen.getByRole("button", { name: "Start new conversation" }),
+    );
+    expect(onNewConversation).toHaveBeenCalledOnce();
   });
 });

@@ -94,6 +94,7 @@ function WorkspaceShellFrame({
     conversations,
     activeConversationId,
     selectConversation,
+    startNewConversation,
   } = useAssistantConversations();
 
   const primaryLinks: SidebarLink[] = [
@@ -162,6 +163,7 @@ function WorkspaceShellFrame({
           isActive: conversation.id === activeConversationId,
           onSelect: () => selectConversation(conversation.id),
         }))}
+        onNewConversation={startNewConversation}
       />
       <div className="min-w-0">
         {error ? (

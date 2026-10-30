@@ -4,7 +4,11 @@ import Link from "next/link";
 
 import { CortexMark } from "@/components/brand/cortex-mark";
 
-import { ChevronLeftIcon } from "./sidebar-icons";
+import {
+  ChevronLeftIcon,
+  ConversationIcon,
+  PlusIcon,
+} from "./sidebar-icons";
 
 export type SidebarIcon = ComponentType<{ className?: string }>;
 
@@ -42,6 +46,7 @@ type AppSidebarProps = {
   secondaryLinks?: SidebarLink[];
   utilityLinks?: SidebarLink[];
   recentConversations?: SidebarConversation[];
+  onNewConversation?: () => void;
 };
 
 function WorkspaceSwitcher({
@@ -77,7 +82,7 @@ function WorkspaceSwitcher({
   }, [isOpen]);
 
   return (
-    <div ref={containerRef} className="relative -mx-1">
+    <div ref={containerRef} className="relative">
       <button
         ref={triggerRef}
         type="button"
@@ -85,14 +90,14 @@ function WorkspaceSwitcher({
         aria-controls="workspace-switcher-menu"
         aria-label={`Switch workspace. Current workspace: ${workspace.label}`}
         onClick={() => setIsOpen((open) => !open)}
-        className="group/context flex min-h-14 w-full items-center gap-3 rounded-lg px-2.5 text-left transition-colors duration-150 hover:bg-[var(--cortex-sidebar-hover)] active:bg-[var(--cortex-sidebar-hover)]"
+        className="group/context flex min-h-13 w-full items-center gap-2.5 rounded-[var(--cortex-sidebar-item-radius)] px-2 text-left transition-colors duration-150 hover:bg-[var(--cortex-sidebar-hover)] active:bg-[var(--cortex-sidebar-hover)]"
       >
-        <CortexMark className="size-9 shrink-0 transition-transform duration-200 group-hover/context:scale-[1.025]" />
+        <CortexMark className="size-8 shrink-0 transition-transform duration-200 group-hover/context:scale-[1.025]" />
         <span className="min-w-0 flex-1">
-          <span className="block font-mono text-[0.5625rem] font-semibold uppercase tracking-[0.12em] text-subtle">
+          <span className="block text-[0.625rem] font-semibold uppercase tracking-[0.11em] text-subtle">
             {productLabel}
           </span>
-          <span className="mt-0.5 block truncate text-sm font-medium tracking-[-0.01em] text-foreground">
+          <span className="mt-0.5 block truncate text-[0.8125rem] font-semibold tracking-[-0.01em] text-foreground">
             {workspace.label}
           </span>
         </span>
@@ -112,8 +117,8 @@ function WorkspaceSwitcher({
           className="absolute left-[calc(100%+0.75rem)] top-0 z-50 w-72 overflow-hidden rounded-xl border border-border/40 bg-surface-raised shadow-[0_22px_70px_rgb(0_0_0/42%)]"
         >
           <div className="border-b border-border/25 px-4 py-3">
-            <p className="text-xs font-semibold text-foreground">Switch workspace</p>
-            <p className="mt-0.5 text-[0.6875rem] text-subtle">
+            <p className="text-[0.8125rem] font-semibold text-foreground">Switch workspace</p>
+            <p className="mt-0.5 text-xs text-subtle">
               Choose a project context.
             </p>
           </div>
@@ -136,15 +141,15 @@ function WorkspaceSwitcher({
                       }`}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium text-foreground">
+                      <span className="block truncate text-[0.8125rem] font-medium text-foreground">
                         {option.label}
                       </span>
-                      <span className="mt-0.5 block text-[0.6875rem] capitalize text-subtle">
+                      <span className="mt-0.5 block text-xs capitalize text-subtle">
                         {option.detail.toLowerCase()}
                       </span>
                     </span>
                     {isCurrent ? (
-                      <span className="text-xs font-semibold text-accent-bright">
+                      <span className="text-[0.6875rem] font-semibold text-accent-bright">
                         Current
                       </span>
                     ) : null}
@@ -209,13 +214,13 @@ function SidebarNavigation({
             key={link.href}
             href={link.href}
             aria-current={isActive ? "page" : undefined}
-            className="group relative flex min-h-10 items-center gap-3 rounded-[var(--cortex-sidebar-item-radius)] px-3 text-sm font-medium text-[var(--cortex-sidebar-text)] transition-[background,color,box-shadow] duration-150 ease-out hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground active:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:bg-[image:var(--cortex-sidebar-active)] aria-[current=page]:text-foreground aria-[current=page]:shadow-[inset_0_0_0_1px_var(--cortex-sidebar-active-border)]"
+            className="group relative flex min-h-10 items-center gap-2.5 rounded-[var(--cortex-sidebar-item-radius)] px-2.5 text-[0.8125rem] font-medium text-[var(--cortex-sidebar-text)] transition-[background,color] duration-150 ease-out hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground active:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:bg-[image:var(--cortex-sidebar-active)] aria-[current=page]:text-foreground"
           >
             <span
               aria-hidden="true"
-              className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-transparent group-aria-[current=page]:bg-[var(--cortex-sidebar-accent)]"
+              className="absolute inset-y-2.5 left-0 w-0.5 rounded-full bg-transparent group-aria-[current=page]:bg-[var(--cortex-sidebar-accent)]"
             />
-            <Icon className="size-[1.125rem] shrink-0 text-[var(--cortex-sidebar-icon)] transition-colors duration-150 group-hover:text-foreground group-aria-[current=page]:text-[var(--cortex-sidebar-accent)]" />
+            <Icon className="size-4 shrink-0 text-[var(--cortex-sidebar-icon)] transition-colors duration-150 group-hover:text-foreground group-aria-[current=page]:text-[var(--cortex-sidebar-accent)]" />
             <span className="truncate">{link.label}</span>
             {typeof link.badge === "number" && link.badge > 0 ? (
               <span
@@ -241,13 +246,14 @@ export function AppSidebar({
   secondaryLinks = [],
   utilityLinks = [],
   recentConversations = [],
+  onNewConversation,
 }: AppSidebarProps) {
   return (
-    <aside className="sticky top-0 z-20 h-screen border-r border-[var(--cortex-sidebar-border)] bg-[var(--cortex-sidebar-background)] backdrop-blur-xl">
-      <div className="flex h-full flex-col px-4 py-5">
+    <aside className="sticky top-0 z-20 h-screen border-r border-[var(--cortex-sidebar-border)] bg-[var(--cortex-sidebar-background)] backdrop-blur-md">
+      <div className="flex h-full flex-col px-3.5 py-4">
         <WorkspaceSwitcher productLabel={productLabel} workspace={workspace} />
 
-        <div className="mt-6 flex-1 overflow-y-auto">
+        <div className="mt-4 flex-1 overflow-y-auto">
           <SidebarNavigation
             label="Workspace navigation"
             links={primaryLinks}
@@ -256,17 +262,30 @@ export function AppSidebar({
 
           <section
             aria-labelledby="recent-conversations-heading"
-            className="mt-8 border-t border-[var(--cortex-sidebar-border)] pt-5"
+            className="mt-6 border-t border-[var(--cortex-sidebar-border)] pt-4"
           >
-            <h2
-              id="recent-conversations-heading"
-              className="px-3 font-mono text-[0.5625rem] font-semibold uppercase tracking-[0.13em] text-subtle"
-            >
-              Recent conversations
-            </h2>
+            <div className="flex min-h-7 items-center justify-between gap-2 px-2.5">
+              <h2
+                id="recent-conversations-heading"
+                className="text-[0.6875rem] font-semibold tracking-[0.035em] text-subtle"
+              >
+                Recent conversations
+              </h2>
+              {onNewConversation ? (
+                <button
+                  type="button"
+                  onClick={onNewConversation}
+                  aria-label="Start new conversation"
+                  title="New conversation"
+                  className="grid size-7 shrink-0 place-items-center rounded-md text-subtle transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground"
+                >
+                  <PlusIcon className="size-3.5" />
+                </button>
+              ) : null}
+            </div>
 
             {recentConversations.length > 0 ? (
-              <nav aria-label="Recent conversations" className="mt-2 space-y-0.5">
+              <nav aria-label="Recent conversations" className="mt-1.5 space-y-0.5">
                 {recentConversations.slice(0, 5).map((conversation) => {
                   return (
                     <button
@@ -274,22 +293,23 @@ export function AppSidebar({
                       type="button"
                       onClick={conversation.onSelect}
                       aria-current={conversation.isActive ? "page" : undefined}
-                      className="block min-h-9 w-full truncate rounded-[var(--cortex-sidebar-item-radius)] px-3 py-2 text-left text-xs leading-5 text-[var(--cortex-sidebar-text)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground aria-[current=page]:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:text-foreground"
+                      className="group/conversation grid min-h-9 w-full grid-cols-[1rem_minmax(0,1fr)] items-center gap-2.5 rounded-[var(--cortex-sidebar-item-radius)] px-2.5 py-2 text-left text-[0.8125rem] leading-5 text-[var(--cortex-sidebar-text)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground aria-[current=page]:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:font-medium aria-[current=page]:text-foreground"
                     >
-                      {conversation.label}
+                      <ConversationIcon className="size-4 text-[var(--cortex-sidebar-icon)] transition-colors group-hover/conversation:text-foreground group-aria-[current=page]/conversation:text-[var(--cortex-sidebar-accent)]" />
+                      <span className="truncate">{conversation.label}</span>
                     </button>
                   );
                 })}
               </nav>
             ) : (
-              <p className="px-3 pt-3 text-[0.6875rem] leading-5 text-subtle">
-                Your recent questions will appear here.
+              <p className="px-2.5 pt-2 text-xs leading-5 text-subtle">
+                Conversations you start here will stay available while this session is open.
               </p>
             )}
           </section>
         </div>
 
-        <div className="border-t border-[var(--cortex-sidebar-border)] pt-3">
+        <div className="border-t border-[var(--cortex-sidebar-border)] pt-2.5">
           {secondaryLinks.length > 0 ? (
             <SidebarNavigation
               label="Workspace settings"
@@ -311,16 +331,16 @@ export function AppSidebar({
           <Link
             href={account.href}
             aria-label={`Account: ${account.label}`}
-            className="group/account mt-2 flex min-h-12 items-center gap-3 rounded-[var(--cortex-sidebar-item-radius)] px-2.5 transition-colors duration-150 hover:bg-[var(--cortex-sidebar-hover)] active:bg-[var(--cortex-sidebar-hover)]"
+            className="group/account mt-1 flex min-h-12 items-center gap-2.5 rounded-[var(--cortex-sidebar-item-radius)] px-2 transition-colors duration-150 hover:bg-[var(--cortex-sidebar-hover)] active:bg-[var(--cortex-sidebar-hover)]"
           >
             <span className="grid size-8 shrink-0 place-items-center rounded-full border border-[var(--cortex-sidebar-border)] bg-surface/70 font-mono text-xs font-semibold text-foreground">
               {accountInitials(account.label)}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-foreground">
+              <span className="block truncate text-[0.8125rem] font-semibold text-foreground">
                 {account.label}
               </span>
-              <span className="mt-0.5 block truncate text-[0.6875rem] text-subtle">
+              <span className="mt-0.5 block truncate text-xs text-subtle">
                 {account.detail}
               </span>
             </span>

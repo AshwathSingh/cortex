@@ -99,6 +99,23 @@ export function WorkspaceIcon({ className }: { className?: string }) {
   );
 }
 
+export function ConversationIcon({ className }: { className?: string }) {
+  return (
+    <IconFrame className={className}>
+      <path d="M5 5.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-8l-5 3v-3H5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" />
+      <path d="M7.5 10h9M7.5 13.5h6" />
+    </IconFrame>
+  );
+}
+
+export function PlusIcon({ className }: { className?: string }) {
+  return (
+    <IconFrame className={className}>
+      <path d="M12 5v14M5 12h14" />
+    </IconFrame>
+  );
+}
+
 export function ChevronLeftIcon({ className }: { className?: string }) {
   return (
     <IconFrame className={className}>
