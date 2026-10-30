@@ -14,11 +14,11 @@ same guards:
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import Session
 
-from app.models import Role, WorkspaceMembership, WorkspaceRole
+from app.models import Role, WorkspaceInvite, WorkspaceMembership, WorkspaceRole
 from app.permissions import (
     GRANTABLE,
     SYSTEM_ROLE_PERMISSIONS,
@@ -189,6 +189,12 @@ def delete_role(session: Session, *, role: WorkspaceRole) -> None:
         raise Conflict(
             f"{assigned} member(s) still have this role; reassign them before deleting it"
         )
+    # Invites naming this role would block the delete (composite FK). Pending ones
+    # could never be accepted into a role that no longer exists, and the rest are
+    # history about it, so they go with it.
+    session.execute(
+        delete(WorkspaceInvite).where(WorkspaceInvite.custom_role_id == role.id)
+    )
     session.delete(role)
     session.flush()
 
