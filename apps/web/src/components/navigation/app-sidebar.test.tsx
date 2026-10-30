@@ -67,10 +67,10 @@ describe("AppSidebar", () => {
       }),
     ).not.toHaveAttribute("title");
     expect(
-      screen.getByRole("heading", { name: "Recent conversations" }),
+      screen.getByRole("heading", { name: "Recents" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/conversations you start here/i),
+      screen.getByText(/conversations will appear here/i),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Workspace settings" }),

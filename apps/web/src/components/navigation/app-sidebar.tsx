@@ -6,8 +6,7 @@ import { CortexMark } from "@/components/brand/cortex-mark";
 
 import {
   ChevronLeftIcon,
-  ConversationIcon,
-  PlusIcon,
+  ComposeIcon,
 } from "./sidebar-icons";
 
 export type SidebarIcon = ComponentType<{ className?: string }>;
@@ -260,32 +259,31 @@ export function AppSidebar({
             activePath={activePath}
           />
 
+          {onNewConversation ? (
+            <button
+              type="button"
+              onClick={onNewConversation}
+              aria-label="Start new conversation"
+              className="group/new-conversation mt-3 flex min-h-9 w-full items-center gap-2.5 rounded-[var(--cortex-sidebar-item-radius)] px-2.5 text-left text-[0.8125rem] font-medium text-[var(--cortex-sidebar-text)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground"
+            >
+              <ComposeIcon className="size-4 shrink-0 text-[var(--cortex-sidebar-icon)] transition-colors group-hover/new-conversation:text-[var(--cortex-sidebar-accent)]" />
+              <span>New conversation</span>
+            </button>
+          ) : null}
+
           <section
             aria-labelledby="recent-conversations-heading"
-            className="mt-6 border-t border-[var(--cortex-sidebar-border)] pt-4"
+            className="mt-4 border-t border-[var(--cortex-sidebar-border)] pt-4"
           >
-            <div className="flex min-h-7 items-center justify-between gap-2 px-2.5">
-              <h2
-                id="recent-conversations-heading"
-                className="text-[0.6875rem] font-semibold tracking-[0.035em] text-subtle"
-              >
-                Recent conversations
-              </h2>
-              {onNewConversation ? (
-                <button
-                  type="button"
-                  onClick={onNewConversation}
-                  aria-label="Start new conversation"
-                  title="New conversation"
-                  className="grid size-7 shrink-0 place-items-center rounded-md text-subtle transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground"
-                >
-                  <PlusIcon className="size-3.5" />
-                </button>
-              ) : null}
-            </div>
+            <h2
+              id="recent-conversations-heading"
+              className="px-2.5 text-[0.6875rem] font-semibold tracking-[0.035em] text-subtle"
+            >
+              Recents
+            </h2>
 
             {recentConversations.length > 0 ? (
-              <nav aria-label="Recent conversations" className="mt-1.5 space-y-0.5">
+              <nav aria-label="Recent conversations" className="mt-2 space-y-0.5">
                 {recentConversations.slice(0, 5).map((conversation) => {
                   return (
                     <button
@@ -293,17 +291,16 @@ export function AppSidebar({
                       type="button"
                       onClick={conversation.onSelect}
                       aria-current={conversation.isActive ? "page" : undefined}
-                      className="group/conversation grid min-h-9 w-full grid-cols-[1rem_minmax(0,1fr)] items-center gap-2.5 rounded-[var(--cortex-sidebar-item-radius)] px-2.5 py-2 text-left text-[0.8125rem] leading-5 text-[var(--cortex-sidebar-text)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground aria-[current=page]:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:font-medium aria-[current=page]:text-foreground"
+                      className="min-h-8 w-full truncate rounded-[var(--cortex-sidebar-item-radius)] px-2.5 py-1.5 text-left text-[0.8125rem] leading-5 text-[var(--cortex-sidebar-text)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground aria-[current=page]:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:font-medium aria-[current=page]:text-foreground"
                     >
-                      <ConversationIcon className="size-4 text-[var(--cortex-sidebar-icon)] transition-colors group-hover/conversation:text-foreground group-aria-[current=page]/conversation:text-[var(--cortex-sidebar-accent)]" />
-                      <span className="truncate">{conversation.label}</span>
+                      {conversation.label}
                     </button>
                   );
                 })}
               </nav>
             ) : (
-              <p className="px-2.5 pt-2 text-xs leading-5 text-subtle">
-                Conversations you start here will stay available while this session is open.
+              <p className="px-2.5 pt-2 text-xs leading-[1.45] text-subtle">
+                Your conversations will appear here for this session.
               </p>
             )}
           </section>
