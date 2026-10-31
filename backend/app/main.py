@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import auth, graph, health, ingest, roles, workspaces
+from app.api import auth, graph, health, ingest, roles, sources, workspaces
 from app.db.neo4j_driver import close_driver
 from app.db.postgres import dispose_engine
 from app.security import validate_encryption_keys
@@ -24,8 +24,10 @@ app.include_router(workspaces.router)
 app.include_router(roles.catalogue_router)
 app.include_router(roles.router)
 # After workspaces.router: both own /api/workspaces, and the more specific
-# /{workspace_id}/graph must not be shadowed by /{workspace_id}.
+# /{workspace_id}/graph and /{workspace_id}/connections must not be shadowed by
+# /{workspace_id}.
 app.include_router(graph.router)
+app.include_router(sources.router)
 
 
 @app.get("/health")
