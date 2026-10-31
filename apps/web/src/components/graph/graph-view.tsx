@@ -41,6 +41,20 @@ const NODE_TYPES: {
     colour: "var(--cortex-graph-issue)",
     shapeClass: "rotate-45 rounded-[1px]",
   },
+  {
+    type: "Channel",
+    label: "Channel",
+    colour: "var(--cortex-graph-channel)",
+    // The canvas draws a hexagon; a CSS hexagon this small reads as a blob, so
+    // the swatch approximates it with a squat rounded box.
+    shapeClass: "rounded-[3px]",
+  },
+  {
+    type: "Message",
+    label: "Message",
+    colour: "var(--cortex-graph-message)",
+    shapeClass: "[clip-path:polygon(50%_0%,100%_100%,0%_100%)]",
+  },
 ];
 
 type State =

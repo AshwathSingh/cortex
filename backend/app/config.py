@@ -37,6 +37,32 @@ class Settings(BaseSettings):
     # Per client IP, per endpoint, on the public /api/auth/github/* routes.
     oauth_rate_limit_per_minute: int = 20
 
+    # Slack app (US-08, T-8.2). A workspace member with sources.write installs
+    # Cortex into their Slack team; the exchange returns a bot token scoped to
+    # that team, which is stored encrypted per workspace. The registered
+    # redirect URL must equal slack_oauth_redirect_uri exactly.
+    slack_client_id: str | None = None
+    slack_client_secret: SecretStr | None = None
+    slack_oauth_redirect_uri: str = "http://localhost:3000/sources/slack/callback"
+    # Bot scopes. The history pair is what lets Cortex read messages at all; the
+    # read pair lists the channels to choose from; users:read resolves authors to
+    # names instead of raw Uxxxx ids.
+    slack_oauth_scope: str = (
+        "channels:read,channels:history,groups:read,groups:history,users:read"
+    )
+
+    # Discord app (US-08, T-8.3). Unlike Slack and GitHub this is not a user
+    # token flow: Discord's HTTP API will not return channel history for a user
+    # token, so reads use the application's own bot token and the install flow
+    # exists only to add that bot to a guild and learn which guild it is.
+    discord_client_id: str | None = None
+    discord_client_secret: SecretStr | None = None
+    discord_oauth_redirect_uri: str = "http://localhost:3000/sources/discord/callback"
+    discord_bot_token: SecretStr | None = None
+    # View Channels (1024) + Read Message History (65536). Requested in the
+    # invite URL so an owner can see exactly what the bot may do before adding it.
+    discord_bot_permissions: str = "66560"
+
     # Postgres holds users, workspaces and membership (US-41). The graph DB holds
     # nodes/edges/evidence; who may see a workspace is a relational question.
     database_url: str = "postgresql+psycopg://cortex:cortex@localhost:5432/cortex"
@@ -48,6 +74,9 @@ class Settings(BaseSettings):
         "github_client_secret",
         "token_encryption_key",
         "token_encryption_previous_keys",
+        "slack_client_secret",
+        "discord_client_secret",
+        "discord_bot_token",
         mode="before",
     )
     @classmethod
@@ -81,6 +110,25 @@ class Settings(BaseSettings):
             self.github_client_id
             and self.github_client_secret
             and self.token_encryption_key
+        )
+
+    @property
+    def slack_configured(self) -> bool:
+        # token_encryption_key included because the exchange returns a bot token
+        # there would be nowhere safe to put: the column encrypts on write.
+        return bool(
+            self.slack_client_id
+            and self.slack_client_secret
+            and self.token_encryption_key
+        )
+
+    @property
+    def discord_configured(self) -> bool:
+        # No encryption key needed: the bot token lives in config, not in a row.
+        return bool(
+            self.discord_client_id
+            and self.discord_client_secret
+            and self.discord_bot_token
         )
 
 

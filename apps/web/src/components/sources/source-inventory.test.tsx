@@ -21,6 +21,9 @@ function source(over: Partial<WorkspaceSource> = {}): WorkspaceSource {
     pull_requests: 8,
     issues: 3,
     total_items: 11,
+    channels: 0,
+    messages: 0,
+    display_name: null,
     last_attempted_at: minutesAgo(5),
     last_synced_at: minutesAgo(5),
     last_error: null,
@@ -40,6 +43,8 @@ function renderInventory(role: WorkspaceRole = "OWNER") {
           name: "Cortex",
           description: null,
           role,
+          // The UI reads permissions, not the role name (US-21 custom roles).
+          permissions: role === "VIEWER" ? [] : ["sources.write"],
           created_at: "2026-09-24T00:00:00Z",
         },
         user: null,
@@ -83,9 +88,10 @@ function jsonResponse(body: unknown, status = 200) {
 const INGESTED = { repo: "openai/cortex", pull_requests: 8, issues: 3 };
 
 /**
- * Routes the two endpoints the page uses: successive GETs of the source list
- * walk `pages` (the last one repeats, so polling settles), and the re-sync POST
- * goes to `onIngest`.
+ * Routes the endpoints the page uses: successive GETs of the source list walk
+ * `pages` (the last one repeats, so polling settles), the re-sync POST goes to
+ * `onIngest`, and the chat-connections read answers empty -- `ChatConnections`
+ * has its own tests.
  */
 function mockApi(
   pages: WorkspaceSource[][],
@@ -94,6 +100,9 @@ function mockApi(
   let reads = 0;
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === "POST") return onIngest();
+    if (String(input).endsWith("/connections")) {
+      return Promise.resolve(jsonResponse([]));
+    }
     const page = pages[Math.min(reads, pages.length - 1)];
     reads += 1;
     return Promise.resolve(jsonResponse(page));
@@ -219,16 +228,72 @@ describe("SourceInventory", () => {
   });
 
   it("shows access errors and can retry", async () => {
-    const fetchFn = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Workspace access denied" }), { status: 403, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    // Routed by URL, not by call order: the page also reads /connections, and
+    // a once-per-call mock would hand it the retry's response.
+    let sourceReads = 0;
+    const fetchFn = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).endsWith("/connections")) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      sourceReads += 1;
+      return Promise.resolve(
+        sourceReads === 1
+          ? jsonResponse({ detail: "Workspace access denied" }, 403)
+          : jsonResponse([]),
+      );
+    });
     vi.stubGlobal("fetch", fetchFn);
     const user = userEvent.setup();
     renderInventory();
     expect(await screen.findByRole("alert")).toHaveTextContent(/access denied/i);
     await user.click(screen.getByRole("button", { name: /try again/i }));
     expect(await screen.findByText(/connect your first source/i)).toBeInTheDocument();
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(sourceReads).toBe(2);
+  });
+
+  it("renders a Slack source by its team name with chat counts", async () => {
+    mockApi([
+      [
+        source({
+          kind: "slack",
+          repo: "T0ACME",
+          display_name: "Acme",
+          pull_requests: 0,
+          issues: 0,
+          channels: 2,
+          messages: 30,
+          total_items: 32,
+        }),
+      ],
+    ]);
+    renderInventory();
+
+    // The team id is the data_sources key, not something a reader recognises.
+    expect(await screen.findByText("Acme")).toBeInTheDocument();
+    expect(screen.queryByText("T0ACME")).not.toBeInTheDocument();
+    expect(screen.getByText("Channels")).toBeInTheDocument();
+    expect(screen.getByText("Messages")).toBeInTheDocument();
+    expect(screen.queryByText("Pull requests")).not.toBeInTheDocument();
+    // Slack has no addressable team URL, so the title is not a link.
+    expect(screen.queryByRole("link", { name: /Acme/ })).not.toBeInTheDocument();
+  });
+
+  it("offers Re-sync only for repositories", async () => {
+    // A chat re-sync needs channels chosen again, so the row cannot do it.
+    mockApi([
+      [
+        source({ kind: "slack", repo: "T0ACME", display_name: "Acme" }),
+        source(),
+      ],
+    ]);
+    renderInventory();
+
+    expect(
+      await screen.findByRole("button", { name: /re-sync openai\/cortex/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /re-sync acme/i }),
+    ).not.toBeInTheDocument();
   });
 
   // Re-syncing a connected source, and polling while one is mid-ingestion.

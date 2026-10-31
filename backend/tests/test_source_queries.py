@@ -4,25 +4,39 @@ from dataclasses import asdict
 
 import pytest
 
-from app.graph.queries import SOURCES_QUERY, fetch_source_summaries
+from app.graph.queries import (
+    CHAT_SOURCES_QUERY,
+    SOURCES_QUERY,
+    fetch_source_summaries,
+)
 from tests.test_graph_queries import FakeResult, FakeSession
 
 WS = "ccccccc0-0000-4000-8000-00000000c0de"
 
 
 class SourceTx:
-    def __init__(self, records=()):
+    """Answers the repository and chat summary queries separately.
+
+    `fetch_source_summaries` runs both in one transaction, and they return
+    different columns -- handing the same rows to each would make a repository
+    look like a Slack team.
+    """
+
+    def __init__(self, records=(), chat_records=()):
         self.records = list(records)
+        self.chat_records = list(chat_records)
         self.calls: list[tuple[str, dict]] = []
 
     def run(self, cypher, **params):
         self.calls.append((cypher, params))
+        if cypher is CHAT_SOURCES_QUERY:
+            return FakeResult(self.chat_records)
         return FakeResult(self.records)
 
 
 class SourceDriver:
-    def __init__(self, records=()):
-        self.tx = SourceTx(records)
+    def __init__(self, records=(), chat_records=()):
+        self.tx = SourceTx(records, chat_records)
         self.opened = 0
 
     def session(self):
@@ -66,6 +80,11 @@ def test_returns_typed_source_summaries():
             "pull_requests": 8,
             "issues": 3,
             "total_items": 11,
+            # A repository contributes no chat items and its nodes predate the
+            # `kind` property.
+            "channels": 0,
+            "messages": 0,
+            "kind": None,
         }
     ]
 
@@ -88,6 +107,9 @@ def test_returns_a_connected_repository_with_no_indexed_items():
             "pull_requests": 0,
             "issues": 0,
             "total_items": 0,
+            "channels": 0,
+            "messages": 0,
+            "kind": None,
         }
     ]
 

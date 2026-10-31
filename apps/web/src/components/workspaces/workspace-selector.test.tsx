@@ -20,6 +20,7 @@ const WORKSPACES: WorkspaceSummary[] = [
     name: "First workspace",
     description: null,
     role: "OWNER",
+    permissions: ["sources.write"],
     created_at: "2026-09-24T00:00:00Z",
   },
   {
@@ -27,6 +28,7 @@ const WORKSPACES: WorkspaceSummary[] = [
     name: "Previous workspace",
     description: null,
     role: "EDITOR",
+    permissions: ["sources.write"],
     created_at: "2026-09-25T00:00:00Z",
   },
 ];

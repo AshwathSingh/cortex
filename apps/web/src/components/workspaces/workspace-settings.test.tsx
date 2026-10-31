@@ -14,6 +14,7 @@ const WORKSPACE = {
   name: "Cortex Engineering",
   description: "Engineering project memory",
   role: "OWNER",
+  permissions: ["sources.write"],
   created_at: "2026-09-28T00:00:00Z",
 } satisfies WorkspaceSummary;
 
