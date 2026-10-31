@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { ChatConnections } from "@/components/sources/chat-connections";
 import { SourceStatus } from "@/components/sources/source-status";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -13,6 +14,7 @@ import { useWorkspace } from "@/components/workspaces/workspace-context";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { IngestResult, WorkspaceSource } from "@/lib/api-types";
 import { routes } from "@/lib/routes";
+import { githubUrl, sourceKindMeta } from "@/lib/source-kinds";
 import { canManageSources } from "@/lib/workspace-permissions";
 
 type State =
@@ -47,8 +49,16 @@ function ArrowUpRightIcon() {
   );
 }
 
-function githubUrl(repo: string) {
-  return `https://github.com/${repo.split("/").map(encodeURIComponent).join("/")}`;
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="size-5">
+      <path d="M20 14.5A2.5 2.5 0 0 1 17.5 17H9l-4 3v-3.5A2.5 2.5 0 0 1 4 14V6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8Z" />
+    </svg>
+  );
+}
+
+function sourceIcon(kind: string) {
+  return kind === "github" ? <RepositoryIcon /> : <ChatIcon />;
 }
 
 function itemLabel(count: number, singular: string) {
@@ -97,7 +107,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
   }, [requestVersion, router, workspaceId]);
 
   const sources = state.kind === "ready" ? state.sources : [];
-  const canAddSources = canManageSources(workspace?.role);
+  const canAddSources = canManageSources(workspace);
   const indexedItems = sources.reduce(
     (total, source) => total + source.total_items,
     0,
@@ -172,7 +182,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
         headingId="sources-title"
         eyebrow="Knowledge inputs"
         title="Sources"
-        description="Repositories Cortex uses to build this workspace's project memory."
+        description="Repositories and chat channels Cortex uses to build this workspace's project memory."
         action={canAddSources ? (
           <Link
             href={routes.workspace.ingest(workspaceId)}
@@ -233,7 +243,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
                 id="indexed-sources-heading"
                 className="text-base font-semibold text-foreground"
               >
-                Indexed repositories
+                Indexed sources
               </h2>
               <p className="mt-1 text-sm text-muted">
                 {itemLabel(sources.length, "source")} ·{" "}
@@ -247,6 +257,9 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
           <ul className="divide-y divide-border/20">
             {sources.map((source) => {
               const isResyncing = syncingRepo === source.repo;
+              const meta = sourceKindMeta(source.kind);
+              const title = meta.title(source);
+              const href = meta.href(source);
               return (
                 <li
                   key={`${source.kind}:${source.repo}`}
@@ -254,19 +267,29 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
                 >
                   <div className="flex min-w-0 items-center gap-4">
                     <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-border/30 bg-surface-raised text-muted">
-                      <RepositoryIcon />
+                      {sourceIcon(source.kind)}
                     </span>
                     <div className="min-w-0">
-                      <a
-                        href={githubUrl(source.repo)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex max-w-full items-center gap-1.5 font-medium text-foreground transition-colors hover:text-accent-bright"
-                      >
-                        <span className="truncate">{source.repo}</span>
-                        <ArrowUpRightIcon />
-                        <span className="sr-only"> (opens on GitHub)</span>
-                      </a>
+                      {href ? (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex max-w-full items-center gap-1.5 font-medium text-foreground transition-colors hover:text-accent-bright"
+                        >
+                          <span className="truncate">{title}</span>
+                          <ArrowUpRightIcon />
+                          {meta.destination ? (
+                            <span className="sr-only">
+                              {` (opens on ${meta.destination})`}
+                            </span>
+                          ) : null}
+                        </a>
+                      ) : (
+                        // Slack has no addressable URL for a team that does not
+                        // depend on its own subdomain.
+                        <p className="truncate font-medium text-foreground">{title}</p>
+                      )}
                       <SourceStatus
                         source={isResyncing ? { ...source, status: "PENDING" } : source}
                       />
@@ -274,37 +297,23 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
                   </div>
                   <div className="flex items-center justify-end gap-6">
                     <dl className="grid grid-cols-3 gap-6 text-right">
-                      <div>
-                        <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-                          Pull requests
-                        </dt>
-                        <dd className="mt-1 font-mono text-sm text-foreground">
-                          {source.pull_requests.toLocaleString()}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-                          Issues
-                        </dt>
-                        <dd className="mt-1 font-mono text-sm text-foreground">
-                          {source.issues.toLocaleString()}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-                          Indexed
-                        </dt>
-                        <dd className="mt-1 font-mono text-sm text-foreground">
-                          {source.total_items.toLocaleString()}
-                        </dd>
-                      </div>
+                      {meta.countColumns.map((column) => (
+                        <div key={column.label}>
+                          <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
+                            {column.label}
+                          </dt>
+                          <dd className="mt-1 font-mono text-sm text-foreground">
+                            {column.value(source).toLocaleString()}
+                          </dd>
+                        </div>
+                      ))}
                     </dl>
-                    {canAddSources ? (
+                    {canAddSources && source.kind === "github" ? (
                       <Button
                         type="button"
                         size="small"
                         variant="muted"
-                        aria-label={`Re-sync ${source.repo}`}
+                        aria-label={`Re-sync ${title}`}
                         onClick={() => void resync(source.repo)}
                         disabled={isSyncing || source.status === "PENDING"}
                       >
@@ -317,6 +326,15 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
             })}
           </ul>
         </section>
+      ) : null}
+
+      {/* Shown even with nothing indexed yet: connecting Slack is how an empty
+          workspace gets its first source, and it is not a repository. */}
+      {state.kind !== "loading" && !isWorkspaceLoading && canAddSources ? (
+        <ChatConnections
+          workspaceId={workspaceId}
+          onIngested={() => setRequestVersion((version) => version + 1)}
+        />
       ) : null}
     </PageShell>
   );

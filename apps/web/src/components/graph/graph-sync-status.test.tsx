@@ -29,6 +29,9 @@ function source(over: Partial<WorkspaceSource> = {}): WorkspaceSource {
     pull_requests: 8,
     issues: 3,
     total_items: 11,
+    channels: 0,
+    messages: 0,
+    display_name: null,
     last_attempted_at: minutesAgo(5),
     last_synced_at: minutesAgo(5),
     last_error: null,
@@ -75,6 +78,8 @@ function renderStatus(role: WorkspaceRole = "OWNER") {
           name: "Cortex",
           description: null,
           role,
+          // The UI reads permissions, not the role name (US-21 custom roles).
+          permissions: role === "VIEWER" ? [] : ["sources.write"],
           created_at: "2026-09-24T00:00:00Z",
         },
         user: null,
@@ -220,7 +225,8 @@ describe("GraphSyncStatus", () => {
           workspaceId: WORKSPACE_ID,
           workspace: {
             id: WORKSPACE_ID, name: "Cortex", description: null,
-            role: "OWNER", created_at: "2026-09-24T00:00:00Z",
+            role: "OWNER", permissions: ["sources.write"],
+            created_at: "2026-09-24T00:00:00Z",
           },
           user: null, isLoading: false, error: null,
         }}

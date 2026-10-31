@@ -220,7 +220,7 @@ export function GraphSyncStatus({
         ) : null}
       </p>
 
-      {canManageSources(workspace?.role) ? (
+      {canManageSources(workspace) ? (
         <Button
           type="button"
           size="small"

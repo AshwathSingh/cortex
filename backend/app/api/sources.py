@@ -97,6 +97,10 @@ class ConnectionResponse(BaseModel):
     external_ref: str
     display_name: str
     installed_by_name: str | None = None
+    #: Which workspace this belongs to. The provider redirects the browser to a
+    #: callback page that knows only ``state``, so this is how that page finds
+    #: its way back to the workspace the member started from.
+    workspace_id: uuid.UUID
 
 
 def _require_configured(kind: str) -> None:
@@ -293,6 +297,7 @@ def finish_install(
         external_ref=credential.external_ref,
         display_name=credential.display_name,
         installed_by_name=user.display_name,
+        workspace_id=workspace_id,
     )
 
 
@@ -318,6 +323,7 @@ def read_connections(
             external_ref=row.external_ref,
             display_name=row.display_name,
             installed_by_name=row.installer.display_name if row.installer else None,
+            workspace_id=workspace_id,
         )
         for row in sorted(connections.values(), key=lambda r: r.kind)
     ]

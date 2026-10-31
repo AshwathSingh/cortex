@@ -86,6 +86,8 @@ function renderExplorer(role: "OWNER" | "EDITOR" | "VIEWER" = "OWNER") {
           name: "Cortex",
           description: null,
           role,
+          // The UI reads permissions, not the role name (US-21 custom roles).
+          permissions: role === "VIEWER" ? [] : ["sources.write"],
           created_at: "2026-09-24T00:00:00Z",
         },
         user: null,

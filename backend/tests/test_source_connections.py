@@ -197,6 +197,7 @@ def test_slack_stores_the_team_and_its_token_encrypted(api_db):
         "external_ref": "T0ACME",
         "display_name": "Acme",
         "installed_by_name": "member",
+        "workspace_id": TEST_WORKSPACE_ID,
     }
     (row,) = credentials(sessions)
     assert row.access_token == BOT_TOKEN  # decrypted transparently on load
@@ -376,6 +377,7 @@ def test_any_member_can_see_what_is_connected_without_the_token(api_db):
             "external_ref": "T0ACME",
             "display_name": "Acme",
             "installed_by_name": "member",
+            "workspace_id": TEST_WORKSPACE_ID,
         }
     ]
     assert BOT_TOKEN not in response.text
