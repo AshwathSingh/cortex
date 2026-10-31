@@ -17,15 +17,37 @@ export const NODE_COLOURS: Record<GraphNodeType, string> = {
   Author: "#78a0ff",
   PullRequest: "#7ddfa0",
   Issue: "#e0a86a",
+  // US-09 AC5. Deliberately away from the blue/green/amber above so an
+  // uploaded document is not mistaken for a GitHub item at a glance.
+  Document: "#c48fe8",
+  DocumentSection: "#9fb0c9",
 };
 
-export type NodeShape = "circle" | "square" | "diamond";
+export type NodeShape = "circle" | "square" | "diamond" | "hexagon" | "triangle";
 
+/**
+ * Shape carries the type as well as colour, so the canvas stays readable
+ * without relying on colour alone.
+ */
 export const NODE_SHAPES: Record<GraphNodeType, NodeShape> = {
   Author: "circle",
   PullRequest: "square",
   Issue: "diamond",
+  Document: "hexagon",
+  DocumentSection: "triangle",
 };
+
+/**
+ * Types that many other nodes hang off, drawn larger and pushed harder apart.
+ * A document is a hub for the same reason an author is: every one of its
+ * sections attaches to the one node, so leaf-sized it would disappear under its
+ * own edges.
+ */
+const HUB_TYPES = new Set<string>(["Author", "Document"]);
+
+export function isHubType(type: string): boolean {
+  return HUB_TYPES.has(type);
+}
 
 const FALLBACK_COLOUR = "#a4adbd";
 const FALLBACK_SHAPE: NodeShape = "circle";
@@ -244,6 +266,30 @@ function tracePath(
     );
     return;
   }
+  if (shape === "hexagon") {
+    const hexExtent = radius * 1.08;
+    for (let corner = 0; corner < 6; corner += 1) {
+      // Start at -90deg so the hexagon sits flat-sided, not point-up, which
+      // reads as a distinct silhouette next to the diamond.
+      const angle = (Math.PI / 3) * corner - Math.PI / 2;
+      const px = x + Math.cos(angle) * hexExtent;
+      const py = y + Math.sin(angle) * hexExtent;
+      if (corner === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    return;
+  }
+  if (shape === "triangle") {
+    // Slightly oversized: a triangle of equal radius looks smaller than a
+    // circle because so much of its bounding box is empty.
+    const triExtent = radius * 1.3;
+    ctx.moveTo(x, y - triExtent);
+    ctx.lineTo(x + triExtent * 0.92, y + triExtent * 0.62);
+    ctx.lineTo(x - triExtent * 0.92, y + triExtent * 0.62);
+    ctx.closePath();
+    return;
+  }
   const diamondExtent = radius * 1.18;
   ctx.moveTo(x, y - diamondExtent);
   ctx.lineTo(x + diamondExtent, y);
@@ -340,6 +386,16 @@ export function GraphCanvas({
           NODE_COLOURS.PullRequest,
         ),
         Issue: cssValue(styles, "--cortex-graph-issue", NODE_COLOURS.Issue),
+        Document: cssValue(
+          styles,
+          "--cortex-graph-document",
+          NODE_COLOURS.Document,
+        ),
+        DocumentSection: cssValue(
+          styles,
+          "--cortex-graph-document-section",
+          NODE_COLOURS.DocumentSection,
+        ),
       };
       const edgeColour = cssValue(
         styles,
@@ -366,7 +422,7 @@ export function GraphCanvas({
       }
 
       const radiusOf = (node: GraphNode): number => {
-        if (node.type !== "Author") return LEAF_RADIUS;
+        if (!isHubType(node.type)) return LEAF_RADIUS;
         return Math.min(
           AUTHOR_MAX_RADIUS,
           AUTHOR_RADIUS + (degree.get(node.key) ?? 0) * AUTHOR_GROWTH,
@@ -375,7 +431,7 @@ export function GraphCanvas({
       const specs: NodeSpec[] = nodes.map((node) => ({
         key: node.key,
         radius: radiusOf(node),
-        charge: node.type === "Author" ? 2.4 : 1,
+        charge: isHubType(node.type) ? 2.4 : 1,
       }));
       const simulation = new GraphSimulation(specs, edges, {
         width,
@@ -451,7 +507,7 @@ export function GraphCanvas({
         for (const placed of drawOrder) {
           const node = byKey.get(placed.key);
           if (!node) continue;
-          const isHub = node.type === "Author";
+          const isHub = isHubType(node.type);
           const text = truncate(node.title, isHub ? 22 : 26);
           const textWidth = ctx.measureText(text).width;
           const cx = Math.round(placed.x);

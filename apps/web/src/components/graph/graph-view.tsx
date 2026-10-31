@@ -41,6 +41,20 @@ const NODE_TYPES: {
     colour: "var(--cortex-graph-issue)",
     shapeClass: "rotate-45 rounded-[1px]",
   },
+  {
+    type: "Document",
+    label: "Document",
+    colour: "var(--cortex-graph-document)",
+    // The canvas draws a hexagon; a CSS hexagon this small reads as a blob, so
+    // the swatch approximates it with a squat rounded box.
+    shapeClass: "rounded-[3px]",
+  },
+  {
+    type: "DocumentSection",
+    label: "Section",
+    colour: "var(--cortex-graph-document-section)",
+    shapeClass: "[clip-path:polygon(50%_0%,100%_100%,0%_100%)]",
+  },
 ];
 
 type State =

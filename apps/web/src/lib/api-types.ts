@@ -23,10 +23,18 @@ export type IngestResult = {
 /** Mirrors `app.models.data_source.SyncStatus`. */
 export type SourceSyncStatus = "PENDING" | "SUCCESS" | "FAILED";
 
+/** Mirrors the `kind` values `data_sources` holds today. */
+export type SourceKind = "github" | "upload";
+
 export type WorkspaceSource = IngestResult & {
   total_items: number;
-  /** "github" — the only source kind that exists. */
   kind: string;
+  /** Sections, for an uploaded document. Zero for a repository — which counts
+   *  are meaningful depends on `kind`. */
+  sections: number;
+  /** What to call the source on screen when its reference is not already its
+   *  name. The filename for an upload, null for a repository. */
+  display_name: string | null;
   status: SourceSyncStatus;
   /** ISO-8601. When ingestion last *started*, null for a repo ingested before
    *  sync state was recorded. */
@@ -41,10 +49,27 @@ export type WorkspaceSource = IngestResult & {
 
 /** The node labels the graph holds today. Requirement/Decision/Evidence come
  *  from the Connection Agent, which is not built, so they are not modelled. */
-export type GraphNodeType = "Author" | "PullRequest" | "Issue";
+export type GraphNodeType =
+  | "Author"
+  | "PullRequest"
+  | "Issue"
+  | "Document"
+  | "DocumentSection";
+
+/** What `POST /api/workspaces/{id}/uploads` answers (US-09). */
+export type UploadResult = {
+  filename: string;
+  /** How Cortex read the file: "pdf", "word" or "text". */
+  format: string;
+  sections: number;
+  /** True when this filename was already here, so the reader is told their
+   *  re-upload replaced it rather than added a second copy. */
+  replaced: boolean;
+};
 
 export type GraphNode = {
-  /** "PullRequest:42" — a GitHub id alone is not unique across labels. */
+  /** "PullRequest:42" — a GitHub id alone is not unique across labels. An
+   *  uploaded document's id is a prefixed string: "DocumentSection:upload/4f1c/0". */
   key: string;
   id: number | string | null;
   type: GraphNodeType;
