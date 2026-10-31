@@ -427,7 +427,7 @@ def test_postgres_invite_cannot_use_a_role_from_another_workspace(pg):
         c.execute(_INSERT_INVITE, _invite(b_id, "x@example.com", custom_role_id=role_id))
 
 
-def test_postgres_workspace_delete_removes_invites_and_role_in_use_is_protected(pg):
+def test_postgres_workspace_delete_removes_invites_and_role_delete_cascades_them(pg):
     with Session(pg) as s:
         ws = Workspace(name="W")
         s.add(ws)
@@ -438,13 +438,13 @@ def test_postgres_workspace_delete_removes_invites_and_role_in_use_is_protected(
         ws_id, role_id = ws.id, role.id
     with pg.begin() as c:
         c.execute(_INSERT_INVITE, _invite(ws_id, "x@example.com", custom_role_id=role_id))
-    with pytest.raises(IntegrityError):  # a pending invite still offers the role
-        with pg.begin() as c:
-            c.execute(text("DELETE FROM workspace_roles WHERE id = :i"), {"i": role_id})
+    with pg.begin() as c:  # deleting the role takes its invites with it, atomically
+        c.execute(text("DELETE FROM workspace_roles WHERE id = :i"), {"i": role_id})
+    with pg.connect() as c:
+        assert c.scalar(text("SELECT count(*) FROM workspace_invites")) == 0
     with pg.begin() as c:
         c.execute(text("DELETE FROM workspaces WHERE id = :i"), {"i": ws_id})
     with pg.connect() as c:
-        assert c.scalar(text("SELECT count(*) FROM workspace_invites")) == 0
         assert c.scalar(text("SELECT count(*) FROM workspace_roles")) == 0
 
 
@@ -577,3 +577,186 @@ def test_postgres_two_owners_removing_each_other_at_once_leaves_one(pg, attempt)
 
     assert _owner_count(pg, ws_id) == 1, outcomes
     assert "ok" in outcomes
+
+
+# --- review follow-ups: races around invites ---------------------------------
+
+
+def _seed_workspace(pg, owners=1, extra_users=0):
+    with Session(pg) as s:
+        ws = Workspace(name="W")
+        users = [
+            User(github_id=500 + i, github_login=f"x{i}", email=f"x{i}@example.com")
+            for i in range(owners + extra_users)
+        ]
+        s.add_all([ws, *users])
+        s.flush()
+        s.add_all(
+            WorkspaceMembership(workspace_id=ws.id, user_id=u.id, role=Role.OWNER)
+            for u in users[:owners]
+        )
+        s.commit()
+        return ws.id, [u.id for u in users]
+
+
+def test_postgres_removed_owner_cannot_create_owner_invite_from_stale_snapshot(pg):
+    from app.services.invites import create_invite
+    from app.services.members import remove_member
+    from app.services.roles import NotPermitted
+
+    ws_id, (o1, o2) = _seed_workspace(pg, owners=2)
+
+    def membership(s, uid):
+        return s.scalar(
+            select(WorkspaceMembership).where(
+                WorkspaceMembership.workspace_id == ws_id,
+                WorkspaceMembership.user_id == uid,
+            )
+        )
+
+    with Session(pg) as stale, Session(pg) as other:
+        actor = membership(stale, o2)  # what the route's authorisation saw
+        remove_member(other, workspace_id=ws_id, actor=membership(other, o1), target_user_id=o2)
+        other.commit()
+        with pytest.raises(NotPermitted):
+            create_invite(
+                stale,
+                workspace_id=ws_id,
+                actor=actor,
+                email="x@example.com",
+                choice=RoleChoice(builtin=Role.OWNER),
+            )
+        stale.rollback()
+    with Session(pg) as s:
+        assert s.scalar(text("SELECT count(*) FROM workspace_invites")) == 0
+
+
+def test_postgres_demoted_inviter_cannot_use_stale_owner_rank(pg):
+    from app.services.invites import create_invite
+    from app.services.roles import NotPermitted
+
+    ws_id, (o1, o2) = _seed_workspace(pg, owners=2)
+    with Session(pg) as stale, Session(pg) as other:
+        actor = stale.scalar(
+            select(WorkspaceMembership).where(WorkspaceMembership.user_id == o2)
+        )
+        other.execute(
+            text("UPDATE workspace_memberships SET role='VIEWER' WHERE user_id=:u"),
+            {"u": o2},
+        )
+        other.commit()
+        with pytest.raises(NotPermitted):
+            create_invite(
+                stale, workspace_id=ws_id, actor=actor, email="y@example.com", choice=None
+            )
+
+
+@pytest.mark.parametrize("attempt", range(5))
+def test_postgres_two_invites_accepted_at_once_by_one_user_make_one_membership(pg, attempt):
+    from app.services.invites import accept_invite, create_invite
+
+    ws_id, (owner_id, guest_id) = _seed_workspace(pg, owners=1, extra_users=1)
+    with Session(pg) as s:
+        actor = s.scalar(
+            select(WorkspaceMembership).where(WorkspaceMembership.user_id == owner_id)
+        )
+        tokens = [
+            create_invite(
+                s, workspace_id=ws_id, actor=actor, email=f"{n}@example.com", choice=None
+            )[1]
+            for n in ("a", "b")
+        ]
+        s.commit()
+
+    barrier = threading.Barrier(2)
+    outcomes: list = [None, None]
+
+    def run(i):
+        with Session(pg) as s:
+            user = s.get(User, guest_id)
+            barrier.wait()
+            try:
+                accept_invite(s, token=tokens[i], user=user)
+                s.commit()
+                outcomes[i] = "ok"
+            except Exception as e:  # an uncaught IntegrityError is the bug
+                s.rollback()
+                outcomes[i] = repr(e)
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert outcomes == ["ok", "ok"], outcomes
+    with Session(pg) as s:
+        assert s.scalar(
+            text("SELECT count(*) FROM workspace_memberships WHERE user_id=:u"),
+            {"u": guest_id},
+        ) == 1
+        assert s.scalar(
+            text("SELECT count(*) FROM workspace_invites WHERE status='ACCEPTED'")
+        ) == 2
+
+
+@pytest.mark.parametrize("attempt", range(5))
+def test_postgres_role_delete_racing_invite_creation_never_errors_or_orphans(pg, attempt):
+    from app.services.invites import create_invite
+    from app.services.roles import delete_role, get_custom_role
+
+    ws_id, (owner_id,) = _seed_workspace(pg)
+    with Session(pg) as s:
+        role = WorkspaceRole(workspace_id=ws_id, name="R", permissions=[])
+        s.add(role)
+        s.commit()
+        role_id = role.id
+
+    barrier = threading.Barrier(2)
+    outcomes: list = [None, None]
+
+    def invite_side():
+        with Session(pg) as s:
+            actor = s.scalar(
+                select(WorkspaceMembership).where(WorkspaceMembership.user_id == owner_id)
+            )
+            barrier.wait()
+            try:
+                role = get_custom_role(s, ws_id, role_id)
+                create_invite(
+                    s,
+                    workspace_id=ws_id,
+                    actor=actor,
+                    email="z@example.com",
+                    choice=RoleChoice(custom=role),
+                )
+                s.commit()
+                outcomes[0] = "ok"
+            except RoleError as e:  # role already deleted -> clean 404
+                s.rollback()
+                outcomes[0] = e.status_code
+            except Exception as e:
+                s.rollback()
+                outcomes[0] = repr(e)
+
+    def delete_side():
+        with Session(pg) as s:
+            barrier.wait()
+            try:
+                role = get_custom_role(s, ws_id, role_id, exclusive=True)
+                delete_role(s, role=role)
+                s.commit()
+                outcomes[1] = "ok"
+            except Exception as e:
+                s.rollback()
+                outcomes[1] = repr(e)
+
+    threads = [threading.Thread(target=invite_side), threading.Thread(target=delete_side)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert all(not t.is_alive() for t in threads), "deadlock or hang"
+    assert outcomes[1] == "ok" and outcomes[0] in ("ok", 404), outcomes
+    with Session(pg) as s:  # the role is gone and nothing references it
+        assert s.scalar(text("SELECT count(*) FROM workspace_roles")) == 0
+        assert s.scalar(text("SELECT count(*) FROM workspace_invites")) == 0

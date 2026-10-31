@@ -1,7 +1,7 @@
 """US-03: invite people to a workspace.
 
     POST /api/workspaces/{id}/invites   {"email": "...", "role": "EDITOR" | "role_id": "<uuid>"}
-    POST /api/invites/{token}/accept    -> {"workspace_id", "role"}
+    POST /api/invites/accept            {"token": "..."} -> {"workspace_id", "role"}
 
 Needs ``members.manage``. ``role`` (built-in) and ``role_id`` (custom) are
 alternatives; with neither the invite grants EDITOR. The response carries the raw
@@ -9,14 +9,15 @@ token once -- it is not stored and cannot be retrieved later. No email is sent;
 the inviter shares the token with the invitee.
 
 Accepting needs only a logged-in user holding the token: 404 unknown, 410 expired,
-409 already used or revoked.
+409 already used or revoked. The token travels in the POST body, never the URL, so
+it can't end up in access logs, proxies or browser history.
 """
 
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, EmailStr, model_validator
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
 from app.models import Role
@@ -94,17 +95,23 @@ def create_workspace_invite(
     )
 
 
+class AcceptIn(BaseModel):
+    token: str = Field(min_length=1, max_length=256)
+
+
 class AcceptOut(BaseModel):
     workspace_id: uuid.UUID
     role: str
 
 
-@accept_router.post("/{token}/accept", response_model=AcceptOut)
+@accept_router.post("/accept", response_model=AcceptOut)
 def accept_workspace_invite(
-    token: str, user: CurrentUser, session: DbSession
+    body: AcceptIn, user: CurrentUser, session: DbSession
 ) -> AcceptOut:
     try:
-        _, membership = invite_service.accept_invite(session, token=token, user=user)
+        _, membership = invite_service.accept_invite(
+            session, token=body.token, user=user
+        )
         session.commit()
     except RoleError as e:
         session.rollback()

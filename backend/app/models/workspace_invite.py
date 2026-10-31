@@ -40,6 +40,7 @@ class WorkspaceInvite(Base):
             ["custom_role_id", "workspace_id"],
             ["workspace_roles.id", "workspace_roles.workspace_id"],
             name="fk_invite_custom_role",
+            ondelete="CASCADE",
         ),
         CheckConstraint(
             "(role IS NULL) <> (custom_role_id IS NULL)",

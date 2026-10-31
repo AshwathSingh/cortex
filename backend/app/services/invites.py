@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -21,6 +21,7 @@ from app.models import (
     WorkspaceInvite,
     WorkspaceMembership,
 )
+from app.permissions import Permission, membership_permissions
 from app.security import hash_invite_token, new_invite_token
 from app.services.roles import (
     Conflict,
@@ -52,6 +53,17 @@ def create_invite(
     ``Conflict`` (409) if the invitee is already a member or already has a pending,
     unexpired invite. Caller must already hold ``members.manage``.
     """
+    # Re-read and lock the inviter's own membership so a removal or role change that
+    # committed (or is committing) since the route authorised them is honoured: a
+    # removed member can't still mint an OWNER invite from a stale snapshot. Removal
+    # and role changes write this same row, so they serialise against us.
+    try:
+        session.refresh(actor, with_for_update=True)
+    except InvalidRequestError:  # removed while we waited
+        raise NotPermitted("You no longer have access to this workspace")
+    if Permission.MEMBERS_MANAGE not in membership_permissions(actor):
+        raise NotPermitted("You no longer have permission to invite members")
+
     choice = choice or RoleChoice(builtin=DEFAULT_ROLE)
     if choice.is_owner and actor.role is not Role.OWNER:
         raise NotPermitted("Only an owner can invite someone as an owner")
@@ -154,24 +166,41 @@ def accept_invite(
         .where(WorkspaceInvite.id == claimed)
         .execution_options(populate_existing=True)
     )
-    membership = session.scalar(
-        select(WorkspaceMembership).where(
-            WorkspaceMembership.workspace_id == invite.workspace_id,
-            WorkspaceMembership.user_id == user.id,
-        )
-    )
-    if membership is None:
-        membership = WorkspaceMembership(
+    # Upsert, not check-then-insert: two different invites for the same workspace
+    # accepted at once by one user would both pass a "not a member yet" check and
+    # the loser would hit the unique key. DO NOTHING keeps the existing membership
+    # (and its role) untouched if there already is one.
+    _insert = _dialect_insert(session)
+    session.execute(
+        _insert(WorkspaceMembership)
+        .values(
+            id=uuid.uuid4(),
             workspace_id=invite.workspace_id,
             user_id=user.id,
             role=invite.role,
             custom_role_id=invite.custom_role_id,
             invited_by=invite.invited_by,
+            status="active",
         )
-        session.add(membership)
-        session.flush()
-    session.refresh(membership)
+        .on_conflict_do_nothing(index_elements=["user_id", "workspace_id"])
+    )
+    membership = session.scalar(
+        select(WorkspaceMembership)
+        .where(
+            WorkspaceMembership.workspace_id == invite.workspace_id,
+            WorkspaceMembership.user_id == user.id,
+        )
+        .execution_options(populate_existing=True)
+    )
     return invite, membership
+
+
+def _dialect_insert(session: Session):
+    if session.get_bind().dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:  # SQLite in tests
+        from sqlalchemy.dialects.sqlite import insert
+    return insert
 
 
 def _explain_rejection(session: Session, token_hash: str, now: datetime):

@@ -45,11 +45,13 @@ curl -s -b owner.jar -X POST $A/workspaces/<WORKSPACE_ID>/invites \
 # 2. Guest logs in and accepts
 curl -s -c guest.jar -X POST $A/auth/login -H 'content-type: application/json' \
   -d '{"email":"guest@example.com","password":"guest-password-123"}'
-curl -s -b guest.jar -X POST $A/invites/<TOKEN>/accept        # -> {"workspace_id":..., "role":"VIEWER"}
+curl -s -b guest.jar -X POST $A/invites/accept -H 'content-type: application/json' \
+  -d '{"token":"<TOKEN>"}'                                      # -> {"workspace_id":..., "role":"VIEWER"}
 curl -s -b guest.jar $A/workspaces/<WORKSPACE_ID>/members     # guest can now see the workspace
 
 # 3. Try the same token again -> 409
-curl -s -b guest.jar -X POST $A/invites/<TOKEN>/accept
+curl -s -b guest.jar -X POST $A/invites/accept -H 'content-type: application/json' \
+  -d '{"token":"<TOKEN>"}'
 ```
 
 ## Endpoints
@@ -57,8 +59,10 @@ curl -s -b guest.jar -X POST $A/invites/<TOKEN>/accept
 | Call | Result |
 | --- | --- |
 | `POST /api/workspaces/{id}/invites` `{email, role?}` or `{email, role_id?}` | 201 `{id, email, role, role_id, expires_at, token}` |
-| `POST /api/invites/{token}/accept` | 200 `{workspace_id, role}` |
+| `POST /api/invites/accept` `{token}` | 200 `{workspace_id, role}` |
 
 Errors: 403 no permission to invite · 404 unknown token · 409 already a member, duplicate pending invite, or token already used/revoked · 410 token expired · 401 not logged in.
+
+The token is sent in the request body, not the URL, so it never shows up in access logs.
 
 Notes: no email is sent, so share the token yourself. Any logged-in user holding the token can accept it, whatever their email.

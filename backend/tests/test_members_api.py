@@ -139,5 +139,5 @@ def test_removed_member_can_be_invited_back(w):
         .post(f"/api/workspaces/{WS}/invites", json={"email": "ed@example.com"})
         .json()["token"]
     )
-    assert w.as_("ed").post(f"/api/invites/{token}/accept").status_code == 200
+    assert w.as_("ed").post("/api/invites/accept", json={"token": token}).status_code == 200
     assert can_see_workspace(w, "ed")

@@ -271,7 +271,7 @@ def test_new_memberships_default_to_active_with_no_inviter(w):
 
 
 def accept(w, who, token):
-    return w.as_(who).post(f"/api/invites/{token}/accept")
+    return w.as_(who).post("/api/invites/accept", json={"token": token})
 
 
 def outsider(w, name="guest"):
@@ -315,7 +315,7 @@ def test_accept_custom_role_invite(w):
 def test_accept_requires_login(w):
     token = invite(w, "owner").json()["token"]
     w.client.cookies.clear()
-    assert w.client.post(f"/api/invites/{token}/accept").status_code == 401
+    assert w.client.post("/api/invites/accept", json={"token": token}).status_code == 401
     assert stored(w)[0].status is InviteStatus.PENDING
 
 

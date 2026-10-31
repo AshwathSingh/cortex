@@ -14,11 +14,11 @@ same guards:
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import Session
 
-from app.models import Role, WorkspaceInvite, WorkspaceMembership, WorkspaceRole
+from app.models import Role, WorkspaceMembership, WorkspaceRole
 from app.permissions import (
     GRANTABLE,
     SYSTEM_ROLE_PERMISSIONS,
@@ -106,12 +106,25 @@ def _reject_builtin_name(name: str) -> None:
 
 
 def get_custom_role(
-    session: Session, workspace_id: uuid.UUID, role_id: uuid.UUID
+    session: Session,
+    workspace_id: uuid.UUID,
+    role_id: uuid.UUID,
+    *,
+    exclusive: bool = False,
 ) -> WorkspaceRole:
+    """The workspace's custom role, locked until the transaction ends.
+
+    Anything about to point a membership or invite at the role takes a shared lock
+    (``FOR SHARE``); deleting it takes an exclusive one. So a delete and a
+    concurrent assignment/invite are serialised instead of racing: the loser either
+    waits and then sees the other's result, or finds the role gone (404). A no-op on
+    SQLite.
+    """
     role = session.scalar(
-        select(WorkspaceRole).where(
-            WorkspaceRole.id == role_id, WorkspaceRole.workspace_id == workspace_id
-        )
+        select(WorkspaceRole)
+        .where(WorkspaceRole.id == role_id, WorkspaceRole.workspace_id == workspace_id)
+        .with_for_update(read=not exclusive)
+        .execution_options(populate_existing=True)
     )
     if role is None:
         raise NotFound("Role not found in this workspace")
@@ -189,12 +202,8 @@ def delete_role(session: Session, *, role: WorkspaceRole) -> None:
         raise Conflict(
             f"{assigned} member(s) still have this role; reassign them before deleting it"
         )
-    # Invites naming this role would block the delete (composite FK). Pending ones
-    # could never be accepted into a role that no longer exists, and the rest are
-    # history about it, so they go with it.
-    session.execute(
-        delete(WorkspaceInvite).where(WorkspaceInvite.custom_role_id == role.id)
-    )
+    # Invites naming this role go with it via the database's ON DELETE CASCADE:
+    # pending ones could never be accepted into a role that no longer exists.
     session.delete(role)
     session.flush()
 
