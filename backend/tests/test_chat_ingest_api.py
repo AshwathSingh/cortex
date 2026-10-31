@@ -360,3 +360,68 @@ def test_github_slack_and_discord_appear_together_on_the_sources_page(api_db):
     assert by_kind["slack"]["total_items"] == 32
     assert by_kind["discord"]["status"] == "FAILED"
     assert by_kind["discord"]["last_error"] == "bot was removed"
+
+
+def test_a_chat_row_is_named_after_the_team_not_its_id(api_db):
+    """A Slack team id is the data_sources key, not something a reader knows."""
+    client, sessions = api_db
+    sign_in_with_role(client, sessions, TEST_WORKSPACE_ID, Role.OWNER)
+    connect(sessions, "slack", TEAM, "Acme")
+    app.dependency_overrides[graph_neo4j] = lambda: SourceDriver(
+        chat_records=[
+            {"source_ref": TEAM, "channels": 1, "messages": 4, "kind": "slack"}
+        ]
+    )
+    with sessions() as session:
+        session.add(
+            DataSource(
+                workspace_id=uuid.UUID(TEST_WORKSPACE_ID),
+                kind="slack",
+                external_ref=TEAM,
+                status=SyncStatus.SUCCESS,
+                last_attempted_at=ATTEMPTED_AT,
+            )
+        )
+        session.commit()
+
+    (row,) = client.get(f"/api/workspaces/{TEST_WORKSPACE_ID}/sources").json()
+
+    assert row["display_name"] == "Acme"
+    assert row["repo"] == TEAM
+
+
+def test_a_repository_row_has_no_display_name_to_show(api_db):
+    client, sessions = api_db
+    sign_in_with_role(client, sessions, TEST_WORKSPACE_ID, Role.OWNER)
+    app.dependency_overrides[graph_neo4j] = lambda: SourceDriver(
+        records=[
+            {
+                "repo": "acme/widgets",
+                "pull_requests": 1,
+                "issues": 0,
+                "total_items": 1,
+            }
+        ]
+    )
+
+    (row,) = client.get(f"/api/workspaces/{TEST_WORKSPACE_ID}/sources").json()
+
+    assert row["display_name"] is None
+    assert row["kind"] == "github"
+
+
+def test_a_disconnected_chat_source_keeps_its_rows_without_a_name(api_db):
+    """Disconnecting withdraws access; it does not retract what was ingested.
+    The credential is gone, so there is no name left to show."""
+    client, sessions = api_db
+    sign_in_with_role(client, sessions, TEST_WORKSPACE_ID, Role.OWNER)
+    app.dependency_overrides[graph_neo4j] = lambda: SourceDriver(
+        chat_records=[
+            {"source_ref": TEAM, "channels": 1, "messages": 4, "kind": "slack"}
+        ]
+    )
+
+    (row,) = client.get(f"/api/workspaces/{TEST_WORKSPACE_ID}/sources").json()
+
+    assert (row["kind"], row["display_name"]) == ("slack", None)
+    assert row["messages"] == 4

@@ -32,6 +32,7 @@ from app.graph.queries import (
     fetch_source_summaries,
 )
 from app.models import SyncStatus
+from app.services.chat_credentials import list_chat_connections
 from app.services.data_sources import build_source_inventory, list_synced_sources
 
 router = APIRouter(prefix="/api/workspaces", tags=["graph"])
@@ -144,6 +145,10 @@ def read_workspace_sources(
     A Neo4j outage is still a 503 rather than a degraded list: the counts would
     read as zero, which is exactly how a failed ingestion looks, and quietly
     showing that is worse than an error the page already offers a retry for.
+
+    Chat sources carry a display name (US-08 AC3): their ``external_ref`` is a
+    Slack team id or Discord guild id, and the graph does not hold the team's
+    name, so it is read from the connection that was authorised.
     """
     load_workspace_for_user(session, user, workspace_id)
 
@@ -151,6 +156,11 @@ def read_workspace_sources(
         summaries = fetch_source_summaries(driver, workspace_id)
     except (Neo4jError, DriverError):
         raise HTTPException(status_code=503, detail="Graph database unavailable")
+
+    display_names = {
+        row.external_ref: row.display_name
+        for row in list_chat_connections(session, workspace_id).values()
+    }
 
     return [
         SourceSummary(
@@ -170,7 +180,7 @@ def read_workspace_sources(
             last_synced_by_name=item.last_synced_by_name,
         )
         for item in build_source_inventory(
-            list_synced_sources(session, workspace_id), summaries
+            list_synced_sources(session, workspace_id), summaries, display_names
         )
     ]
 
