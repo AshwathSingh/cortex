@@ -5,25 +5,41 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.sources.base import (
+    InvalidSourceRef,
+    SourceAPIError,
+    SourceNotFound,
+    SourceRateLimited,
+)
+
 API_BASE = "https://api.github.com"
 PER_PAGE = 100
 
 
-class InvalidRepoURL(ValueError):
+# T-8.1: these keep their GitHub names -- the client's callers and README use
+# them -- but each now subclasses the provider-independent error the ingestion
+# pipeline maps to an HTTP status, so the endpoint no longer names GitHub.
+
+
+class InvalidRepoURL(InvalidSourceRef):
     pass
 
 
-class RepoNotFound(Exception):
+class RepoNotFound(SourceNotFound):
     pass
 
 
-class GitHubAPIError(Exception):
+class GitHubAPIError(SourceAPIError):
     pass
 
 
-class RateLimitExceeded(GitHubAPIError):
+class RateLimitExceeded(GitHubAPIError, SourceRateLimited):
     def __init__(self, wait_seconds: float):
-        super().__init__(f"GitHub rate limit hit; would need to wait {wait_seconds:.0f}s")
+        # Explicit rather than super(): the MRO reaches SourceRateLimited.__init__,
+        # which takes the wait in seconds where this one takes a message.
+        Exception.__init__(
+            self, f"GitHub rate limit hit; would need to wait {wait_seconds:.0f}s"
+        )
         self.wait_seconds = wait_seconds
 
 
