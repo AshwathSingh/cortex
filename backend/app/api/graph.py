@@ -25,6 +25,7 @@ from app.db.neo4j_driver import get_driver
 from app.graph.queries import (
     DEFAULT_EDGE_LIMIT,
     DEFAULT_NODE_LIMIT,
+    coerce_node_id,
     fetch_edge_details,
     fetch_graph,
     fetch_node_details,
@@ -63,9 +64,11 @@ class GraphResponse(BaseModel):
 class SourceSummary(BaseModel):
     """One connected source: sync state from Postgres, counts from Neo4j.
 
-    ``repo`` is the source's ``external_ref``; ``kind`` is "github", the only
-    kind that exists. The field name predates US-10 and the Sources page builds
-    on it, so it stays.
+    ``repo`` is the source's ``external_ref`` -- ``owner/name`` for GitHub, the
+    filename for an uploaded document. The field name predates US-09 and the
+    Sources page builds on it, so it stays. Which counts are meaningful depends
+    on ``kind``: a repository leaves ``sections`` at zero and an upload leaves
+    pull_requests/issues at zero.
     """
 
     repo: str
@@ -74,6 +77,9 @@ class SourceSummary(BaseModel):
     pull_requests: int
     issues: int
     total_items: int
+    sections: int = 0
+    #: What to call the source on screen when its reference is not its name.
+    display_name: str | None = None
     last_attempted_at: datetime | None = None
     last_synced_at: datetime | None = None
     last_error: str | None = None
@@ -152,6 +158,8 @@ def read_workspace_sources(
             pull_requests=item.pull_requests,
             issues=item.issues,
             total_items=item.total_items,
+            sections=item.sections,
+            display_name=item.display_name,
             last_attempted_at=item.last_attempted_at,
             last_synced_at=item.last_synced_at,
             last_error=item.last_error,
@@ -191,20 +199,29 @@ def read_workspace_graph(
 
 
 @router.get(
-    "/{workspace_id}/graph/nodes/{node_type}/{node_id}",
+    # ``:path`` because an uploaded-document node id contains slashes
+    # (``upload/4f1c…/3``); without it the id would be split across path
+    # segments and never match a route.
+    "/{workspace_id}/graph/nodes/{node_type}/{node_id:path}",
     response_model=GraphNodeDetails,
 )
 def read_graph_node_details(
     workspace_id: uuid.UUID,
-    node_type: Literal["Author", "PullRequest", "Issue"],
-    node_id: int,
+    node_type: Literal[
+        "Author", "PullRequest", "Issue", "Document", "DocumentSection"
+    ],
+    node_id: str,
     user: CurrentUser,
     session: DbSession,
     driver: Driver = Depends(get_neo4j),
 ) -> GraphNodeDetails:
     load_workspace_for_user(session, user, workspace_id)
+    if not node_id:
+        raise HTTPException(status_code=404, detail="Graph node not found")
     try:
-        payload = fetch_node_details(driver, workspace_id, node_type, node_id)
+        payload = fetch_node_details(
+            driver, workspace_id, node_type, coerce_node_id(node_id)
+        )
     except (Neo4jError, DriverError):
         raise HTTPException(status_code=503, detail="Graph database unavailable")
     if payload is None:
