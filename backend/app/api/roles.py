@@ -269,7 +269,9 @@ def delete_custom_role(
         session, user, workspace_id, permission=Permission.ROLES_MANAGE
     )
     try:
-        role = role_service.get_custom_role(session, workspace_id, role_id)
+        role = role_service.get_custom_role(
+            session, workspace_id, role_id, exclusive=True
+        )
         role_service.delete_role(session, role=role)
         session.commit()
     except RoleError as e:

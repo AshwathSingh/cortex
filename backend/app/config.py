@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repo-root .env, so settings load the same regardless of the working directory.
@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     session_cookie_name: str = "cortex_session"
     session_ttl_days: int = 30
     secure_cookies: bool = False
+    # How long a workspace invite stays redeemable (US-03).
+    invite_ttl_days: int = Field(default=7, ge=1)
 
     @field_validator(
         "github_client_secret",
