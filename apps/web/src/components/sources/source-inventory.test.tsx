@@ -21,6 +21,8 @@ function source(over: Partial<WorkspaceSource> = {}): WorkspaceSource {
     pull_requests: 8,
     issues: 3,
     total_items: 11,
+    sections: 0,
+    display_name: null,
     last_attempted_at: minutesAgo(5),
     last_synced_at: minutesAgo(5),
     last_error: null,
@@ -94,6 +96,11 @@ function mockApi(
   let reads = 0;
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === "POST") return onIngest();
+    if (String(input).endsWith("/uploads")) {
+      return Promise.resolve(
+        jsonResponse({ filename: "prd.md", format: "text", sections: 1, replaced: false }),
+      );
+    }
     const page = pages[Math.min(reads, pages.length - 1)];
     reads += 1;
     return Promise.resolve(jsonResponse(page));
@@ -229,6 +236,66 @@ describe("SourceInventory", () => {
     await user.click(screen.getByRole("button", { name: /try again/i }));
     expect(await screen.findByText(/connect your first source/i)).toBeInTheDocument();
     expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders an uploaded document by its filename with its section count", async () => {
+    mockApi([
+      [
+        source({
+          kind: "upload",
+          repo: "prd.md",
+          display_name: "prd.md",
+          pull_requests: 0,
+          issues: 0,
+          sections: 4,
+          total_items: 5,
+        }),
+      ],
+    ]);
+    renderInventory();
+
+    expect(await screen.findByText("prd.md")).toBeInTheDocument();
+    expect(screen.getByText("Sections")).toBeInTheDocument();
+    expect(screen.queryByText("Pull requests")).not.toBeInTheDocument();
+    // The file was read and discarded, so the title is not a link.
+    expect(screen.queryByRole("link", { name: /prd\.md/ })).not.toBeInTheDocument();
+  });
+
+  it("offers Re-sync only for repositories", async () => {
+    // A document is re-indexed by uploading it again, not from its row.
+    mockApi([
+      [
+        source({ kind: "upload", repo: "prd.md", display_name: "prd.md" }),
+        source(),
+      ],
+    ]);
+    renderInventory();
+
+    expect(
+      await screen.findByRole("button", { name: /re-sync openai\/cortex/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /re-sync prd\.md/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers the upload zone to a member who can add sources", async () => {
+    mockApi([[source()]]);
+    renderInventory();
+
+    expect(
+      await screen.findByText(/Drop files here, or choose files/),
+    ).toBeInTheDocument();
+  });
+
+  it("does not offer the upload zone to a viewer", async () => {
+    mockApi([[source()]]);
+    renderInventory("VIEWER");
+
+    await screen.findByText("openai/cortex");
+    expect(
+      screen.queryByText(/Drop files here, or choose files/),
+    ).not.toBeInTheDocument();
   });
 
   // Re-syncing a connected source, and polling while one is mid-ingestion.
