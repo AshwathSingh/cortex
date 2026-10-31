@@ -3,6 +3,7 @@
     GET    /api/sources/{kind}/install?workspace_id=...   -> 302 to the provider
     POST   /api/sources/{kind}/callback  {code, state}    -> stores the credential
     GET    /api/workspaces/{id}/connections               -> what is connected
+    GET    /api/workspaces/{id}/connections/{kind}/channels -> channels to pick
     DELETE /api/workspaces/{id}/connections/{kind}        -> disconnect
 
 ``kind`` is "slack" or "discord". The flows differ in what they authorise -- a
@@ -40,11 +41,22 @@ from app.models import SourceInstallTransaction
 from app.permissions import Permission
 from app.security import hash_session_token
 from app.services.chat_credentials import (
+    SourceCredentialMissing,
     delete_chat_credential,
+    get_chat_credential,
     list_chat_connections,
     save_chat_credential,
 )
-from app.sources.base import KIND_DISCORD, KIND_SLACK
+from app.sources.base import (
+    KIND_DISCORD,
+    KIND_SLACK,
+    SourceError,
+    SourceNotFound,
+    SourceRateLimited,
+    SourceUnauthorized,
+)
+from app.sources.discord import DiscordClient
+from app.sources.slack import SlackClient
 from app.sources.chat_oauth import (
     ChatInstallError,
     DiscordOAuthClient,
@@ -69,6 +81,13 @@ callback_limiter = RateLimiter(settings.oauth_rate_limit_per_minute)
 class InstallCallbackRequest(BaseModel):
     code: str
     state: str
+
+
+class ChannelOption(BaseModel):
+    """One channel a member can choose to ingest (US-08 AC1/AC2)."""
+
+    id: str
+    name: str
 
 
 class ConnectionResponse(BaseModel):
@@ -328,3 +347,81 @@ def disconnect(
             detail=f"{kind.title()} is not connected to this workspace",
         )
     session.commit()
+
+
+def build_chat_client(kind: str, token: str) -> SlackClient | DiscordClient:
+    """The read client for ``kind``. The caller closes it."""
+    if kind == KIND_SLACK:
+        return SlackClient(token)
+    return DiscordClient(token)
+
+
+def get_chat_client_builder():
+    """Injectable so tests can supply a client with a mock transport."""
+    return build_chat_client
+
+
+def require_connection(session: Session, workspace_id: uuid.UUID, kind: str):
+    """This workspace's credential for ``kind``, or a 409 telling the caller to
+    connect it first. A missing connection is not a 404: the workspace exists
+    and the fix is an action, not a different URL."""
+    try:
+        return get_chat_credential(session, workspace_id=workspace_id, kind=kind)
+    except SourceCredentialMissing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"No {kind.title()} source is connected. Authorise {kind.title()} first.",
+        )
+
+
+def chat_error_status(error: SourceError) -> int:
+    if isinstance(error, SourceRateLimited):
+        return status.HTTP_429_TOO_MANY_REQUESTS
+    if isinstance(error, SourceUnauthorized):
+        return status.HTTP_403_FORBIDDEN
+    if isinstance(error, SourceNotFound):
+        return status.HTTP_404_NOT_FOUND
+    return status.HTTP_502_BAD_GATEWAY
+
+
+@router.get(
+    "/api/workspaces/{workspace_id}/connections/{kind}/channels",
+    response_model=list[ChannelOption],
+)
+def read_channels(
+    workspace_id: uuid.UUID,
+    kind: ChatKind,
+    user: CurrentUser,
+    session: DbSession,
+    client_builder=Depends(get_chat_client_builder),
+) -> list[ChannelOption]:
+    """The channels available to ingest, for the picker.
+
+    Requires ``sources.write`` rather than plain membership: this is a step in
+    connecting a source, it spends the provider's rate limit, and the list
+    itself discloses private channel names.
+    """
+    load_workspace_for_user(
+        session, user, workspace_id, permission=Permission.SOURCES_WRITE
+    )
+    credential = require_connection(session, workspace_id, kind)
+
+    client = client_builder(kind, credential.token)
+    try:
+        if kind == KIND_SLACK:
+            channels = [
+                ChannelOption(id=c.id, name=c.name or c.id)
+                for c in client.list_channels()
+            ]
+        else:
+            channels = [
+                ChannelOption(id=c.id, name=c.name or c.id)
+                for c in client.list_text_channels(credential.external_ref)
+            ]
+    except SourceError as error:
+        raise HTTPException(status_code=chat_error_status(error), detail=str(error))
+    finally:
+        client.close()
+
+    channels.sort(key=lambda c: (c.name.lower(), c.id))
+    return channels

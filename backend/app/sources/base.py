@@ -81,9 +81,11 @@ class FetchedSource:
     external_ref: str
     display_ref: str
     counts: dict[str, int] = field(default_factory=dict)
-    #: Raw provider payloads, grouped however the adapter's ``write`` wants them.
-    #: Never serialised to a response.
-    payloads: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    #: What ``write`` will put in the graph: raw provider payloads for GitHub,
+    #: normalised dataclasses for the chat adapters, grouped however that
+    #: adapter wants them. Never serialised into a response -- ``counts`` is the
+    #: part the caller sees.
+    payloads: dict[str, list[Any]] = field(default_factory=dict)
 
 
 class SourceAdapter(ABC):

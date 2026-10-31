@@ -25,7 +25,15 @@ from app.github.mapper import normalise_workspace_id
 # The labels the Graph Explorer knows how to draw. Interpolated into Cypher
 # below, which is safe *only* because this is a module constant -- never accept a
 # label from a request (see the neo4j_function.py caveat in CLAUDE.md).
-GRAPH_LABELS: tuple[str, ...] = ("Author", "PullRequest", "Issue")
+GRAPH_LABELS: tuple[str, ...] = (
+    "Author",
+    "PullRequest",
+    "Issue",
+    # US-08. Channel and Message ids are provider-prefixed strings rather than
+    # integers; see ``coerce_node_id`` and ``app.sources.chat_graph``.
+    "Channel",
+    "Message",
+)
 
 # Ceilings so one enormous workspace cannot stall the browser or the API. The
 # response reports whether either was hit.
@@ -74,7 +82,8 @@ LIMIT $origin_limit
 WITH n, collect(CASE WHEN r IS NULL THEN null ELSE {{
   labels: labels(related),
   props: {{id: related.id, login: related.login, number: related.number,
-          title: related.title, html_url: related.html_url}},
+          title: related.title, html_url: related.html_url,
+          name: related.name, body: related.body}},
   relationship: type(r),
   direction: CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END
 }} END) AS connected
@@ -114,6 +123,26 @@ ORDER BY toLower(repo), repo
 """
 
 
+# Chat sources are counted separately from repositories: they group on
+# ``source_ref`` (the Slack team or Discord guild that ``data_sources`` keys on)
+# rather than on ``repo``, and a channel is itself an indexed item.
+CHAT_SOURCES_QUERY = """
+MATCH (c:Channel)
+WHERE c.workspace_id = $workspace_id AND c.source_ref IS NOT NULL
+WITH DISTINCT c.source_ref AS source_ref
+OPTIONAL MATCH (channel:Channel)
+WHERE channel.workspace_id = $workspace_id
+  AND channel.source_ref = source_ref
+WITH source_ref, count(DISTINCT channel) AS channels,
+     head(collect(channel.kind)) AS kind
+OPTIONAL MATCH (message:Message)
+WHERE message.workspace_id = $workspace_id
+  AND message.source_ref = source_ref
+RETURN source_ref, channels, kind, count(DISTINCT message) AS messages
+ORDER BY source_ref
+"""
+
+
 @dataclass
 class GraphPayload:
     """What the endpoint serialises. Keys are stable; the frontend builds on them."""
@@ -126,10 +155,22 @@ class GraphPayload:
 
 @dataclass(frozen=True)
 class SourceSummaryPayload:
+    """Indexed graph items for one connected source.
+
+    ``repo`` is the source's reference -- ``owner/name`` for GitHub, the Slack
+    team id or Discord guild id for a chat source. The field name predates US-08
+    and the Sources page builds on it, so it stays.
+    """
+
     repo: str
-    pull_requests: int
-    issues: int
-    total_items: int
+    pull_requests: int = 0
+    issues: int = 0
+    total_items: int = 0
+    channels: int = 0
+    messages: int = 0
+    #: The provider the nodes were written by, for a chat source. None for a
+    #: repository, whose nodes predate the property.
+    kind: str | None = None
 
 
 def node_key(labels: list[str] | tuple[str, ...], node_id: Any) -> str:
@@ -151,9 +192,23 @@ def _primary_label(labels: list[str] | tuple[str, ...]) -> str:
     return labels[0] if labels else "Unknown"
 
 
+#: A message has no title of its own, so the canvas label is its opening words.
+MESSAGE_TITLE_LENGTH = 80
+
+
 def _display_title(label: str, props: dict[str, Any]) -> str:
     if label == "Author":
         return str(props.get("login") or f"author {props.get('id')}")
+    if label == "Channel":
+        name = props.get("name")
+        return f"#{name}" if name else str(props.get("id"))
+    if label == "Message":
+        body = " ".join((props.get("body") or "").split())
+        if not body:
+            return "(no text)"
+        if len(body) <= MESSAGE_TITLE_LENGTH:
+            return body
+        return body[: MESSAGE_TITLE_LENGTH - 1].rstrip() + "\u2026"
     number = props.get("number")
     title = props.get("title") or ""
     return f"#{number} {title}".strip() if number is not None else title
@@ -223,24 +278,45 @@ def fetch_graph(
 def fetch_source_summaries(
     driver: Driver, workspace_id: str | uuid.UUID
 ) -> list[SourceSummaryPayload]:
-    """Summarise connected repositories and their indexed graph items."""
+    """Summarise every connected source and its indexed graph items.
+
+    Two reads in one transaction rather than one union query: repositories group
+    on ``repo`` and count pull requests and issues, chat connections group on
+    ``source_ref`` and count channels and messages. Forcing them into a single
+    aggregation would make both halves harder to read than the merge below.
+    """
     workspace = normalise_workspace_id(workspace_id)
 
-    def work(tx) -> list:
-        return list(tx.run(SOURCES_QUERY, workspace_id=workspace))
+    def work(tx) -> tuple[list, list]:
+        repos = list(tx.run(SOURCES_QUERY, workspace_id=workspace))
+        chats = list(tx.run(CHAT_SOURCES_QUERY, workspace_id=workspace))
+        return repos, chats
 
     with driver.session() as session:
-        records = session.execute_read(work)
+        repo_records, chat_records = session.execute_read(work)
 
-    return [
+    summaries = [
         SourceSummaryPayload(
             repo=str(record["repo"]),
             pull_requests=int(record["pull_requests"]),
             issues=int(record["issues"]),
             total_items=int(record["total_items"]),
         )
-        for record in records
+        for record in repo_records
     ]
+    summaries.extend(
+        SourceSummaryPayload(
+            repo=str(record["source_ref"]),
+            channels=int(record["channels"]),
+            messages=int(record["messages"]),
+            kind=record["kind"],
+            # A channel is an item the connection contributed, same as a message.
+            total_items=int(record["channels"]) + int(record["messages"]),
+        )
+        for record in chat_records
+    )
+    summaries.sort(key=lambda summary: (summary.repo.lower(), summary.repo))
+    return summaries
 
 
 def _origin(
@@ -296,7 +372,7 @@ def fetch_node_details(
     driver: Driver,
     workspace_id: str | uuid.UUID,
     node_type: str,
-    node_id: int,
+    node_id: int | str,
 ) -> dict[str, Any] | None:
     """Fetch a workspace node and its directly connected provenance."""
     workspace = normalise_workspace_id(workspace_id)
@@ -317,15 +393,26 @@ def fetch_node_details(
     return _details_payload(record["labels"], record["props"], record["connected"])
 
 
-def _parse_node_key(key: str) -> tuple[str, int]:
-    node_type, separator, raw_id = key.partition(":")
-    if not separator or node_type not in GRAPH_LABELS:
-        raise ValueError("Invalid graph node key")
+def coerce_node_id(raw: str) -> int | str:
+    """Recover a node id's type from its text form.
+
+    GitHub ids are integers in the graph and chat ids are provider-prefixed
+    strings, but a node key is text either way -- and Neo4j will not match 42
+    against "42". Every chat id contains a ``/`` (see
+    ``app.sources.chat_graph``), so this attempt fails for all of them and
+    succeeds for every GitHub id.
+    """
     try:
-        node_id = int(raw_id)
-    except ValueError as exc:
-        raise ValueError("Invalid graph node key") from exc
-    return node_type, node_id
+        return int(raw)
+    except ValueError:
+        return raw
+
+
+def _parse_node_key(key: str) -> tuple[str, int | str]:
+    node_type, separator, raw_id = key.partition(":")
+    if not separator or node_type not in GRAPH_LABELS or not raw_id:
+        raise ValueError("Invalid graph node key")
+    return node_type, coerce_node_id(raw_id)
 
 
 def fetch_edge_details(

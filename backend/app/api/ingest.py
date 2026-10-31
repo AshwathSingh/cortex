@@ -1,6 +1,8 @@
 """T-7.5 / T-8.1: the endpoints that trigger ingestion, one per provider.
 
     POST /api/ingest/github   {"repo_url": ..., "workspace_id": ...}
+    POST /api/ingest/slack    {"channel_ids": [...], "workspace_id": ...}
+    POST /api/ingest/discord  {"channel_ids": [...], "workspace_id": ...}
 
 Each handler does three provider-specific things -- build the adapter, name the
 source, shape the response -- and delegates the rest to
@@ -26,10 +28,11 @@ from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException
 from neo4j import Driver
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
+from app.api.sources import ChatKind, get_chat_client_builder, require_connection
 from app.config import settings
 from app.db.neo4j_driver import get_driver
 from app.github.client import GitHubClient
@@ -45,8 +48,10 @@ from app.sources.base import (
     SourceRateLimited,
     SourceUnauthorized,
 )
+from app.sources.discord import DiscordAdapter
 from app.sources.github import GitHubAdapter
 from app.sources.pipeline import GraphUnavailable, IngestionOutcome, run_ingestion
+from app.sources.slack import SlackAdapter
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 
@@ -69,10 +74,29 @@ class IngestRequest(BaseModel):
     workspace_id: uuid.UUID
 
 
+class ChatIngestRequest(BaseModel):
+    """A chat ingestion names the channels to read rather than the whole team.
+
+    A Slack workspace can hold hundreds of channels, most of them irrelevant to
+    one project, and US-08's acceptance criteria are explicit that the member
+    selects them. The cap is a guard on one synchronous request, not a product
+    limit.
+    """
+
+    workspace_id: uuid.UUID
+    channel_ids: list[str] = Field(min_length=1, max_length=50)
+
+
 class IngestResponse(BaseModel):
     repo: str
     pull_requests: int
     issues: int
+
+
+class ChatIngestResponse(BaseModel):
+    source: str
+    channels: int
+    messages: int
 
 
 def get_github_client() -> Iterator[GitHubClient]:
@@ -168,3 +192,70 @@ def ingest_github(
         pull_requests=outcome.counts.get("pull_requests", 0),
         issues=outcome.counts.get("issues", 0),
     )
+
+
+def _chat_ingest(
+    kind: ChatKind,
+    body: ChatIngestRequest,
+    user,
+    session: Session,
+    driver: Driver,
+    client_builder,
+) -> ChatIngestResponse:
+    """T-8.3 / T-8.4: both chat providers, which differ only in their adapter."""
+    load_workspace_for_user(
+        session, user, body.workspace_id, permission=Permission.SOURCES_WRITE
+    )
+    credential = require_connection(session, body.workspace_id, kind)
+    client = client_builder(kind, credential.token)
+
+    if kind == "slack":
+        adapter: SourceAdapter = SlackAdapter(
+            client,
+            team_id=credential.external_ref,
+            team_name=credential.display_name,
+            channel_ids=body.channel_ids,
+        )
+    else:
+        adapter = DiscordAdapter(
+            client,
+            guild_id=credential.external_ref,
+            guild_name=credential.display_name,
+            channel_ids=body.channel_ids,
+        )
+
+    outcome = _ingest(
+        adapter,
+        driver,
+        session,
+        workspace_id=body.workspace_id,
+        external_ref=credential.external_ref,
+        user=user,
+    )
+    return ChatIngestResponse(
+        source=outcome.display_ref,
+        channels=outcome.counts.get("channels", 0),
+        messages=outcome.counts.get("messages", 0),
+    )
+
+
+@router.post("/slack", response_model=ChatIngestResponse)
+def ingest_slack(
+    body: ChatIngestRequest,
+    user: CurrentUser,
+    session: DbSession,
+    driver: Driver = Depends(get_neo4j),
+    client_builder=Depends(get_chat_client_builder),
+) -> ChatIngestResponse:
+    return _chat_ingest("slack", body, user, session, driver, client_builder)
+
+
+@router.post("/discord", response_model=ChatIngestResponse)
+def ingest_discord(
+    body: ChatIngestRequest,
+    user: CurrentUser,
+    session: DbSession,
+    driver: Driver = Depends(get_neo4j),
+    client_builder=Depends(get_chat_client_builder),
+) -> ChatIngestResponse:
+    return _chat_ingest("discord", body, user, session, driver, client_builder)
