@@ -29,7 +29,10 @@ Wikis and issue trackers don't fix this because they aren't a single source of t
 | 💬 **Graph-Aware Assistant** | Answers natural-language questions about project history, with citations to source evidence.            |
 | 🔍 **Explorer UI**           | Visual graph with filtering, search, zoom/pan, and one-click jumps to the original Slack message or PR. |
 
-> **Status:** GitHub ingestion, the Explorer, authentication, and workspace roles are built. Slack, document uploads, both agents, and the assistant are planned; see the Roadmap below.
+> **Status:** GitHub ingestion, the Explorer, authentication, workspace roles,
+> and the assistant UI/API contract are built. The assistant currently uses a
+> deterministic placeholder provider; graph retrieval and a hosted model remain
+> planned. Slack, document uploads, and both agents are also planned.
 
 ## How it works
 
@@ -220,6 +223,7 @@ Edit `.env`. Credentials and tokens must **never** be committed or exposed in th
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI` | GitHub sign-in |
 | `TOKEN_ENCRYPTION_KEY` | Required. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `GITHUB_TOKEN` | Optional; raises the GitHub API limit from 60 to 5,000 requests per hour |
+| `ASSISTANT_RATE_LIMIT_PER_MINUTE`, `ASSISTANT_TIMEOUT_SECONDS` | Bounds assistant request frequency and provider latency |
 | `SECURE_COOKIES` | Set to `true` outside local HTTP development |
 
 If you change the Postgres or Neo4j credentials after the first start, Docker keeps the old ones in its volumes. Run `docker compose down -v` to reset them.
@@ -265,7 +269,9 @@ npm run dev:watch
 
 It monitors the frontend and backend health endpoints, restarts failed services,
 and writes logs to `.cortex-dev/`. Press `Ctrl+C` to stop services started by the
-watchdog. Use `npm run dev:watch -- --check` for a one-time health check.
+watchdog. Both services bind to `127.0.0.1` by default; set
+`CORTEX_BIND_HOST=0.0.0.0` only when access from another device is intentional.
+Use `npm run dev:watch -- --check` for a one-time health check.
 
 An isolated worktree can reuse another checkout's `.env` and Python environment:
 
@@ -311,7 +317,7 @@ docs/images/       Architecture diagram
 | Invite and remove members, delete a workspace | In progress |
 | Slack and document ingestion, evidence store | Planned |
 | Connection Agent, Pruning Agent, flagged issues dashboard | Planned |
-| Graph-Aware Assistant | Planned |
+| Graph-Aware Assistant UI and secured placeholder API | Done; graph retrieval and hosted model planned |
 | Jira integration | Stretch |
 
 ## Design principles

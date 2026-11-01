@@ -33,6 +33,11 @@ const OTHER_WORKSPACE = {
   role: "EDITOR",
 } satisfies WorkspaceSummary;
 
+const ASSISTANT_RESPONSE = {
+  answer: "A workspace-scoped placeholder answer.",
+  citations: [],
+};
+
 function jsonResponse(status: number, body: unknown) {
   return Promise.resolve(
     new Response(JSON.stringify(body), {
@@ -48,6 +53,9 @@ function mockWorkspaceRequests(workspaceStatus = 200, workspaceBody: unknown = W
     if (path === "/api/workspaces") {
       const body = workspaceStatus === 200 ? [workspaceBody, OTHER_WORKSPACE] : workspaceBody;
       return jsonResponse(workspaceStatus, body);
+    }
+    if (path.endsWith("/assistant/query")) {
+      return jsonResponse(200, ASSISTANT_RESPONSE);
     }
     return jsonResponse(200, USER);
   });
@@ -134,6 +142,7 @@ describe("WorkspaceShell", () => {
     );
     await user.type(input, "Why was Neo4j selected?");
     await user.click(screen.getByRole("button", { name: /send question/i }));
+    await screen.findByText(ASSISTANT_RESPONSE.answer);
 
     const recentConversation = screen.getByRole("button", {
       name: "Why was Neo4j selected?",

@@ -30,6 +30,34 @@ const USER = {
   display_name: "Ash Ketchum",
 } satisfies AuthenticatedUser;
 
+const ASSISTANT_RESPONSE = {
+  answer:
+    "This placeholder demonstrates how Cortex will present an evidence-backed answer.",
+  citations: [
+    {
+      id: "workspace-graph",
+      kind: "graph",
+      label: "Graph explorer",
+      description: "Inspect entities and relationships",
+    },
+    {
+      id: "workspace-sources",
+      kind: "sources",
+      label: "Project sources",
+      description: "Review the indexed source material",
+    },
+  ],
+};
+
+function jsonResponse(status: number, body: unknown) {
+  return Promise.resolve(
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+}
+
 function renderWorkspaceDetail(
   overrides: Partial<WorkspaceContextValue> = {},
 ) {
@@ -53,9 +81,14 @@ function renderWorkspaceDetail(
 
 beforeEach(() => {
   window.sessionStorage.clear();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => jsonResponse(200, ASSISTANT_RESPONSE)),
+  );
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("WorkspaceDetail", () => {
@@ -146,9 +179,9 @@ describe("WorkspaceDetail", () => {
     const userMessage = within(turn).getByRole("region", { name: "Your message" });
     expect(userMessage).toHaveTextContent(USER.display_name);
     expect(userMessage).toHaveTextContent("Why Neo4j?");
-    expect(within(turn).getByRole("region", { name: "Cortex response" })).toHaveTextContent(
-      /evidence-backed answer/i,
-    );
+    expect(
+      await within(turn).findByText(/evidence-backed answer/i),
+    ).toBeInTheDocument();
     expect(within(turn).getByRole("link", { name: "Graph explorer" })).toHaveAttribute(
       "href",
       `/workspaces/${WORKSPACE.id}/graph`,
@@ -173,6 +206,7 @@ describe("WorkspaceDetail", () => {
 
     await user.type(input, "Why Neo4j?");
     await user.click(screen.getByRole("button", { name: /send question/i }));
+    await screen.findByText(/evidence-backed answer/i);
     await user.click(
       screen.getByRole("button", { name: "New conversation" }),
     );
@@ -232,6 +266,7 @@ describe("WorkspaceDetail", () => {
 
     await user.type(input, "Why Neo4j?");
     await user.click(screen.getByRole("button", { name: /send question/i }));
+    await screen.findByText(/evidence-backed answer/i);
     await user.click(
       screen.getByRole("button", { name: "Trace the related decisions" }),
     );
@@ -247,6 +282,7 @@ describe("WorkspaceDetail", () => {
 
     await user.type(input, "Why Neo4j?");
     await user.click(screen.getByRole("button", { name: /send question/i }));
+    await screen.findByText(/evidence-backed answer/i);
     await user.type(input, "What data is stored there?");
     await user.click(screen.getByRole("button", { name: /send question/i }));
 
@@ -269,5 +305,92 @@ describe("WorkspaceDetail", () => {
     expect(screen.getByRole("article", { name: "Conversation turn 1" })).toHaveTextContent(
       "First line Second line",
     );
+  });
+
+  it("shows a pending state and prevents duplicate submissions", async () => {
+    let resolveRequest: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveRequest = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderWorkspaceDetail();
+    const input = screen.getByLabelText(/ask cortex about this workspace/i);
+
+    await user.type(input, "Why Neo4j?");
+    await user.click(screen.getByRole("button", { name: /send question/i }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(/tracing the project graph/i);
+    expect(input).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Waiting for Cortex" })).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+
+    resolveRequest?.(
+      new Response(JSON.stringify(ASSISTANT_RESPONSE), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    expect(await screen.findByText(/evidence-backed answer/i)).toBeInTheDocument();
+    expect(input).toBeEnabled();
+  });
+
+  it("cancels an in-flight response when a new conversation starts", async () => {
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        requestSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          requestSignal?.addEventListener("abort", () => {
+            reject(new DOMException("The request was aborted.", "AbortError"));
+          });
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWorkspaceDetail();
+
+    await user.type(
+      screen.getByLabelText(/ask cortex about this workspace/i),
+      "Why Neo4j?",
+    );
+    await user.click(screen.getByRole("button", { name: /send question/i }));
+    await user.click(screen.getByRole("button", { name: "New conversation" }));
+
+    expect(requestSignal?.aborted).toBe(true);
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("article")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText(/ask cortex about this workspace/i)).toBeEnabled();
+  });
+
+  it("shows backend errors and retries the same turn", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() =>
+        jsonResponse(503, { detail: "The assistant is temporarily unavailable." }),
+      )
+      .mockImplementationOnce(() => jsonResponse(200, ASSISTANT_RESPONSE));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderWorkspaceDetail();
+
+    await user.type(
+      screen.getByLabelText(/ask cortex about this workspace/i),
+      "Why Neo4j?",
+    );
+    await user.click(screen.getByRole("button", { name: /send question/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /temporarily unavailable/i,
+    );
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(/evidence-backed answer/i)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByRole("article")).toHaveLength(1);
   });
 });

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repo-root .env, so settings load the same regardless of the working directory.
@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     token_encryption_previous_keys: SecretStr | None = None
     # Per client IP, per endpoint, on the public /api/auth/github/* routes.
     oauth_rate_limit_per_minute: int = 20
+
+    # Assistant requests can invoke a paid, remote model once a provider is
+    # configured. Bound both request frequency and provider latency at the API.
+    assistant_rate_limit_per_minute: int = Field(default=20, gt=0, le=600)
+    assistant_timeout_seconds: float = Field(default=30, gt=0, le=120)
 
     # Postgres holds users, workspaces and membership (US-41). The graph DB holds
     # nodes/edges/evidence; who may see a workspace is a relational question.

@@ -9,17 +9,22 @@ import {
   useState,
 } from "react";
 
-export type AssistantReference = {
-  label: string;
-  description: string;
-  href: string;
-};
+import type {
+  AssistantCitation,
+  AssistantResponse,
+} from "@/lib/assistant-client";
+
+export type AssistantReference = AssistantCitation;
+
+export type AssistantTurnStatus = "pending" | "complete" | "error";
 
 export type AssistantTurn = {
   id: string;
   question: string;
   answer: string;
   references: AssistantReference[];
+  status: AssistantTurnStatus;
+  error: string | null;
 };
 
 export type AssistantConversation = {
@@ -39,9 +44,20 @@ type ActiveConversationSelection = {
   conversationId: string | null;
 };
 
+export type AssistantTurnHandle = {
+  conversationId: string;
+  turnId: string;
+};
+
 type AssistantConversationContextValue = WorkspaceConversationState & {
   activeConversation: AssistantConversation | null;
-  addTurn: (turn: Omit<AssistantTurn, "id">) => void;
+  beginTurn: (question: string) => AssistantTurnHandle;
+  completeTurn: (
+    handle: AssistantTurnHandle,
+    response: AssistantResponse,
+  ) => void;
+  failTurn: (handle: AssistantTurnHandle, message: string) => void;
+  retryTurn: (handle: AssistantTurnHandle) => void;
   selectConversation: (conversationId: string) => void;
   startNewConversation: () => void;
 };
@@ -83,10 +99,17 @@ export function AssistantConversationProvider({
       ? activeSelection.conversationId
       : null;
 
-  const addTurn = useCallback(
-    (turn: Omit<AssistantTurn, "id">) => {
+  const beginTurn = useCallback(
+    (question: string) => {
       const now = Date.now();
-      const nextTurn = { ...turn, id: createId() };
+      const nextTurn: AssistantTurn = {
+        id: createId(),
+        question,
+        answer: "",
+        references: [],
+        status: "pending",
+        error: null,
+      };
       const nextConversationId =
         activeConversationId &&
         conversations.some(
@@ -105,7 +128,7 @@ export function AssistantConversationProvider({
         if (!activeConversation) {
           const conversation: AssistantConversation = {
             id: nextConversationId,
-            title: conversationTitle(turn.question),
+            title: conversationTitle(question),
             turns: [nextTurn],
             updatedAt: now,
           };
@@ -134,8 +157,81 @@ export function AssistantConversationProvider({
         workspaceId,
         conversationId: nextConversationId,
       });
+      return {
+        conversationId: nextConversationId,
+        turnId: nextTurn.id,
+      };
     },
     [activeConversationId, conversations, workspaceId],
+  );
+
+  const updateTurn = useCallback(
+    (
+      handle: AssistantTurnHandle,
+      update: (turn: AssistantTurn) => AssistantTurn,
+    ) => {
+      setWorkspaceConversations((currentConversations) => {
+        const workspaceItems =
+          currentConversations[workspaceId] ?? EMPTY_CONVERSATIONS;
+        const hasTarget = workspaceItems.some(
+          (conversation) => conversation.id === handle.conversationId,
+        );
+        if (!hasTarget) return currentConversations;
+
+        return {
+          ...currentConversations,
+          [workspaceId]: workspaceItems.map((conversation) =>
+            conversation.id === handle.conversationId
+              ? {
+                  ...conversation,
+                  updatedAt: Date.now(),
+                  turns: conversation.turns.map((turn) =>
+                    turn.id === handle.turnId ? update(turn) : turn,
+                  ),
+                }
+              : conversation,
+          ),
+        };
+      });
+    },
+    [workspaceId],
+  );
+
+  const completeTurn = useCallback(
+    (handle: AssistantTurnHandle, response: AssistantResponse) => {
+      updateTurn(handle, (turn) => ({
+        ...turn,
+        answer: response.answer,
+        references: response.citations,
+        status: "complete",
+        error: null,
+      }));
+    },
+    [updateTurn],
+  );
+
+  const failTurn = useCallback(
+    (handle: AssistantTurnHandle, message: string) => {
+      updateTurn(handle, (turn) => ({
+        ...turn,
+        status: "error",
+        error: message,
+      }));
+    },
+    [updateTurn],
+  );
+
+  const retryTurn = useCallback(
+    (handle: AssistantTurnHandle) => {
+      updateTurn(handle, (turn) => ({
+        ...turn,
+        answer: "",
+        references: [],
+        status: "pending",
+        error: null,
+      }));
+    },
+    [updateTurn],
   );
 
   const selectConversation = useCallback(
@@ -166,15 +262,21 @@ export function AssistantConversationProvider({
       conversations,
       activeConversationId,
       activeConversation,
-      addTurn,
+      beginTurn,
+      completeTurn,
+      failTurn,
+      retryTurn,
       selectConversation,
       startNewConversation,
     }),
     [
       activeConversation,
       activeConversationId,
-      addTurn,
+      beginTurn,
+      completeTurn,
       conversations,
+      failTurn,
+      retryTurn,
       selectConversation,
       startNewConversation,
     ],

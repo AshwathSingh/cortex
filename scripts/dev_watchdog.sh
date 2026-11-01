@@ -12,6 +12,7 @@ node_binary="${CORTEX_NODE_BINARY:-$(command -v node || true)}"
 
 frontend_port="${CORTEX_FRONTEND_PORT:-3000}"
 backend_port="${CORTEX_BACKEND_PORT:-8000}"
+bind_host="${CORTEX_BIND_HOST:-127.0.0.1}"
 watch_interval="${CORTEX_WATCH_INTERVAL_SECONDS:-5}"
 startup_grace="${CORTEX_WATCH_STARTUP_GRACE_SECONDS:-10}"
 log_dir="${CORTEX_WATCH_LOG_DIR:-$repo_root/.cortex-dev}"
@@ -42,6 +43,7 @@ Common overrides:
   CORTEX_RUNTIME_ROOT                 Checkout containing .env and backend/.venv
   CORTEX_ENV_FILE                     Explicit environment file
   CORTEX_BACKEND_PYTHON               Explicit Python executable
+  CORTEX_BIND_HOST                    Bind address (default: 127.0.0.1)
   CORTEX_WATCH_INTERVAL_SECONDS       Health-check interval (default: 5)
   CORTEX_WATCH_STARTUP_GRACE_SECONDS  Startup grace period (default: 10)
 EOF
@@ -121,31 +123,29 @@ start_frontend() {
   (
     cd "$repo_root/apps/web" || exit 1
     exec "$node_binary" node_modules/next/dist/bin/next dev \
-      --hostname 0.0.0.0 --port "$frontend_port"
+      --hostname "$bind_host" --port "$frontend_port"
   ) >>"$log_dir/frontend.log" 2>&1 &
   frontend_pid=$!
   frontend_started_at=$SECONDS
 }
 
 start_backend() {
+  local env_args=()
+
   [[ -x "$backend_python" ]] || \
     fail "Backend Python was not found at $backend_python. Set CORTEX_RUNTIME_ROOT or CORTEX_BACKEND_PYTHON."
 
   if [[ ! -f "$env_file" ]]; then
     log "WARNING: $env_file was not found; starting with default backend configuration."
+  else
+    env_args=(--env-file "$env_file")
   fi
 
   log "Starting backend on port $backend_port."
   (
     cd "$repo_root/backend" || exit 1
-    if [[ -f "$env_file" ]]; then
-      set -a
-      # shellcheck disable=SC1090
-      source "$env_file"
-      set +a
-    fi
     exec "$backend_python" -m uvicorn app.main:app --reload \
-      --host 0.0.0.0 --port "$backend_port"
+      "${env_args[@]}" --host "$bind_host" --port "$backend_port"
   ) >>"$log_dir/backend.log" 2>&1 &
   backend_pid=$!
   backend_started_at=$SECONDS

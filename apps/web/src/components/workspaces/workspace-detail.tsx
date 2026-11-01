@@ -1,21 +1,21 @@
 "use client";
 
-import Link from "next/link";
-import {
-  type FormEvent,
-  type KeyboardEvent,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { CortexMark } from "@/components/brand/cortex-mark";
-import { routes } from "@/lib/routes";
+import { ApiError } from "@/lib/api";
+import {
+  askAssistant,
+  type AssistantHistoryMessage,
+} from "@/lib/assistant-client";
 
+import { AssistantComposer } from "./assistant-composer";
 import {
   type AssistantTurn,
+  type AssistantTurnHandle,
   useAssistantConversations,
 } from "./assistant-conversation-context";
+import { AssistantConversationTurn } from "./assistant-conversation-turn";
 import { useWorkspace } from "./workspace-context";
 
 const promptSuggestions = [
@@ -23,15 +23,6 @@ const promptSuggestions = [
   "Show open contradictions",
   "Summarize recent decisions",
 ];
-
-const followUpSuggestions = [
-  "Trace the related decisions",
-  "Show the supporting sources",
-  "Find possible contradictions",
-];
-
-const placeholderResponse =
-  "This placeholder demonstrates how Cortex will present a concise, evidence-backed answer. Once the assistant service is connected, each claim will be grounded in the project graph and its indexed sources.";
 
 const headingVariants = [
   ["What should we explore in", "?"],
@@ -74,125 +65,53 @@ function chooseHeadingVariant(workspaceId: string) {
   } catch {
     // Ignore unavailable browser storage.
   }
-
   return nextVariant;
 }
 
-function initialsFor(label: string) {
-  const initials = label
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toUpperCase();
-
-  return initials || "Y";
+function historyFromTurns(turns: AssistantTurn[]): AssistantHistoryMessage[] {
+  return turns
+    .filter((turn) => turn.status === "complete")
+    .flatMap((turn) => [
+      { role: "user" as const, content: turn.question },
+      { role: "assistant" as const, content: turn.answer },
+    ])
+    .slice(-20);
 }
 
-function ArrowUpIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      fill="none"
-      className="size-5"
-    >
-      <path
-        d="M10 15.5v-11m0 0L5.75 8.75M10 4.5l4.25 4.25"
-        stroke="currentColor"
-        strokeWidth="1.7"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      fill="none"
-      className="size-4"
-    >
-      <path
-        d="M10 4v12M4 10h12"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function CopyIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      fill="none"
-      className="size-3.5"
-    >
-      <rect
-        x="6.5"
-        y="6.5"
-        width="9"
-        height="9"
-        rx="2"
-        stroke="currentColor"
-        strokeWidth="1.4"
-      />
-      <path
-        d="M5 12.5h-.5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2V5"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      viewBox="0 0 20 20"
-      fill="none"
-      className="size-3.5"
-    >
-      <path
-        d="m4.5 10.25 3.4 3.4 7.6-7.6"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
+function requestErrorMessage(error: unknown) {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "This response was cancelled.";
+  }
+  if (error instanceof ApiError || error instanceof Error) {
+    return error.message;
+  }
+  return "The assistant could not answer this question. Please try again.";
 }
 
 export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   const { user, workspace } = useWorkspace();
   const {
     activeConversation,
-    addTurn,
+    beginTurn,
+    completeTurn,
+    failTurn,
+    retryTurn,
     startNewConversation: beginNewConversation,
   } = useAssistantConversations();
   const promptInput = useRef<HTMLTextAreaElement>(null);
   const conversationHistory = useRef<HTMLDivElement>(null);
+  const activeRequest = useRef<AbortController | null>(null);
   const previousWorkspaceId = useRef(workspaceId);
   const previousConversationId = useRef<string | null>(null);
   const [headingVariantIndex, setHeadingVariantIndex] = useState(0);
   const [prompt, setPrompt] = useState("");
   const [copiedTurnId, setCopiedTurnId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const turns = activeConversation?.turns ?? [];
 
   useEffect(() => {
     const workspaceChanged = previousWorkspaceId.current !== workspaceId;
     previousWorkspaceId.current = workspaceId;
-
     if (workspaceChanged) {
       setPrompt("");
       setCopiedTurnId(null);
@@ -200,19 +119,21 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
 
     const timeout = window.setTimeout(() => {
       setHeadingVariantIndex(chooseHeadingVariant(workspaceId));
-      if (workspaceChanged) {
-        promptInput.current?.focus();
-      }
+      if (workspaceChanged) promptInput.current?.focus();
     }, 0);
-
     return () => window.clearTimeout(timeout);
   }, [workspaceId]);
 
   useEffect(() => {
+    return () => {
+      activeRequest.current?.abort();
+      activeRequest.current = null;
+    };
+  }, [workspaceId]);
+
+  useEffect(() => {
     const history = conversationHistory.current;
-    if (history) {
-      history.scrollTop = history.scrollHeight;
-    }
+    if (history) history.scrollTop = history.scrollHeight;
   }, [activeConversation?.turns]);
 
   useEffect(() => {
@@ -228,6 +149,7 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
   }
 
   function startNewConversation() {
+    activeRequest.current?.abort();
     beginNewConversation();
     setPrompt("");
     setCopiedTurnId(null);
@@ -242,40 +164,46 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
     }
   }
 
-  function submitQuestion(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const question = prompt.trim();
-    if (!question) return;
+  async function sendQuestion(
+    question: string,
+    existingHandle?: AssistantTurnHandle,
+  ) {
+    if (activeRequest.current) return;
+    const normalizedQuestion = question.trim();
+    if (!normalizedQuestion) return;
 
-    addTurn({
-      question,
-      answer: placeholderResponse,
-      references: [
-        {
-          label: "Graph explorer",
-          description: "Inspect entities and relationships",
-          href: routes.workspace.graph(workspaceId),
-        },
-        {
-          label: "Project sources",
-          description: "Review the indexed source material",
-          href: routes.workspace.sources(workspaceId),
-        },
-      ],
-    });
-    setPrompt("");
-    promptInput.current?.focus();
+    const handle = existingHandle ?? beginTurn(normalizedQuestion);
+    if (existingHandle) retryTurn(existingHandle);
+    else setPrompt("");
+
+    const controller = new AbortController();
+    activeRequest.current = controller;
+    setIsSubmitting(true);
+    try {
+      const response = await askAssistant({
+        workspaceId,
+        question: normalizedQuestion,
+        history: historyFromTurns(turns),
+        signal: controller.signal,
+      });
+      completeTurn(handle, response);
+    } catch (error) {
+      failTurn(handle, requestErrorMessage(error));
+    } finally {
+      if (activeRequest.current === controller) {
+        activeRequest.current = null;
+        setIsSubmitting(false);
+        window.setTimeout(() => promptInput.current?.focus(), 0);
+      }
+    }
   }
 
-  function handlePromptKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey &&
-      !event.nativeEvent.isComposing
-    ) {
-      event.preventDefault();
-      event.currentTarget.form?.requestSubmit();
-    }
+  function retryQuestion(turn: AssistantTurn) {
+    if (!activeConversation) return;
+    void sendQuestion(turn.question, {
+      conversationId: activeConversation.id,
+      turnId: turn.id,
+    });
   }
 
   const [headingPrefix, headingSuffix] = headingVariants[headingVariantIndex];
@@ -290,287 +218,72 @@ export function WorkspaceDetail({ workspaceId }: { workspaceId: string }) {
           <div className="flex min-w-0 items-center gap-3">
             <CortexMark className="size-7 shrink-0" />
             <span className="shrink-0 text-sm font-medium text-muted">Cortex</span>
-            <span aria-hidden="true" className="text-lg text-subtle/70">
-              /
-            </span>
-            <h1
-              id="assistant-session-heading"
-              title={conversationTitle}
-              className="truncate text-base font-medium tracking-[-0.015em] text-foreground"
-            >
+            <span aria-hidden="true" className="text-lg text-subtle/70">/</span>
+            <h1 id="assistant-session-heading" title={conversationTitle} className="truncate text-base font-medium tracking-[-0.015em] text-foreground">
               {conversationTitle}
             </h1>
           </div>
-
-          <button
-            type="button"
-            onClick={startNewConversation}
-            className="flex min-h-9 shrink-0 items-center gap-2 rounded-lg border border-border/30 bg-surface/35 px-3 text-xs font-medium text-muted transition-[background,border-color,color] hover:border-border/55 hover:bg-surface/65 hover:text-foreground"
-          >
-            <PlusIcon />
+          <button type="button" onClick={startNewConversation} className="flex min-h-9 shrink-0 items-center gap-2 rounded-lg border border-border/30 bg-surface/35 px-3 text-xs font-medium text-muted transition-[background,border-color,color] hover:border-border/55 hover:bg-surface/65 hover:text-foreground">
+            <span aria-hidden="true" className="text-base leading-none">+</span>
             New conversation
           </button>
         </header>
       ) : null}
 
       <div className="mx-auto flex min-h-0 w-full max-w-[76rem] flex-1 flex-col px-[var(--cortex-page-gutter)] pb-8 pt-6">
-        <section
-          aria-labelledby={
-            hasMessages ? "assistant-session-heading" : "ask-cortex-heading"
-          }
-          className={`mx-auto flex min-h-0 w-full max-w-[51rem] flex-1 flex-col ${
-            hasMessages ? "" : "justify-center pb-24"
-          }`}
-        >
+        <section aria-labelledby={hasMessages ? "assistant-session-heading" : "ask-cortex-heading"} className={`mx-auto flex min-h-0 w-full max-w-[51rem] flex-1 flex-col ${hasMessages ? "" : "justify-center pb-24"}`}>
           {!hasMessages ? (
             <>
-              <h1
-                id="ask-cortex-heading"
-                className="text-center text-[clamp(1.65rem,3vw,2.25rem)] font-medium leading-tight tracking-[-0.035em] text-foreground"
-              >
+              <h1 id="ask-cortex-heading" className="text-center text-[clamp(1.65rem,3vw,2.25rem)] font-medium leading-tight tracking-[-0.035em] text-foreground">
                 {headingPrefix}{" "}
-                <span className="decoration-border decoration-dotted underline underline-offset-4">
-                  {workspace?.name ?? "this workspace"}
-                </span>
+                <span className="decoration-border decoration-dotted underline underline-offset-4">{workspace?.name ?? "this workspace"}</span>
                 {headingSuffix}
               </h1>
               <p className="mx-auto mt-3 max-w-[38rem] text-center text-sm leading-6 text-subtle">
-                Trace project decisions, surface contradictions, and connect
-                answers to workspace evidence.
+                Trace project decisions, surface contradictions, and connect answers to workspace evidence.
               </p>
             </>
           ) : null}
 
           {hasMessages ? (
-            <div
-              ref={conversationHistory}
-              aria-label="Conversation history"
-              className="mt-5 min-h-0 flex-1 overflow-y-auto pr-2"
-            >
+            <div ref={conversationHistory} aria-label="Conversation history" className="mt-5 min-h-0 flex-1 overflow-y-auto pr-2">
               <ol aria-live="polite" className="divide-y divide-border/20">
                 {turns.map((turn, turnIndex) => (
                   <li key={turn.id} className="py-8 first:pt-3">
-                    <article aria-label={`Conversation turn ${turnIndex + 1}`}>
-                      <section
-                        aria-label="Your message"
-                        className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3.5"
-                      >
-                        <span
-                          aria-hidden="true"
-                          className="grid size-8 place-items-center rounded-lg border border-border/25 bg-surface/55 font-mono text-[0.625rem] font-semibold text-muted"
-                        >
-                          {initialsFor(userLabel)}
-                        </span>
-                        <div className="min-w-0 pt-0.5">
-                          <p className="text-sm font-semibold text-foreground">
-                            {userLabel}
-                            {userLabel !== "You" ? (
-                              <span className="ml-2 text-xs font-normal text-subtle">
-                                You
-                              </span>
-                            ) : null}
-                          </p>
-                          <p className="mt-2 whitespace-pre-wrap text-[0.9375rem] leading-7 text-foreground">
-                            {turn.question}
-                          </p>
-                        </div>
-                      </section>
-
-                      <section
-                        aria-label="Cortex response"
-                        className="mt-7 grid grid-cols-[2rem_minmax(0,1fr)] gap-3.5"
-                      >
-                        <CortexMark className="size-8" />
-                        <div className="min-w-0 pt-0.5">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-sm font-semibold text-foreground">
-                              Cortex
-                            </h3>
-                            <span className="rounded-full border border-border/25 bg-surface/60 px-2 py-0.5 font-mono text-[0.5625rem] font-semibold uppercase tracking-[0.1em] text-subtle">
-                              Preview
-                            </span>
-                          </div>
-
-                          <p className="mt-3 text-[0.9375rem] leading-7 text-muted">
-                            {turn.answer}
-                          </p>
-
-                          <nav
-                            aria-label={`References for question ${turnIndex + 1}`}
-                            className="mt-5 flex flex-wrap items-center gap-y-2"
-                          >
-                            <p className="mr-3 font-mono text-[0.5625rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-                              Evidence
-                            </p>
-                            <ol className="flex flex-wrap items-center gap-y-2">
-                              {turn.references.map((reference, referenceIndex) => (
-                                <li
-                                  key={reference.href}
-                                  className="flex items-center"
-                                >
-                                  {referenceIndex > 0 ? (
-                                    <span
-                                      aria-hidden="true"
-                                      className="h-px w-4 bg-border/35"
-                                    />
-                                  ) : null}
-                                  <Link
-                                    href={reference.href}
-                                    aria-label={reference.label}
-                                    title={reference.description}
-                                    className="group inline-flex min-h-7 items-center gap-1.5 rounded-full px-1.5 text-xs text-subtle transition-colors hover:text-foreground"
-                                  >
-                                    <span className="grid size-3.5 shrink-0 place-items-center rounded-full border border-accent-bright/45 transition-[background,border-color] group-hover:border-accent-bright group-hover:bg-accent/15">
-                                      <span className="size-1.5 rounded-full bg-accent-bright" />
-                                    </span>
-                                    <span className="underline decoration-border/40 underline-offset-4 group-hover:decoration-accent-bright/60">
-                                      {reference.label}
-                                    </span>
-                                  </Link>
-                                </li>
-                              ))}
-                            </ol>
-                          </nav>
-
-                          <div className="mt-4 flex items-center gap-2 border-t border-border/15 pt-3">
-                            <button
-                              type="button"
-                              onClick={() => void copyAnswer(turn)}
-                              className="inline-flex min-h-7 items-center gap-1.5 rounded-md px-2 text-[0.6875rem] font-medium text-subtle transition-colors hover:bg-surface/55 hover:text-foreground"
-                            >
-                              {copiedTurnId === turn.id ? (
-                                <CheckIcon />
-                              ) : (
-                                <CopyIcon />
-                              )}
-                              {copiedTurnId === turn.id ? "Copied" : "Copy answer"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => promptInput.current?.focus()}
-                              className="min-h-7 rounded-md px-2 text-[0.6875rem] font-medium text-subtle transition-colors hover:bg-surface/55 hover:text-foreground"
-                            >
-                              Ask a follow-up
-                            </button>
-                          </div>
-
-                          <section
-                            aria-labelledby={`follow-up-heading-${turn.id}`}
-                            className="mt-5"
-                          >
-                            <h4
-                              id={`follow-up-heading-${turn.id}`}
-                              className="font-mono text-[0.5625rem] font-semibold uppercase tracking-[0.12em] text-subtle"
-                            >
-                              Continue exploring
-                            </h4>
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {followUpSuggestions.map((suggestion) => (
-                                <button
-                                  key={suggestion}
-                                  type="button"
-                                  onClick={() => selectSuggestion(suggestion)}
-                                  className="min-h-8 rounded-full border border-border/20 bg-surface/30 px-3 text-xs text-muted transition-[background,border-color,color] hover:border-border/45 hover:bg-surface/60 hover:text-foreground"
-                                >
-                                  {suggestion}
-                                </button>
-                              ))}
-                            </div>
-                          </section>
-                        </div>
-                      </section>
-                    </article>
+                    <AssistantConversationTurn
+                      turn={turn}
+                      turnIndex={turnIndex}
+                      workspaceId={workspaceId}
+                      userLabel={userLabel}
+                      isCopied={copiedTurnId === turn.id}
+                      onCopy={() => void copyAnswer(turn)}
+                      onRetry={() => retryQuestion(turn)}
+                      onSelectSuggestion={selectSuggestion}
+                      onFocusComposer={() => promptInput.current?.focus()}
+                    />
                   </li>
                 ))}
               </ol>
             </div>
           ) : null}
 
-          <div className={hasMessages ? "mt-6 shrink-0" : "mt-9"}>
-            <form
-              onSubmit={submitQuestion}
-              aria-label="Ask Cortex"
-              autoComplete="off"
-              className="relative z-10 overflow-hidden rounded-[1.125rem] border border-border/30 bg-composer shadow-[0_20px_60px_rgb(0_0_0/28%)] transition-[border-color,box-shadow] duration-200 focus-within:border-border/65 focus-within:shadow-[0_22px_70px_rgb(0_0_0/34%)]"
-            >
-              <label htmlFor="cortex-question" className="sr-only">
-                Ask Cortex about this workspace
-              </label>
-              <textarea
-                ref={promptInput}
-                id="cortex-question"
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onKeyDown={handlePromptKeyDown}
-                autoComplete="off"
-                rows={hasMessages ? 2 : 3}
-                placeholder="Ask about a decision, contradiction, or source"
-                className={`cortex-composer-input block w-full resize-none bg-transparent px-5 pb-3 pt-5 text-[0.95rem] leading-6 text-foreground placeholder:text-subtle ${
-                  hasMessages ? "min-h-20" : "min-h-28"
-                }`}
-              />
-
-              <div className="flex min-h-13 items-center justify-between gap-4 px-3.5 pb-3">
-                <div className="flex min-w-0 items-center gap-1">
-                  <Link
-                    href={routes.workspace.ingest(workspaceId)}
-                    aria-label="Add source"
-                    title="Add source"
-                    className="flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs font-medium text-muted transition-colors hover:bg-surface/70 hover:text-foreground"
-                  >
-                    <PlusIcon />
-                    Add source
-                  </Link>
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={!prompt.trim()}
-                  aria-disabled={!prompt.trim()}
-                  aria-label="Send question"
-                  className="grid size-9 shrink-0 place-items-center rounded-full bg-accent text-foreground transition-[background,opacity,transform] enabled:hover:bg-accent-hover enabled:active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-25"
-                >
-                  <ArrowUpIcon />
-                </button>
-              </div>
-            </form>
-
-            <div className="relative mx-5 -mt-px flex min-h-10 items-center justify-between gap-4 rounded-b-xl border border-border/25 bg-surface/45 px-4 pt-px text-[0.6875rem] text-subtle">
-              <span className="min-w-0 truncate">
-                Workspace · {workspace?.name ?? "Loading…"}
-              </span>
-              <nav aria-label="Available answer context" className="flex shrink-0 items-center gap-2.5">
-                <Link
-                  href={routes.workspace.graph(workspaceId)}
-                  className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
-                >
-                  <span className="size-1.5 rounded-full bg-accent-bright" />
-                  Graph
-                </Link>
-                <Link
-                  href={routes.workspace.sources(workspaceId)}
-                  className="inline-flex items-center gap-1.5 transition-colors hover:text-foreground"
-                >
-                  <span className="size-1.5 rounded-full bg-accent-bright" />
-                  Sources
-                </Link>
-              </nav>
-            </div>
-          </div>
+          <AssistantComposer
+            inputRef={promptInput}
+            workspaceId={workspaceId}
+            workspaceName={workspace?.name ?? null}
+            prompt={prompt}
+            hasMessages={hasMessages}
+            isSubmitting={isSubmitting}
+            onPromptChange={setPrompt}
+            onSubmit={() => void sendQuestion(prompt)}
+          />
 
           {!hasMessages ? (
             <section aria-labelledby="prompt-suggestions" className="mt-6">
-              <h2 id="prompt-suggestions" className="sr-only">
-                Try asking
-              </h2>
+              <h2 id="prompt-suggestions" className="sr-only">Try asking</h2>
               <div className="flex items-center justify-center gap-1 text-xs text-subtle">
                 {promptSuggestions.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    onClick={() => selectSuggestion(suggestion)}
-                    className="min-h-8 rounded-lg px-3 transition-colors hover:bg-surface/45 hover:text-muted"
-                  >
+                  <button key={suggestion} type="button" onClick={() => selectSuggestion(suggestion)} className="min-h-8 rounded-lg px-3 transition-colors hover:bg-surface/45 hover:text-muted">
                     {suggestion}
                   </button>
                 ))}
