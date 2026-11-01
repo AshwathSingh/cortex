@@ -10,3 +10,4 @@ graphify-out/
 .infisical.json
 .s3*
 .cortex-dev/
+.DS_Store

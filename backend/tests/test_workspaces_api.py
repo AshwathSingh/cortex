@@ -239,7 +239,7 @@ def test_list_returns_the_fields_the_selector_needs(api, scenario):
 
     entry = client.get("/api/workspaces").json()[0]
 
-    assert set(entry) == {"id", "name", "description", "role", "created_at"}
+    assert set(entry) == {"id", "name", "description", "role", "permissions", "created_at"}
     assert uuid.UUID(entry["id"])  # a parseable id to route with
 
 

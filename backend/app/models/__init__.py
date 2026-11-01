@@ -3,7 +3,7 @@ from app.models.github_credential import GitHubCredential
 from app.models.oauth_transaction import OAuthTransaction
 from app.models.session import UserSession
 from app.models.user import User
-from app.models.workspace import Role, Workspace, WorkspaceMembership
+from app.models.workspace import Role, Workspace, WorkspaceMembership, WorkspaceRole
 
 __all__ = [
     "GITHUB_KIND",
@@ -16,4 +16,5 @@ __all__ = [
     "UserSession",
     "Workspace",
     "WorkspaceMembership",
+    "WorkspaceRole",
 ]
