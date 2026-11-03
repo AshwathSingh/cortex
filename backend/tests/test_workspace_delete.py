@@ -86,6 +86,19 @@ def world(api_db, graph):
     app.dependency_overrides.pop(get_neo4j, None)
 
 
+NAMES = {A: "Alpha", B: "Beta"}
+
+
+def delete(world, who, workspace_id=A, **body):
+    """DELETE with a JSON body (the test client's .delete() can't send one).
+    Confirms with the right name unless the caller overrides ``confirm_name``."""
+    payload = {"confirm_name": NAMES[workspace_id], **body}
+    payload = {k: v for k, v in payload.items() if v is not ...}
+    return as_(world, who).request(
+        "DELETE", f"/api/workspaces/{workspace_id}", json=payload
+    )
+
+
 def as_(world, who):
     client, sessions, users, _ = world
     client.cookies.clear()
@@ -119,7 +132,7 @@ def test_owner_deletes_workspace_everything_in_it_goes_and_the_other_stays(world
     nodes_b = graph_total(graph, B)
     assert nodes_b > 0 and graph_total(graph, A) > 0
 
-    r = as_(world, "owner").delete(f"/api/workspaces/{A}")
+    r = delete(world, "owner")
     assert r.status_code == 204 and r.content == b""
 
     assert set(rows(sessions, A).values()) == {0}
@@ -131,7 +144,7 @@ def test_owner_deletes_workspace_everything_in_it_goes_and_the_other_stays(world
 def test_non_owner_cannot_delete_and_nothing_is_touched(world):
     _, sessions, _, graph = world
     before, nodes = rows(sessions, A), graph_total(graph, A)
-    r = as_(world, "editor").delete(f"/api/workspaces/{A}")
+    r = delete(world, "editor")
     assert r.status_code == 403 and "workspace.delete" in r.json()["detail"]
     assert rows(sessions, A) == before and graph_total(graph, A) == nodes
     with sessions() as s:
@@ -141,11 +154,11 @@ def test_non_owner_cannot_delete_and_nothing_is_touched(world):
 def test_unauthenticated_delete_is_401(world):
     client = world[0]
     client.cookies.clear()
-    assert client.delete(f"/api/workspaces/{A}").status_code == 401
+    assert client.request("DELETE", f"/api/workspaces/{A}", json={"confirm_name": "Alpha"}).status_code == 401
 
 
 def test_deleted_workspace_is_gone_for_its_former_members(world):
-    as_(world, "owner").delete(f"/api/workspaces/{A}")
+    delete(world, "owner")
     editor = as_(world, "editor")
     assert editor.get(f"/api/workspaces/{A}").status_code == 403
     assert editor.get(f"/api/workspaces/{A}/members").status_code == 403
@@ -174,7 +187,7 @@ def test_neo4j_failure_hides_workspace_and_retry_finishes_the_delete(world):
     flaky = FlakyDriver(graph.driver, failures=1)
     app.dependency_overrides[get_neo4j] = lambda: flaky
 
-    r = as_(world, "owner").delete(f"/api/workspaces/{A}")
+    r = delete(world, "owner")
     assert r.status_code == 500 and "try deleting it again" in r.json()["detail"]
     assert "Neo4j" not in r.text and "simulated" not in r.text  # no internals leaked
 
@@ -186,23 +199,23 @@ def test_neo4j_failure_hides_workspace_and_retry_finishes_the_delete(world):
     assert A not in [w["id"] for w in as_(world, "owner").get("/api/workspaces").json()]
 
     # Re-running resumes and completes.
-    assert as_(world, "owner").delete(f"/api/workspaces/{A}").status_code == 204
+    assert delete(world, "owner").status_code == 204
     assert set(rows(sessions, A).values()) == {0}
     assert graph_total(graph, A) == 0
 
 
 def test_repeating_a_finished_delete_does_not_error(world):
-    assert as_(world, "owner").delete(f"/api/workspaces/{A}").status_code == 204
+    assert delete(world, "owner").status_code == 204
     # The owner's membership is gone with the workspace, so this is the same 403
     # any request for a workspace that no longer exists gets.
-    assert as_(world, "owner").delete(f"/api/workspaces/{A}").status_code == 403
+    assert delete(world, "owner").status_code == 403
 
 
 def test_deleting_workspace_cannot_be_written_to(world):
     """A sync or invite accept that lands after the mark must not add data."""
     client, sessions, users, graph = world
     app.dependency_overrides[get_neo4j] = lambda: FlakyDriver(graph.driver, failures=99)
-    as_(world, "owner").delete(f"/api/workspaces/{A}")  # leaves it 'deleting'
+    delete(world, "owner")  # leaves it 'deleting'
 
     from app.services.invites import accept_invite
     from app.services.roles import NotFound
@@ -438,3 +451,104 @@ def test_postgres_migration_13_marks_existing_workspaces_active(scratch_url):
     finally:
         settings.database_url = old
         engine.dispose()
+
+
+# --- T-5.3: authorisation + confirmation guard --------------------------------
+
+
+def untouched(world):
+    _, sessions, _, graph = world
+    with sessions() as s:
+        assert s.get(Workspace, uuid.UUID(A)).status == "active"
+    assert rows(sessions, A)["memberships"] == 2
+    assert graph_total(graph, A) > 0
+
+
+def test_missing_confirmation_is_400_and_nothing_changes(world):
+    client = as_(world, "owner")
+    for kwargs in (
+        {},  # no body at all
+        {"json": {}},  # body without the field
+        {"json": {"confirm_name": None}},
+    ):
+        r = client.request("DELETE", f"/api/workspaces/{A}", **kwargs)
+        assert r.status_code == 400, kwargs
+        assert "confirm_name" in r.json()["detail"]
+    untouched(world)
+
+
+@pytest.mark.parametrize(
+    "typed", ["Wrong", "alpha", "ALPHA", " Alpha", "Alpha ", "Alph", "Alpha!", ""]
+)
+def test_wrong_confirmation_is_400_exact_and_case_sensitive(world, typed):
+    r = delete(world, "owner", confirm_name=typed)
+    assert r.status_code == 400
+    untouched(world)
+
+
+def test_another_workspaces_name_does_not_confirm_this_one(world):
+    assert delete(world, "owner", confirm_name="Beta").status_code == 400
+    untouched(world)
+
+
+def test_exact_name_confirms(world):
+    assert delete(world, "owner", confirm_name="Alpha").status_code == 204
+
+
+def test_permission_is_checked_before_the_name(world):
+    """A non-owner gets 403 whatever they typed, so a guess can't be confirmed."""
+    editor = as_(world, "editor")
+    for body in ({"confirm_name": "Alpha"}, {"confirm_name": "nope"}, {}):
+        r = editor.request("DELETE", f"/api/workspaces/{A}", json=body)
+        assert r.status_code == 403
+    untouched(world)
+
+
+def test_custom_role_with_every_grantable_permission_still_cannot_delete(world):
+    from app.permissions import GRANTABLE
+
+    client, sessions, users, _ = world
+    with sessions() as s:
+        role = WorkspaceRole(
+            workspace_id=uuid.UUID(A),
+            name="Almost owner",
+            permissions=sorted(p.value for p in GRANTABLE),
+        )
+        s.add(role)
+        s.flush()
+        power = make_user(s, "power@example.com")
+        s.add(
+            WorkspaceMembership(
+                user_id=power.id, workspace_id=uuid.UUID(A), custom_role_id=role.id
+            )
+        )
+        s.commit()
+        users["power"] = power
+    assert delete(world, "power").status_code == 403
+    with sessions() as s:
+        assert s.get(Workspace, uuid.UUID(A)).status == "active"
+    assert graph_total(world[3], A) > 0
+
+
+def test_confirmation_is_checked_before_anything_is_marked_or_deleted(world):
+    """A bad name must not even flip the workspace to 'deleting'."""
+    flaky = FlakyDriver(world[3].driver, failures=99)  # would explode if reached
+    app.dependency_overrides[get_neo4j] = lambda: flaky
+    assert delete(world, "owner", confirm_name="nope").status_code == 400
+    assert flaky.failures == 99  # Neo4j was never touched
+    untouched(world)
+
+
+def test_retrying_an_interrupted_delete_still_needs_the_name(world):
+    _, _, _, graph = world
+    flaky = FlakyDriver(graph.driver, failures=1)  # one shared outage, not one per request
+    app.dependency_overrides[get_neo4j] = lambda: flaky
+    assert delete(world, "owner").status_code == 500
+    assert delete(world, "owner", confirm_name="wrong").status_code == 400
+    assert delete(world, "owner").status_code == 204
+
+
+def test_confirmation_must_be_a_string(world):
+    r = delete(world, "owner", confirm_name=123)
+    assert r.status_code == 422
+    untouched(world)

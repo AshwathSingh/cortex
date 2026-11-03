@@ -14,7 +14,7 @@ from typing import Annotated
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from neo4j import Driver
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 from sqlalchemy import select
@@ -148,28 +148,46 @@ def get_workspace(
     return _summarise(workspace, membership)
 
 
+class WorkspaceDelete(BaseModel):
+    #: Typed by the user in the confirmation modal. Optional here only so that a
+    #: missing value is a clear 400 from the handler rather than a generic 422.
+    confirm_name: str | None = None
+
+
 @router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_workspace_endpoint(
     workspace_id: uuid.UUID,
     user: CurrentUser,
     session: DbSession,
+    body: WorkspaceDelete | None = Body(default=None),
     driver: Driver = Depends(get_neo4j),
 ) -> Response:
     """Delete the workspace and everything in it: graph nodes and edges, members,
     invites, custom roles and data sources.
 
-    Only an owner (``workspace.delete``). If a store fails part-way the workspace
+    Only an owner (``workspace.delete``), and the body must carry
+    ``{"confirm_name": "<exact workspace name>"}`` (case-sensitive, no trimming) or
+    this is a 400. Both checks run before anything is marked or deleted, in that
+    order: a caller who isn't allowed gets 403 whatever they typed, so the response
+    never reveals whether a guessed name was right. If a store fails part-way the workspace
     stays hidden in a ``deleting`` state and this endpoint returns 500; calling it
     again resumes the cleanup. Authorisation runs first, so a refused caller
     touches no data.
     """
-    load_workspace_for_user(
+    workspace, _ = load_workspace_for_user(
         session,
         user,
         workspace_id,
         permission=Permission.WORKSPACE_DELETE,
         include_deleting=True,  # so a half-finished delete can be retried
     )
+    confirm_name = body.confirm_name if body else None
+    if confirm_name is None or confirm_name != workspace.name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="To delete this workspace, send its exact name as 'confirm_name'. "
+            "Nothing was deleted.",
+        )
     try:
         delete_workspace(session, driver, workspace_id)
     except Exception:
