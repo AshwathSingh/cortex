@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     # Per client IP, per endpoint, on the public /api/auth/github/* routes.
     oauth_rate_limit_per_minute: int = 20
 
+    # Assistant requests can invoke a paid, remote model once a provider is
+    # configured. Bound both request frequency and provider latency at the API.
+    assistant_rate_limit_per_minute: int = Field(default=20, gt=0, le=600)
+    assistant_timeout_seconds: float = Field(default=30, gt=0, le=120)
+
     # Postgres holds users, workspaces and membership (US-41). The graph DB holds
     # nodes/edges/evidence; who may see a workspace is a relational question.
     database_url: str = "postgresql+psycopg://cortex:cortex@localhost:5432/cortex"

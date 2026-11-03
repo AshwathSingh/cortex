@@ -6,7 +6,7 @@ import { WorkspaceDetail } from "@/components/workspaces/workspace-detail";
 import { WorkspaceShell } from "@/components/workspaces/workspace-shell";
 import type { AuthenticatedUser, WorkspaceSummary } from "@/lib/api-types";
 
-const router = { replace: vi.fn() };
+const router = { push: vi.fn(), replace: vi.fn() };
 vi.mock("next/navigation", () => ({
   usePathname: () => "/workspaces/workspace-1",
   useRouter: () => router,
@@ -33,6 +33,11 @@ const OTHER_WORKSPACE = {
   role: "EDITOR",
 } satisfies WorkspaceSummary;
 
+const ASSISTANT_RESPONSE = {
+  answer: "A workspace-scoped placeholder answer.",
+  citations: [],
+};
+
 function jsonResponse(status: number, body: unknown) {
   return Promise.resolve(
     new Response(JSON.stringify(body), {
@@ -49,6 +54,9 @@ function mockWorkspaceRequests(workspaceStatus = 200, workspaceBody: unknown = W
       const body = workspaceStatus === 200 ? [workspaceBody, OTHER_WORKSPACE] : workspaceBody;
       return jsonResponse(workspaceStatus, body);
     }
+    if (path.endsWith("/assistant/query")) {
+      return jsonResponse(200, ASSISTANT_RESPONSE);
+    }
     return jsonResponse(200, USER);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -56,6 +64,7 @@ function mockWorkspaceRequests(workspaceStatus = 200, workspaceBody: unknown = W
 }
 
 beforeEach(() => {
+  router.push.mockReset();
   router.replace.mockReset();
   window.localStorage.clear();
   window.sessionStorage.clear();
@@ -76,9 +85,12 @@ describe("WorkspaceShell", () => {
       </WorkspaceShell>,
     );
 
-    expect(await screen.findByRole("heading", { level: 1 })).toHaveTextContent(
-      WORKSPACE.name,
-    );
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: new RegExp(WORKSPACE.name),
+      }),
+    ).toBeInTheDocument();
     expect(
       fetchMock.mock.calls.filter(
         ([input]) => String(input) === "/api/workspaces",
@@ -114,6 +126,44 @@ describe("WorkspaceShell", () => {
       "href",
       `/workspaces/new?from=${WORKSPACE.id}`,
     );
+  });
+
+  it("adds conversations to the sidebar and reopens them", async () => {
+    mockWorkspaceRequests();
+    const user = userEvent.setup();
+
+    render(
+      <WorkspaceShell workspaceId={WORKSPACE.id}>
+        <WorkspaceDetail workspaceId={WORKSPACE.id} />
+      </WorkspaceShell>,
+    );
+
+    const input = await screen.findByLabelText(
+      /ask cortex about this workspace/i,
+    );
+    await user.type(input, "Why was Neo4j selected?");
+    await user.click(screen.getByRole("button", { name: /send question/i }));
+    await screen.findByText(ASSISTANT_RESPONSE.answer);
+
+    const recentConversation = screen.getByRole("button", {
+      name: "Why was Neo4j selected?",
+    });
+    expect(recentConversation).toHaveAttribute("aria-current", "page");
+
+    await user.click(
+      screen.getByRole("button", { name: "Start new conversation" }),
+    );
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(recentConversation).not.toHaveAttribute("aria-current");
+    expect(router.push).toHaveBeenCalledWith(`/workspaces/${WORKSPACE.id}`);
+
+    router.push.mockClear();
+    await user.click(recentConversation);
+    expect(
+      screen.getByRole("article", { name: "Conversation turn 1" }),
+    ).toHaveTextContent("Why was Neo4j selected?");
+    expect(recentConversation).toHaveAttribute("aria-current", "page");
+    expect(router.push).toHaveBeenCalledWith(`/workspaces/${WORKSPACE.id}`);
   });
 
   it("returns expired sessions to login", async () => {

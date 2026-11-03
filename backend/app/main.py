@@ -2,7 +2,17 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import auth, graph, health, ingest, invites, members, roles, workspaces
+from app.api import (
+    assistant,
+    auth,
+    graph,
+    health,
+    ingest,
+    invites,
+    members,
+    roles,
+    workspaces,
+)
 from app.db.neo4j_driver import close_driver
 from app.db.postgres import dispose_engine
 from app.security import validate_encryption_keys
@@ -23,6 +33,7 @@ app.include_router(ingest.router)
 app.include_router(workspaces.router)
 app.include_router(roles.catalogue_router)
 app.include_router(roles.router)
+app.include_router(assistant.router)
 app.include_router(invites.router)
 app.include_router(invites.accept_router)
 app.include_router(members.router)

@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AppSidebar } from "@/components/navigation/app-sidebar";
 import {
@@ -67,9 +67,11 @@ describe("AppSidebar", () => {
       }),
     ).not.toHaveAttribute("title");
     expect(
-      screen.getByRole("heading", { name: "Recent conversations" }),
+      screen.getByRole("heading", { name: "Recents" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/recent questions will appear here/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/conversations will appear here/i),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "Workspace settings" }),
     ).toHaveAttribute("href", "/workspaces/demo/manage");
@@ -107,5 +109,44 @@ describe("AppSidebar", () => {
       "aria-current",
       "page",
     );
+  });
+
+  it("selects a recent conversation", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onNewConversation = vi.fn();
+    render(
+      <AppSidebar
+        {...baseProps}
+        activePath="/workspaces/demo"
+        onNewConversation={onNewConversation}
+        recentConversations={[
+          {
+            id: "conversation-1",
+            label: "Why was Neo4j selected?",
+            isActive: true,
+            onSelect,
+          },
+        ]}
+      />,
+    );
+
+    const conversation = screen.getByRole("button", {
+      name: "Why was Neo4j selected?",
+    });
+    expect(conversation).toHaveAttribute("aria-current", "page");
+    await user.click(conversation);
+    expect(onSelect).toHaveBeenCalledOnce();
+
+    const recents = screen
+      .getByRole("heading", { name: "Recents" })
+      .closest("section");
+    expect(recents).not.toBeNull();
+    const newConversation = within(recents as HTMLElement).getByRole("button", {
+      name: "Start new conversation",
+    });
+    expect(newConversation).toHaveAttribute("title", "New conversation");
+    await user.click(newConversation);
+    expect(onNewConversation).toHaveBeenCalledOnce();
   });
 });

@@ -40,6 +40,17 @@ class RateLimiter:
     def __call__(self, request: Request) -> None:
         """FastAPI dependency: raises 429 once the caller exceeds the limit."""
         key = request.client.host if request.client else "unknown"
+        self.check(
+            key,
+            detail="Too many sign-in attempts. Please wait and try again.",
+        )
+
+    def check(self, key: str, *, detail: str) -> None:
+        """Record a hit for an application-defined key.
+
+        Authenticated endpoints can key on the user and resource instead of an
+        IP address while reusing the same bounded sliding-window implementation.
+        """
         now = self._clock()
         cutoff = now - self.window
 
@@ -51,7 +62,7 @@ class RateLimiter:
                 retry_after = max(1, math.ceil(hits[0] + self.window - now))
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Too many sign-in attempts. Please wait and try again.",
+                    detail=detail,
                     headers={"Retry-After": str(retry_after)},
                 )
             hits.append(now)
