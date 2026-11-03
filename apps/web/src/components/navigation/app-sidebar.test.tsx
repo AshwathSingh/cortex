@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -138,9 +138,15 @@ describe("AppSidebar", () => {
     await user.click(conversation);
     expect(onSelect).toHaveBeenCalledOnce();
 
-    await user.click(
-      screen.getByRole("button", { name: "Start new conversation" }),
-    );
+    const recents = screen
+      .getByRole("heading", { name: "Recents" })
+      .closest("section");
+    expect(recents).not.toBeNull();
+    const newConversation = within(recents as HTMLElement).getByRole("button", {
+      name: "Start new conversation",
+    });
+    expect(newConversation).toHaveAttribute("title", "New conversation");
+    await user.click(newConversation);
     expect(onNewConversation).toHaveBeenCalledOnce();
   });
 });

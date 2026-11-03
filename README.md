@@ -223,7 +223,7 @@ Edit `.env`. Credentials and tokens must **never** be committed or exposed in th
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI` | GitHub sign-in |
 | `TOKEN_ENCRYPTION_KEY` | Required. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
 | `GITHUB_TOKEN` | Optional; raises the GitHub API limit from 60 to 5,000 requests per hour |
-| `ASSISTANT_RATE_LIMIT_PER_MINUTE`, `ASSISTANT_TIMEOUT_SECONDS` | Bounds assistant request frequency and provider latency |
+| `ASSISTANT_RATE_LIMIT_PER_MINUTE`, `ASSISTANT_TIMEOUT_SECONDS` | Bounds assistant request frequency and provider latency. The rate limit is process-local; use a shared store before running multiple API workers. |
 | `SECURE_COOKIES` | Set to `true` outside local HTTP development |
 
 If you change the Postgres or Neo4j credentials after the first start, Docker keeps the old ones in its volumes. Run `docker compose down -v` to reset them.

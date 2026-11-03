@@ -259,28 +259,29 @@ export function AppSidebar({
             activePath={activePath}
           />
 
-          {onNewConversation ? (
-            <button
-              type="button"
-              onClick={onNewConversation}
-              aria-label="Start new conversation"
-              className="group/new-conversation mt-3 flex min-h-9 w-full items-center gap-2.5 rounded-[var(--cortex-sidebar-item-radius)] px-2.5 text-left text-[0.8125rem] font-medium text-[var(--cortex-sidebar-text)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground"
-            >
-              <ComposeIcon className="size-4 shrink-0 text-[var(--cortex-sidebar-icon)] transition-colors group-hover/new-conversation:text-[var(--cortex-sidebar-accent)]" />
-              <span>New conversation</span>
-            </button>
-          ) : null}
-
           <section
             aria-labelledby="recent-conversations-heading"
             className="mt-4 border-t border-[var(--cortex-sidebar-border)] pt-4"
           >
-            <h2
-              id="recent-conversations-heading"
-              className="px-2.5 text-[0.6875rem] font-semibold tracking-[0.035em] text-subtle"
-            >
-              Recents
-            </h2>
+            <div className="flex min-h-7 items-center justify-between gap-2 px-2.5">
+              <h2
+                id="recent-conversations-heading"
+                className="text-[0.6875rem] font-semibold tracking-[0.035em] text-subtle"
+              >
+                Recents
+              </h2>
+              {onNewConversation ? (
+                <button
+                  type="button"
+                  onClick={onNewConversation}
+                  aria-label="Start new conversation"
+                  title="New conversation"
+                  className="group/new-conversation grid size-7 shrink-0 place-items-center rounded-md text-[var(--cortex-sidebar-icon)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-[var(--cortex-sidebar-accent)]"
+                >
+                  <ComposeIcon className="size-3.5" />
+                </button>
+              ) : null}
+            </div>
 
             {recentConversations.length > 0 ? (
               <nav aria-label="Recent conversations" className="mt-2 space-y-0.5">

@@ -1,8 +1,10 @@
 """Assistant API contract, authorization, validation, and failure handling."""
 
 import asyncio
+import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app.api.assistant import (
     assistant_rate_limiter,
@@ -10,14 +12,20 @@ from app.api.assistant import (
 )
 from app.config import settings
 from app.main import app
-from app.models import Role
+from app.models import Role, User, Workspace
 from app.services.assistant import (
     AssistantAnswer,
     AssistantCitation,
     AssistantProviderError,
 )
-from tests.authz import sign_in_with_role
-from tests.payloads import TEST_WORKSPACE_ID
+from tests.authz import (
+    authenticate,
+    grant,
+    make_user,
+    make_workspace,
+    sign_in_with_role,
+)
+from tests.payloads import TEST_WORKSPACE_ID, TEST_WORKSPACE_ID_B
 
 URL = f"/api/workspaces/{TEST_WORKSPACE_ID}/assistant/query"
 
@@ -88,6 +96,13 @@ def test_non_member_cannot_query_or_discover_workspace(api_db):
     response = client.post(URL, json={"question": "Why Neo4j?"})
     assert response.status_code == 403
     assert response.json()["detail"] == "You do not have access to this workspace"
+
+    unknown_response = client.post(
+        f"/api/workspaces/{uuid.uuid4()}/assistant/query",
+        json={"question": "Why Neo4j?"},
+    )
+    assert unknown_response.status_code == response.status_code
+    assert unknown_response.json() == response.json()
     assert provider.calls == []
 
 
@@ -127,8 +142,17 @@ def test_every_workspace_member_can_query_assistant(api_db, role):
 @pytest.mark.parametrize(
     "body",
     [
+        {},
         {"question": "   "},
         {"question": "x" * 4_001},
+        {
+            "question": "valid",
+            "history": [{"role": "system", "content": "hidden prompt"}],
+        },
+        {
+            "question": "valid",
+            "history": [{"role": "user", "content": "   "}],
+        },
         {
             "question": "valid",
             "history": [{"role": "user", "content": "x"}] * 21,
@@ -139,6 +163,15 @@ def test_every_workspace_member_can_query_assistant(api_db, role):
                 {"role": "user", "content": "x" * 4_000}
             ] * 5,
         },
+    ],
+    ids=[
+        "missing-question",
+        "blank-question",
+        "oversized-question",
+        "system-history-role",
+        "blank-history-content",
+        "too-many-history-messages",
+        "oversized-history",
     ],
 )
 def test_invalid_or_oversized_requests_never_reach_provider(api_db, body):
@@ -169,11 +202,50 @@ def test_provider_failure_does_not_leak_internal_details(api_db):
 
 
 def test_rate_limit_is_scoped_to_authenticated_user_and_workspace(api_db):
-    client, _, provider = setup(api_db)
+    client, sessions, provider = setup(api_db)
     assistant_rate_limiter.limit = 1
 
     assert client.post(URL, json={"question": "First"}).status_code == 200
     response = client.post(URL, json={"question": "Second"})
     assert response.status_code == 429
     assert response.headers["retry-after"]
-    assert len(provider.calls) == 1
+
+    with sessions() as session:
+        first_user = session.scalar(
+            select(User).where(User.email == "member@example.com")
+        )
+        first_workspace = session.get(Workspace, uuid.UUID(TEST_WORKSPACE_ID))
+        assert first_user is not None
+        assert first_workspace is not None
+
+        second_workspace = make_workspace(
+            session,
+            "Second workspace",
+            TEST_WORKSPACE_ID_B,
+        )
+        grant(session, second_workspace, first_user, Role.OWNER)
+
+        second_user = make_user(session, "another-member@example.com")
+        grant(session, first_workspace, second_user, Role.OWNER)
+        session.commit()
+
+    second_workspace_url = (
+        f"/api/workspaces/{TEST_WORKSPACE_ID_B}/assistant/query"
+    )
+    assert (
+        client.post(
+            second_workspace_url,
+            json={"question": "Same user, different workspace"},
+        ).status_code
+        == 200
+    )
+
+    authenticate(client, sessions, second_user)
+    assert (
+        client.post(
+            URL,
+            json={"question": "Different user, same workspace"},
+        ).status_code
+        == 200
+    )
+    assert len(provider.calls) == 3
