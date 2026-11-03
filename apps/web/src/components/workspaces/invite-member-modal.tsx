@@ -142,7 +142,7 @@ export function InviteMemberModal({
       aria-labelledby="invite-member-title"
       aria-modal="true"
       onCancel={handleCancel}
-      className="m-auto w-[min(30rem,calc(100%-2rem))] rounded-2xl border border-border/30 bg-surface p-0 text-foreground shadow-[0_28px_80px_rgb(0_0_0/0.48)] backdrop:bg-background/85 backdrop:backdrop-blur-[2px]"
+      className="m-auto w-[min(34rem,calc(100%-2rem))] rounded-2xl border border-border/30 bg-surface p-0 text-foreground shadow-[0_28px_80px_rgb(0_0_0/0.48)] backdrop:bg-background/85 backdrop:backdrop-blur-[2px]"
     >
       <div className="px-6 pt-6">
         <div className="flex items-start justify-between gap-5">
