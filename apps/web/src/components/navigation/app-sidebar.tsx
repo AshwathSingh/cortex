@@ -96,7 +96,7 @@ function WorkspaceSwitcher({
           <span className="block text-[0.625rem] font-semibold uppercase tracking-[0.11em] text-subtle">
             {productLabel}
           </span>
-          <span className="mt-0.5 block truncate text-[0.8125rem] font-semibold tracking-[-0.01em] text-foreground">
+          <span className="mt-0.5 block truncate text-sm font-semibold tracking-[-0.01em] text-foreground">
             {workspace.label}
           </span>
         </span>
@@ -213,7 +213,7 @@ function SidebarNavigation({
             key={link.href}
             href={link.href}
             aria-current={isActive ? "page" : undefined}
-            className="group relative flex min-h-10 items-center gap-2.5 rounded-[var(--cortex-sidebar-item-radius)] px-2.5 text-[0.8125rem] font-medium text-[var(--cortex-sidebar-text)] transition-[background,color] duration-150 ease-out hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground active:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:bg-[image:var(--cortex-sidebar-active)] aria-[current=page]:text-foreground"
+            className="group relative flex min-h-10 items-center gap-2.5 rounded-[var(--cortex-sidebar-item-radius)] px-2.5 text-sm font-medium text-[var(--cortex-sidebar-text)] transition-[background,color] duration-150 ease-out hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground active:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:bg-[image:var(--cortex-sidebar-active)] aria-[current=page]:text-foreground"
           >
             <span
               aria-hidden="true"
@@ -266,7 +266,7 @@ export function AppSidebar({
             <div className="flex min-h-7 items-center justify-between gap-2 px-2.5">
               <h2
                 id="recent-conversations-heading"
-                className="text-[0.6875rem] font-semibold leading-none tracking-[0.035em] text-subtle"
+                className="text-xs font-semibold leading-4 tracking-[0.025em] text-subtle"
               >
                 Recents
               </h2>
@@ -292,7 +292,7 @@ export function AppSidebar({
                       type="button"
                       onClick={conversation.onSelect}
                       aria-current={conversation.isActive ? "page" : undefined}
-                      className="min-h-8 w-full truncate rounded-[var(--cortex-sidebar-item-radius)] px-2.5 py-1.5 text-left text-[0.8125rem] leading-5 text-[var(--cortex-sidebar-text)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground aria-[current=page]:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:font-medium aria-[current=page]:text-foreground"
+                      className="min-h-8 w-full truncate rounded-[var(--cortex-sidebar-item-radius)] px-2.5 py-1.5 text-left text-sm leading-5 text-[var(--cortex-sidebar-text)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-foreground aria-[current=page]:bg-[var(--cortex-sidebar-hover)] aria-[current=page]:font-medium aria-[current=page]:text-foreground"
                     >
                       {conversation.label}
                     </button>
@@ -300,7 +300,7 @@ export function AppSidebar({
                 })}
               </nav>
             ) : (
-              <p className="px-2.5 pt-2 text-xs leading-[1.45] text-subtle">
+              <p className="px-2.5 pt-2 text-xs leading-[1.5] text-muted">
                 Your conversations will appear here for this session.
               </p>
             )}
@@ -335,7 +335,7 @@ export function AppSidebar({
               {accountInitials(account.label)}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[0.8125rem] font-semibold text-foreground">
+              <span className="block truncate text-sm font-semibold text-foreground">
                 {account.label}
               </span>
               <span className="mt-0.5 block truncate text-xs text-subtle">
