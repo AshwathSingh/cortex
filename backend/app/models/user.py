@@ -49,8 +49,11 @@ class User(Base):
         onupdate=func.now(),
     )
 
+    # foreign_keys: memberships also reference users through ``invited_by``.
     memberships: Mapped[list["WorkspaceMembership"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkspaceMembership.user_id",
     )
     sessions: Mapped[list["UserSession"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
