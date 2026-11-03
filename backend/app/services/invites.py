@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.permissions import Permission, membership_permissions
 from app.security import hash_invite_token, new_invite_token
+from app.services.workspaces import lock_active_workspace
 from app.services.roles import (
     Conflict,
     Gone,
@@ -166,6 +167,11 @@ def accept_invite(
         .where(WorkspaceInvite.id == claimed)
         .execution_options(populate_existing=True)
     )
+    # Never join a workspace that is being deleted. The shared lock also stops the
+    # delete from finishing between this check and the insert below. Raising rolls
+    # the claim back (the caller rolls back), so the invite stays pending.
+    if not lock_active_workspace(session, invite.workspace_id):
+        raise NotFound("This workspace no longer exists")
     # Upsert, not check-then-insert: two different invites for the same workspace
     # accepted at once by one user would both pass a "not a member yet" check and
     # the loser would hit the unique key. DO NOTHING keeps the existing membership

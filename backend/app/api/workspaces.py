@@ -2,6 +2,7 @@
     GET /api/workspaces        every workspace the caller can access
     GET /api/workspaces/{id}   does the user have some access on this workspace
     POST /api/workspaces       create a workspace owned by the caller (US-2)
+    DELETE /api/workspaces/{id} delete it and everything in it (US-05)
 
 Ownership and access roles both live in ``workspace_memberships``, so every
 authorization decision reads the same source of truth.
@@ -11,21 +12,37 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from neo4j import Driver
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
-from app.models import Role, Workspace, WorkspaceMembership
+from app.models import WORKSPACE_ACTIVE, Role, Workspace, WorkspaceMembership
 from app.permissions import (
     SYSTEM_ROLE_PERMISSIONS,
     membership_permissions,
     permission_values,
     role_label,
 )
-from app.services.workspaces import WorkspaceNameTaken, create_workspace
+from app.db.neo4j_driver import get_driver
+from app.permissions import Permission
+from app.services.workspaces import (
+    WorkspaceNameTaken,
+    create_workspace,
+    delete_workspace,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+
+
+def get_neo4j() -> Driver:
+    """Injectable so tests can supply a fake driver (same shape as app.api.ingest)."""
+    return get_driver()
 
 
 class WorkspaceSummary(BaseModel):
@@ -75,7 +92,10 @@ def list_workspaces(user: CurrentUser, session: DbSession) -> list[WorkspaceSumm
     rows = session.execute(
         select(Workspace, WorkspaceMembership)
         .join(WorkspaceMembership, WorkspaceMembership.workspace_id == Workspace.id)
-        .where(WorkspaceMembership.user_id == user.id)
+        .where(
+            WorkspaceMembership.user_id == user.id,
+            Workspace.status == WORKSPACE_ACTIVE,  # hide ones being deleted
+        )
         .order_by(Workspace.name)
     ).all()
 
@@ -126,3 +146,37 @@ def get_workspace(
     """
     workspace, membership = load_workspace_for_user(session, user, workspace_id)
     return _summarise(workspace, membership)
+
+
+@router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_workspace_endpoint(
+    workspace_id: uuid.UUID,
+    user: CurrentUser,
+    session: DbSession,
+    driver: Driver = Depends(get_neo4j),
+) -> Response:
+    """Delete the workspace and everything in it: graph nodes and edges, members,
+    invites, custom roles and data sources.
+
+    Only an owner (``workspace.delete``). If a store fails part-way the workspace
+    stays hidden in a ``deleting`` state and this endpoint returns 500; calling it
+    again resumes the cleanup. Authorisation runs first, so a refused caller
+    touches no data.
+    """
+    load_workspace_for_user(
+        session,
+        user,
+        workspace_id,
+        permission=Permission.WORKSPACE_DELETE,
+        include_deleting=True,  # so a half-finished delete can be retried
+    )
+    try:
+        delete_workspace(session, driver, workspace_id)
+    except Exception:
+        # Already logged with detail by the service; keep internals out of the body.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The workspace could not be fully deleted. It is hidden and "
+            "no longer usable; try deleting it again to finish.",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
