@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { PageHeader, PageShell } from "@/components/ui/page-layout";
 import { RoleBadge } from "@/components/workspaces/role-badge";
 import { useWorkspace } from "@/components/workspaces/workspace-context";
+import { WorkspaceInviteAction } from "@/components/workspaces/workspace-invite-action";
+import { canManageMembers } from "@/lib/workspace-permissions";
 
 export function WorkspaceSettings() {
   const { workspaceId, workspace, isLoading } = useWorkspace();
@@ -22,6 +24,7 @@ export function WorkspaceSettings() {
   const workspaceName = workspace?.name ?? "Loading workspace…";
   const description = workspace?.description || "No description added";
   const isOwner = workspace?.role === "OWNER";
+  const canInviteMembers = canManageMembers(workspace?.permissions);
 
   async function copyWorkspaceId() {
     try {
@@ -87,8 +90,23 @@ export function WorkspaceSettings() {
               />
               <SettingsRow
                 title="Team members"
-                description="Invite collaborators and assign workspace roles."
-                action={<UnavailableAction>Manage members</UnavailableAction>}
+                description={
+                  canInviteMembers
+                    ? "Invite collaborators and choose their workspace role."
+                    : "You need member management permission to invite collaborators."
+                }
+                action={
+                  workspace && canInviteMembers ? (
+                    <WorkspaceInviteAction
+                      workspaceId={workspaceId}
+                      workspaceName={workspace.name}
+                      currentRole={workspace.role}
+                      permissions={workspace.permissions}
+                    />
+                  ) : (
+                    <UnavailableAction>Invite member</UnavailableAction>
+                  )
+                }
               />
             </div>
           </SettingsSection>

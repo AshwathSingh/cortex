@@ -6,10 +6,15 @@ const ROLE_STYLES: Record<WorkspaceRole, string> = {
   VIEWER: "border-role-viewer/40 bg-role-viewer/10 text-role-viewer",
 };
 
-export function RoleBadge({ role }: { role: WorkspaceRole }) {
+export function RoleBadge({ role }: { role: string }) {
+  const style =
+    role in ROLE_STYLES
+      ? ROLE_STYLES[role as WorkspaceRole]
+      : "border-border/40 bg-surface-raised text-muted";
+
   return (
     <span
-      className={`inline-flex rounded-full border px-2.5 py-1 text-[0.65rem] font-semibold tracking-[0.08em] ${ROLE_STYLES[role]}`}
+      className={`inline-flex rounded-full border px-2.5 py-1 text-[0.65rem] font-semibold tracking-[0.08em] ${style}`}
     >
       {role}
     </span>

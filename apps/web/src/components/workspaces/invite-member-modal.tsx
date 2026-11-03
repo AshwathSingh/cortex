@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { Field, fieldControlClassName } from "@/components/ui/form-field";
-import type { WorkspaceRole } from "@/lib/api-types";
+import type { WorkspaceInvite, WorkspaceRole } from "@/lib/api-types";
 
 export type InviteRoleSelection =
   | { role: WorkspaceRole; role_id?: never }
@@ -25,19 +25,17 @@ export type InviteRoleOption = {
   isDefault?: boolean;
 };
 
-export type CreatedInvite = {
-  email: string;
-  role: string;
-  expires_at: string;
-  token: string;
-};
+export type CreatedInvite = Pick<
+  WorkspaceInvite,
+  "email" | "role" | "expires_at" | "token"
+>;
 
 type InviteMemberModalProps = {
-  isOpen: boolean;
   workspaceName: string;
   roles: InviteRoleOption[];
   rolesError?: string | null;
   isLoadingRoles?: boolean;
+  onRetryRoles?: () => void;
   onClose: () => void;
   onInvite: (
     email: string,
@@ -46,11 +44,11 @@ type InviteMemberModalProps = {
 };
 
 export function InviteMemberModal({
-  isOpen,
   workspaceName,
   roles,
   rolesError = null,
   isLoadingRoles = false,
+  onRetryRoles,
   onClose,
   onInvite,
 }: InviteMemberModalProps) {
@@ -73,22 +71,11 @@ export function InviteMemberModal({
 
   useEffect(() => {
     const dialog = dialogRef.current;
-    if (!isOpen || !dialog) return;
+    if (!dialog) return;
 
     if (!dialog.open) dialog.showModal();
     emailRef.current?.focus();
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (isOpen) return;
-
-    setEmail("");
-    setRoleKey("");
-    setIsSubmitting(false);
-    setSubmitError(null);
-    setCreatedInvite(null);
-    setCopyStatus("idle");
-  }, [isOpen]);
+  }, []);
 
   function closeDialog() {
     if (isSubmitting) return;
@@ -143,8 +130,6 @@ export function InviteMemberModal({
     setCopyStatus("idle");
     window.requestAnimationFrame(() => emailRef.current?.focus());
   }
-
-  if (!isOpen) return null;
 
   return (
     <dialog
@@ -264,6 +249,9 @@ export function InviteMemberModal({
                 {isLoadingRoles ? (
                   <option value="">Loading roles…</option>
                 ) : null}
+                {!isLoadingRoles && roles.length === 0 ? (
+                  <option value="">No roles available</option>
+                ) : null}
                 {roles.map((option) => (
                   <option key={option.key} value={option.key}>
                     {option.name} — {option.description}
@@ -274,6 +262,16 @@ export function InviteMemberModal({
           </div>
 
           <FeedbackAlert message={rolesError ?? submitError} />
+          {rolesError && onRetryRoles ? (
+            <Button
+              type="button"
+              size="small"
+              className="mt-3"
+              onClick={onRetryRoles}
+            >
+              Retry loading roles
+            </Button>
+          ) : null}
 
           <div className="mt-6 flex justify-end gap-3 border-t border-border/20 pt-5">
             <Button

@@ -6,12 +6,37 @@ export type AuthenticatedUser = {
 
 export type WorkspaceRole = "OWNER" | "EDITOR" | "VIEWER";
 
+export type WorkspacePermission =
+  | "sources.write"
+  | "members.manage"
+  | "roles.manage"
+  | "workspace.delete";
+
 export type WorkspaceSummary = {
   id: string;
   name: string;
   description: string | null;
-  role: WorkspaceRole;
+  role: string;
+  permissions: WorkspacePermission[];
   created_at: string;
+};
+
+export type WorkspaceRoleDefinition = {
+  id: string | null;
+  name: string;
+  description: string | null;
+  permissions: WorkspacePermission[];
+  built_in: boolean;
+  member_count: number;
+};
+
+export type WorkspaceInvite = {
+  id: string;
+  email: string;
+  role: string;
+  role_id: string | null;
+  expires_at: string;
+  token: string;
 };
 
 export type IngestResult = {

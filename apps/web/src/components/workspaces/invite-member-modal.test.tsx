@@ -52,7 +52,6 @@ function renderModal(
   const onClose = vi.fn();
   render(
     <InviteMemberModal
-      isOpen
       workspaceName="Cortex Engineering"
       roles={ROLES}
       onClose={onClose}

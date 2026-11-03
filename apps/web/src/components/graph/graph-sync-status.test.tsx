@@ -75,6 +75,7 @@ function renderStatus(role: WorkspaceRole = "OWNER") {
           name: "Cortex",
           description: null,
           role,
+          permissions: role === "VIEWER" ? [] : ["sources.write"],
           created_at: "2026-09-24T00:00:00Z",
         },
         user: null,
@@ -220,7 +221,8 @@ describe("GraphSyncStatus", () => {
           workspaceId: WORKSPACE_ID,
           workspace: {
             id: WORKSPACE_ID, name: "Cortex", description: null,
-            role: "OWNER", created_at: "2026-09-24T00:00:00Z",
+            role: "OWNER", permissions: ["sources.write"],
+            created_at: "2026-09-24T00:00:00Z",
           },
           user: null, isLoading: false, error: null,
         }}

@@ -88,7 +88,7 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
     );
   }
 
-  if (!canManageSources(workspace?.role)) {
+  if (!canManageSources(workspace?.permissions)) {
     return (
       <section aria-labelledby="ingest-heading">
         {header}
