@@ -552,3 +552,85 @@ def test_confirmation_must_be_a_string(world):
     r = delete(world, "owner", confirm_name=123)
     assert r.status_code == 422
     untouched(world)
+
+
+def test_postgres_owner_demoted_after_authorisation_cannot_finish_the_delete(pg, graph):
+    """The route authorised the owner; a demotion committed before the lock must win."""
+    from app.services.roles import NotPermitted
+    from app.services.workspaces import delete_workspace
+
+    _pg_workspace(pg)
+    with Session(pg) as stale, Session(pg) as other:
+        actor = stale.scalar(select(WorkspaceMembership))
+        other.execute(text("UPDATE workspace_memberships SET role='VIEWER'"))
+        other.commit()
+        with pytest.raises(NotPermitted):
+            delete_workspace(stale, graph.driver, uuid.UUID(A), actor)
+    with Session(pg) as s:
+        assert s.get(Workspace, uuid.UUID(A)).status == "active"  # not even marked
+
+
+@pytest.mark.parametrize("attempt", range(5))
+def test_postgres_accepting_an_invite_while_the_workspace_is_deleted_never_errors(
+    pg, graph, attempt
+):
+    """Accept and delete take the workspace lock first, so they can't deadlock; the
+    accept either lands before the delete (and is deleted with it) or is refused."""
+    from app.services.invites import accept_invite
+    from app.services.roles import RoleError
+    from app.services.workspaces import delete_workspace
+
+    _pg_workspace(pg)
+    with Session(pg) as s:
+        late = make_user(s, f"late{attempt}@example.com")
+        s.commit()
+        late_id = late.id
+    barrier = threading.Barrier(2)
+    out: list = [None, None]
+
+    def accept():
+        with Session(pg) as s:
+            user = s.get(type(late), late_id)
+            barrier.wait()
+            try:
+                accept_invite(s, token="pgtok", user=user)
+                s.commit()
+                out[0] = "ok"
+            except RoleError as e:
+                s.rollback()
+                out[0] = e.status_code
+            except Exception as e:  # a deadlock or FK error would land here
+                s.rollback()
+                out[0] = repr(e)
+
+    def remove():
+        with Session(pg) as s:
+            actor = s.scalar(select(WorkspaceMembership))
+            barrier.wait()
+            try:
+                delete_workspace(s, graph.driver, uuid.UUID(A), actor)
+                out[1] = "ok"
+            except Exception as e:
+                out[1] = repr(e)
+
+    threads = [threading.Thread(target=accept), threading.Thread(target=remove)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert all(not t.is_alive() for t in threads), "deadlock"
+    assert out[1] == "ok" and out[0] in ("ok", 404, 410, 409), out
+    with Session(pg) as s:
+        assert s.scalar(text("SELECT count(*) FROM workspaces")) == 0
+        assert s.scalar(text("SELECT count(*) FROM workspace_memberships")) == 0
+
+
+def test_invite_creation_is_refused_on_a_workspace_being_deleted(world):
+    _, sessions, _, graph = world
+    flaky = FlakyDriver(graph.driver, failures=99)
+    app.dependency_overrides[get_neo4j] = lambda: flaky
+    assert delete(world, "owner").status_code == 500  # leaves A 'deleting'
+    r = as_(world, "owner").post(
+        f"/api/workspaces/{A}/invites", json={"email": "n@example.com"}
+    )
+    assert r.status_code == 403  # hidden like a workspace that doesn't exist

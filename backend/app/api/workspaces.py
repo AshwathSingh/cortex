@@ -8,11 +8,10 @@ Ownership and access roles both live in ``workspace_memberships``, so every
 authorization decision reads the same source of truth.
 """
 
+import logging
 import uuid
 from datetime import datetime
 from typing import Annotated
-
-import logging
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 from neo4j import Driver
@@ -20,15 +19,16 @@ from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
+from app.db.neo4j_driver import get_driver
 from app.models import WORKSPACE_ACTIVE, Role, Workspace, WorkspaceMembership
 from app.permissions import (
     SYSTEM_ROLE_PERMISSIONS,
+    Permission,
     membership_permissions,
     permission_values,
     role_label,
 )
-from app.db.neo4j_driver import get_driver
-from app.permissions import Permission
+from app.services.roles import RoleError
 from app.services.workspaces import (
     WorkspaceNameTaken,
     create_workspace,
@@ -174,7 +174,7 @@ def delete_workspace_endpoint(
     again resumes the cleanup. Authorisation runs first, so a refused caller
     touches no data.
     """
-    workspace, _ = load_workspace_for_user(
+    workspace, actor = load_workspace_for_user(
         session,
         user,
         workspace_id,
@@ -189,7 +189,9 @@ def delete_workspace_endpoint(
             "Nothing was deleted.",
         )
     try:
-        delete_workspace(session, driver, workspace_id)
+        delete_workspace(session, driver, workspace_id, actor)
+    except RoleError as e:  # lost the right to delete between the check and the lock
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
     except Exception:
         # Already logged with detail by the service; keep internals out of the body.
         raise HTTPException(

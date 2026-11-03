@@ -54,6 +54,11 @@ def create_invite(
     ``Conflict`` (409) if the invitee is already a member or already has a pending,
     unexpired invite. Caller must already hold ``members.manage``.
     """
+    # Workspace first, then the inviter's row: the order deletion uses, so the two
+    # can't deadlock; and no invite is minted for a workspace being deleted.
+    if not lock_active_workspace(session, workspace_id):
+        raise NotFound("This workspace no longer exists")
+
     # Re-read and lock the inviter's own membership so a removal or role change that
     # committed (or is committing) since the route authorised them is honoured: a
     # removed member can't still mint an OWNER invite from a stale snapshot. Removal
@@ -149,6 +154,16 @@ def accept_invite(
     token_hash = hash_invite_token(token)
     now = datetime.now(timezone.utc)
 
+    # Lock the workspace *before* touching the invite row. Deletion locks the
+    # workspace row and then cascades to its invites; taking the two in the opposite
+    # order here could deadlock with it. Also refuses to join a workspace that is
+    # being deleted; the shared lock stops the delete finishing before our insert.
+    workspace_id = session.scalar(
+        select(WorkspaceInvite.workspace_id).where(WorkspaceInvite.token_hash == token_hash)
+    )
+    if workspace_id is not None and not lock_active_workspace(session, workspace_id):
+        raise NotFound("This workspace no longer exists")
+
     claimed = session.scalar(
         update(WorkspaceInvite)
         .where(
@@ -167,11 +182,6 @@ def accept_invite(
         .where(WorkspaceInvite.id == claimed)
         .execution_options(populate_existing=True)
     )
-    # Never join a workspace that is being deleted. The shared lock also stops the
-    # delete from finishing between this check and the insert below. Raising rolls
-    # the claim back (the caller rolls back), so the invite stays pending.
-    if not lock_active_workspace(session, invite.workspace_id):
-        raise NotFound("This workspace no longer exists")
     # Upsert, not check-then-insert: two different invites for the same workspace
     # accepted at once by one user would both pass a "not a member yet" check and
     # the loser would hit the unique key. DO NOTHING keeps the existing membership

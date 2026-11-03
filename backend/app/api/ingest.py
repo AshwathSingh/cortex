@@ -125,6 +125,12 @@ def ingest_github(
         raise HTTPException(status_code=422, detail=str(e))
 
     repo = f"{owner}/{name}"
+    # A source row for a workspace deleted a moment ago would fail its foreign key.
+    # The lock is released by the commit that records the attempt, so it is not held
+    # across the (slow) GitHub fetch.
+    if not lock_active_workspace(session, body.workspace_id):
+        session.rollback()
+        raise _workspace_gone()
     # Before the fetch, not after: ingestion is synchronous and a large
     # repository takes minutes, so this is what lets the Sources page show
     # "Syncing…" meanwhile, and what leaves a trace if the request dies.

@@ -18,6 +18,7 @@ import uuid
 
 from neo4j import Driver
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.orm import Session
 
 from app.graph.queries import delete_workspace_graph
@@ -29,6 +30,9 @@ from app.models import (
     Workspace,
     WorkspaceMembership,
 )
+
+from app.permissions import Permission, membership_permissions
+from app.services.roles import NotPermitted
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +95,18 @@ def lock_active_workspace(session: Session, workspace_id: uuid.UUID) -> bool:
     return status == WORKSPACE_ACTIVE
 
 
-def mark_deleting(session: Session, workspace_id: uuid.UUID) -> bool:
+def mark_deleting(
+    session: Session, workspace_id: uuid.UUID, actor: WorkspaceMembership | None = None
+) -> bool:
     """Step 1: flip the workspace to ``deleting`` and commit. False if it is gone.
 
     Idempotent: marking an already-``deleting`` workspace is a no-op, which is
     what lets a retry resume.
+
+    With ``actor`` (the caller's membership, as authorised by the route), the
+    caller is re-checked against the locked, current database state: deleting is
+    irreversible, so an owner who was demoted or removed a moment after the route
+    authorised them must not get to finish it. Raises ``NotPermitted``.
     """
     exists = session.scalar(
         select(Workspace.id).where(Workspace.id == workspace_id).with_for_update()
@@ -103,6 +114,15 @@ def mark_deleting(session: Session, workspace_id: uuid.UUID) -> bool:
     if exists is None:
         session.rollback()
         return False
+    if actor is not None:
+        try:  # lock the caller's own row: demotion/removal write it, so they serialise
+            session.refresh(actor, with_for_update=True)
+        except InvalidRequestError:
+            session.rollback()
+            raise NotPermitted("You no longer have access to this workspace")
+        if Permission.WORKSPACE_DELETE not in membership_permissions(actor):
+            session.rollback()
+            raise NotPermitted("You no longer have permission to delete this workspace")
     session.execute(
         update(Workspace)
         .where(Workspace.id == workspace_id)
@@ -112,10 +132,15 @@ def mark_deleting(session: Session, workspace_id: uuid.UUID) -> bool:
     return True
 
 
-def delete_workspace(session: Session, driver: Driver, workspace_id: uuid.UUID) -> None:
+def delete_workspace(
+    session: Session,
+    driver: Driver,
+    workspace_id: uuid.UUID,
+    actor: WorkspaceMembership | None = None,
+) -> None:
     """Run the full cascade. Raises whatever the failing store raises, leaving
     the workspace in ``deleting`` so a retry resumes (see module docstring)."""
-    if not mark_deleting(session, workspace_id):
+    if not mark_deleting(session, workspace_id, actor):
         return  # already fully deleted by an earlier or concurrent call
 
     try:
