@@ -6,7 +6,7 @@ import { WorkspaceDetail } from "@/components/workspaces/workspace-detail";
 import { WorkspaceShell } from "@/components/workspaces/workspace-shell";
 import type { AuthenticatedUser, WorkspaceSummary } from "@/lib/api-types";
 
-const router = { replace: vi.fn() };
+const router = { push: vi.fn(), replace: vi.fn() };
 vi.mock("next/navigation", () => ({
   usePathname: () => "/workspaces/workspace-1",
   useRouter: () => router,
@@ -64,6 +64,7 @@ function mockWorkspaceRequests(workspaceStatus = 200, workspaceBody: unknown = W
 }
 
 beforeEach(() => {
+  router.push.mockReset();
   router.replace.mockReset();
   window.localStorage.clear();
   window.sessionStorage.clear();
@@ -150,16 +151,19 @@ describe("WorkspaceShell", () => {
     expect(recentConversation).toHaveAttribute("aria-current", "page");
 
     await user.click(
-      screen.getByRole("button", { name: "New conversation" }),
+      screen.getByRole("button", { name: "Start new conversation" }),
     );
     expect(screen.queryByRole("article")).not.toBeInTheDocument();
     expect(recentConversation).not.toHaveAttribute("aria-current");
+    expect(router.push).toHaveBeenCalledWith(`/workspaces/${WORKSPACE.id}`);
 
+    router.push.mockClear();
     await user.click(recentConversation);
     expect(
       screen.getByRole("article", { name: "Conversation turn 1" }),
     ).toHaveTextContent("Why was Neo4j selected?");
     expect(recentConversation).toHaveAttribute("aria-current", "page");
+    expect(router.push).toHaveBeenCalledWith(`/workspaces/${WORKSPACE.id}`);
   });
 
   it("returns expired sessions to login", async () => {

@@ -266,7 +266,7 @@ export function AppSidebar({
             <div className="flex min-h-7 items-center justify-between gap-2 px-2.5">
               <h2
                 id="recent-conversations-heading"
-                className="text-[0.6875rem] font-semibold tracking-[0.035em] text-subtle"
+                className="text-[0.6875rem] font-semibold leading-none tracking-[0.035em] text-subtle"
               >
                 Recents
               </h2>
@@ -278,7 +278,7 @@ export function AppSidebar({
                   title="New conversation"
                   className="group/new-conversation grid size-7 shrink-0 place-items-center rounded-md text-[var(--cortex-sidebar-icon)] transition-colors hover:bg-[var(--cortex-sidebar-hover)] hover:text-[var(--cortex-sidebar-accent)]"
                 >
-                  <ComposeIcon className="size-3.5" />
+                  <ComposeIcon className="size-3.5 translate-y-px" />
                 </button>
               ) : null}
             </div>

@@ -90,12 +90,23 @@ function WorkspaceShellFrame({
   children: ReactNode;
 }) {
   const activePath = usePathname();
+  const router = useRouter();
   const {
     conversations,
     activeConversationId,
     selectConversation,
     startNewConversation,
   } = useAssistantConversations();
+
+  function openNewConversation() {
+    startNewConversation();
+    router.push(routes.workspace.home(workspaceId));
+  }
+
+  function openConversation(conversationId: string) {
+    selectConversation(conversationId);
+    router.push(routes.workspace.home(workspaceId));
+  }
 
   const primaryLinks: SidebarLink[] = [
     {
@@ -161,9 +172,9 @@ function WorkspaceShellFrame({
           id: conversation.id,
           label: conversation.title,
           isActive: conversation.id === activeConversationId,
-          onSelect: () => selectConversation(conversation.id),
+          onSelect: () => openConversation(conversation.id),
         }))}
-        onNewConversation={startNewConversation}
+        onNewConversation={openNewConversation}
       />
       <div className="min-w-0">
         {error ? (
