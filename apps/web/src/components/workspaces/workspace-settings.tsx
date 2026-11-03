@@ -15,10 +15,11 @@ import { PageHeader, PageShell } from "@/components/ui/page-layout";
 import { RoleBadge } from "@/components/workspaces/role-badge";
 import { useWorkspace } from "@/components/workspaces/workspace-context";
 import { WorkspaceInviteAction } from "@/components/workspaces/workspace-invite-action";
+import { WorkspaceMemberList } from "@/components/workspaces/workspace-member-list";
 import { canManageMembers } from "@/lib/workspace-permissions";
 
 export function WorkspaceSettings() {
-  const { workspaceId, workspace, isLoading } = useWorkspace();
+  const { workspaceId, workspace, user, isLoading } = useWorkspace();
   const [copied, setCopied] = useState(false);
 
   const workspaceName = workspace?.name ?? "Loading workspace…";
@@ -108,6 +109,13 @@ export function WorkspaceSettings() {
                   )
                 }
               />
+              {workspace ? (
+                <WorkspaceMemberList
+                  key={workspaceId}
+                  workspaceId={workspaceId}
+                  currentUserId={user?.id}
+                />
+              ) : null}
             </div>
           </SettingsSection>
 

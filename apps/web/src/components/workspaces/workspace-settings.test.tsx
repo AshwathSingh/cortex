@@ -68,6 +68,15 @@ function renderSettings(overrides: Partial<WorkspaceContextValue> = {}) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response("[]", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ),
+  );
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
     configurable: true,
     value() {
@@ -116,20 +125,26 @@ describe("WorkspaceSettings", () => {
     const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify([
-            ...ROLES,
-            {
-              id: "role-1",
-              name: "Member manager",
-              description: "Coordinates workspace access",
-              permissions: ["members.manage"],
-              built_in: false,
-              member_count: 1,
-            },
-          ]),
-          { status: 200, headers: { "Content-Type": "application/json" } },
+      vi.fn((input: RequestInfo | URL) =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify(
+              String(input).endsWith("/members")
+                ? []
+                : [
+                    ...ROLES,
+                    {
+                      id: "role-1",
+                      name: "Member manager",
+                      description: "Coordinates workspace access",
+                      permissions: ["members.manage"],
+                      built_in: false,
+                      member_count: 1,
+                    },
+                  ],
+            ),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
         ),
       ),
     );
@@ -156,19 +171,21 @@ describe("WorkspaceSettings", () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
-      const body = !init?.method && path.endsWith("/roles")
-        ? ROLES
-        : {
-            id: "invite-1",
-            email: "teammate@example.com",
-            role: "EDITOR",
-            role_id: null,
-            expires_at: "2026-11-10T12:00:00Z",
-            token: "one-time-secret",
-          };
+      const body = path.endsWith("/members")
+        ? []
+        : !init?.method && path.endsWith("/roles")
+          ? ROLES
+          : {
+              id: "invite-1",
+              email: "teammate@example.com",
+              role: "EDITOR",
+              role_id: null,
+              expires_at: "2026-11-10T12:00:00Z",
+              token: "one-time-secret",
+            };
       return Promise.resolve(
         new Response(JSON.stringify(body), {
-          status: path.endsWith("/roles") ? 200 : 201,
+          status: path.endsWith("/roles") || path.endsWith("/members") ? 200 : 201,
           headers: { "Content-Type": "application/json" },
         }),
       );

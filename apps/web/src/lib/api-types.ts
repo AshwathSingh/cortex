@@ -44,6 +44,16 @@ export type WorkspaceInviteAcceptance = {
   role: string;
 };
 
+export type WorkspaceMember = {
+  user_id: string;
+  name: string | null;
+  email: string | null;
+  role: string;
+  role_id: string | null;
+  permissions: WorkspacePermission[];
+  created_at: string;
+};
+
 export type IngestResult = {
   repo: string;
   pull_requests: number;
