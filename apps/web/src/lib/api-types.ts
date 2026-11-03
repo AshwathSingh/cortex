@@ -39,6 +39,11 @@ export type WorkspaceInvite = {
   token: string;
 };
 
+export type WorkspaceInviteAcceptance = {
+  workspace_id: string;
+  role: string;
+};
+
 export type IngestResult = {
   repo: string;
   pull_requests: number;

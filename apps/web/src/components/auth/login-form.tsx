@@ -11,6 +11,7 @@ import {
 } from "@/components/auth/auth-form-primitives";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { AuthenticatedUser } from "@/lib/api-types";
+import { postAuthDestination } from "@/lib/invite-link";
 
 export function LoginForm() {
   const router = useRouter();
@@ -31,7 +32,7 @@ export function LoginForm() {
           password: formData.get("password"),
         }),
       });
-      router.replace("/workspaces");
+      router.replace(postAuthDestination());
       router.refresh();
     } catch (requestError) {
       setError(

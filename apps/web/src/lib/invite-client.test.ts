@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  acceptWorkspaceInvite,
   createWorkspaceInvite,
   listWorkspaceRoles,
 } from "@/lib/invite-client";
@@ -77,5 +78,19 @@ describe("invite client", () => {
       email: "teammate@example.com",
       role_id: "role-1",
     });
+  });
+
+  it("accepts a token in the POST body instead of the URL", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      jsonResponse({ workspace_id: "workspace-1", role: "EDITOR" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await acceptWorkspaceInvite("one-time-secret");
+
+    const [path, init] = fetchMock.mock.calls[0];
+    expect(path).toBe("/api/invites/accept");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ token: "one-time-secret" });
   });
 });

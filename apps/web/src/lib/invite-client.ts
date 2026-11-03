@@ -1,6 +1,7 @@
 import { apiRequest } from "@/lib/api";
 import type {
   WorkspaceInvite,
+  WorkspaceInviteAcceptance,
   WorkspaceRole,
   WorkspaceRoleDefinition,
 } from "@/lib/api-types";
@@ -29,4 +30,11 @@ export function createWorkspaceInvite(
       body: JSON.stringify(input),
     },
   );
+}
+
+export function acceptWorkspaceInvite(token: string) {
+  return apiRequest<WorkspaceInviteAcceptance>("/api/invites/accept", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
 }

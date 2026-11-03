@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { Field, fieldControlClassName } from "@/components/ui/form-field";
 import type { WorkspaceInvite, WorkspaceRole } from "@/lib/api-types";
+import { createInviteLink } from "@/lib/invite-link";
 
 export type InviteRoleSelection =
   | { role: WorkspaceRole; role_id?: never }
@@ -68,6 +69,9 @@ export function InviteMemberModal({
   const selectedRoleKey = roles.some((option) => option.key === roleKey)
     ? roleKey
     : defaultRoleKey;
+  const inviteLink = createdInvite
+    ? createInviteLink(window.location.origin, createdInvite.token)
+    : "";
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -112,10 +116,10 @@ export function InviteMemberModal({
     }
   }
 
-  async function copyInviteToken() {
+  async function copyInviteLink() {
     if (!createdInvite) return;
     try {
-      await navigator.clipboard.writeText(createdInvite.token);
+      await navigator.clipboard.writeText(inviteLink);
       setCopyStatus("copied");
     } catch {
       setCopyStatus("error");
@@ -173,25 +177,25 @@ export function InviteMemberModal({
       {createdInvite ? (
         <div className="px-6 py-5">
           <div className="rounded-control border border-accent-bright/25 bg-accent/10 px-4 py-3 text-sm leading-6 text-foreground">
-            Cortex does not email invitations yet. Copy this one-time invite code
+            Cortex does not email invitations yet. Copy this private invite link
             and send it to the intended person.
           </div>
 
           <div className="mt-5">
-            <Field id="created-invite-token" label="Invite code">
+            <Field id="created-invite-link" label="Invite link">
               <div className="mt-2 flex gap-2">
                 <input
-                  id="created-invite-token"
+                  id="created-invite-link"
                   readOnly
-                  value={createdInvite.token}
+                  value={inviteLink}
                   className={`${fieldControlClassName} mt-0 h-11 min-w-0 font-mono text-xs`}
                 />
                 <Button
                   type="button"
                   variant="primary"
-                  onClick={copyInviteToken}
+                  onClick={copyInviteLink}
                 >
-                  {copyStatus === "copied" ? "Copied" : "Copy code"}
+                  {copyStatus === "copied" ? "Copied" : "Copy link"}
                 </Button>
               </div>
             </Field>
@@ -202,7 +206,7 @@ export function InviteMemberModal({
               }).format(new Date(createdInvite.expires_at))}
             </p>
             {copyStatus === "error" ? (
-              <FeedbackAlert message="Could not copy the code. Select it and copy it manually." />
+              <FeedbackAlert message="Could not copy the link. Select it and copy it manually." />
             ) : null}
           </div>
 

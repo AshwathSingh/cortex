@@ -119,7 +119,7 @@ describe("InviteMemberModal", () => {
     expect(screen.getByRole("button", { name: "Create invite" })).toBeEnabled();
   });
 
-  it("keeps the one-time code visible until it is copied", async () => {
+  it("keeps the private acceptance link visible until it is copied", async () => {
     const user = userEvent.setup();
     const writeText = vi
       .spyOn(navigator.clipboard, "writeText")
@@ -131,11 +131,13 @@ describe("InviteMemberModal", () => {
       "teammate@example.com",
     );
     await user.click(screen.getByRole("button", { name: "Create invite" }));
-    await user.click(await screen.findByRole("button", { name: "Copy code" }));
+    await user.click(await screen.findByRole("button", { name: "Copy link" }));
 
-    expect(writeText).toHaveBeenCalledWith(CREATED.token);
+    const inviteLink =
+      "http://localhost:3000/invites/accept#token=one-time-secret";
+    expect(writeText).toHaveBeenCalledWith(inviteLink);
     expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
-    expect(screen.getByDisplayValue(CREATED.token)).toBeInTheDocument();
+    expect(screen.getByDisplayValue(inviteLink)).toBeInTheDocument();
   });
 
   it("offers visible and keyboard dismissal", async () => {
