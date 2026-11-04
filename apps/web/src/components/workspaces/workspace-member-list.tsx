@@ -1,23 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
+import { MemberActionsDialog } from "@/components/workspaces/member-actions-dialog";
 import { RoleBadge } from "@/components/workspaces/role-badge";
 import { ApiError } from "@/lib/api";
-import type { WorkspaceMember } from "@/lib/api-types";
+import type {
+  WorkspaceMember,
+  WorkspacePermission,
+} from "@/lib/api-types";
 import { listWorkspaceMembers } from "@/lib/member-client";
 
 type MemberListState =
   | { kind: "loading" }
   | { kind: "ready"; members: WorkspaceMember[] }
   | { kind: "error"; message: string };
-
-const joinedDate = new Intl.DateTimeFormat("en", {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
 
 function memberInitials(member: WorkspaceMember) {
   const label = member.name?.trim() || member.email?.split("@")[0] || "Member";
@@ -37,12 +35,19 @@ function memberName(member: WorkspaceMember) {
 export function WorkspaceMemberList({
   workspaceId,
   currentUserId,
+  currentRole,
+  permissions,
+  action,
 }: {
   workspaceId: string;
   currentUserId?: string;
+  currentRole: string;
+  permissions: WorkspacePermission[];
+  action?: ReactNode;
 }) {
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [state, setState] = useState<MemberListState>({ kind: "loading" });
+  const [activeMember, setActiveMember] = useState<WorkspaceMember | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -67,16 +72,18 @@ export function WorkspaceMemberList({
     return () => controller.abort();
   }, [loadAttempt, workspaceId]);
 
+  let content: ReactNode;
+
   if (state.kind === "loading") {
-    return (
-      <div className="px-6 py-5">
+    content = (
+      <div className="border-t border-border/20 px-6 py-6">
         <p role="status" className="sr-only">
           Loading workspace members…
         </p>
-        <div aria-hidden="true" className="space-y-3">
+        <div aria-hidden="true" className="space-y-4">
           {[0, 1].map((row) => (
-            <div key={row} className="flex animate-pulse items-center gap-3 py-1.5">
-              <div className="size-9 rounded-full bg-surface-raised" />
+            <div key={row} className="flex animate-pulse items-center gap-4 py-1">
+              <div className="size-10 rounded-full bg-surface-raised" />
               <div className="min-w-0 flex-1 space-y-2">
                 <div className="h-3 w-36 rounded-full bg-surface-raised" />
                 <div className="h-2.5 w-48 rounded-full bg-surface-raised/70" />
@@ -87,11 +94,9 @@ export function WorkspaceMemberList({
         </div>
       </div>
     );
-  }
-
-  if (state.kind === "error") {
-    return (
-      <div className="px-6 pb-5">
+  } else if (state.kind === "error") {
+    content = (
+      <div className="border-t border-border/20 px-6 pb-6">
         <FeedbackAlert message={state.message} />
         <button
           type="button"
@@ -105,61 +110,146 @@ export function WorkspaceMemberList({
         </button>
       </div>
     );
-  }
-
-  if (state.members.length === 0) {
-    return (
-      <p className="px-6 py-5 text-sm text-muted">
+  } else if (state.members.length === 0) {
+    content = (
+      <p className="border-t border-border/20 px-6 py-8 text-sm text-muted">
         No active members found.
       </p>
     );
-  }
+  } else {
+    const members = [...state.members].sort(
+      (first, second) =>
+        Number(second.user_id === currentUserId) -
+        Number(first.user_id === currentUserId),
+    );
 
-  return (
-    <div className="px-6 py-5">
-      <p className="mb-3 text-xs font-medium text-subtle">
-        {state.members.length} active {state.members.length === 1 ? "member" : "members"}
-      </p>
+    content = (
       <ul
         aria-label="Workspace members"
-        className="divide-y divide-border/20 overflow-hidden rounded-xl border border-border/25 bg-background/20"
+        tabIndex={0}
+        className="max-h-[22rem] divide-y divide-border/20 overflow-y-auto overscroll-contain border-t border-border/20 focus-visible:outline-offset-[-3px]"
       >
-        {state.members.map((member) => {
+        {members.map((member) => {
           const name = memberName(member);
           const isCurrentUser = member.user_id === currentUserId;
 
           return (
-            <li
-              key={member.user_id}
-              className="flex min-w-0 items-center justify-between gap-4 px-4 py-3.5"
-            >
-              <div className="flex min-w-0 items-center gap-3">
-                <span
-                  aria-hidden="true"
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full border border-border/30 bg-surface-raised text-[0.68rem] font-semibold tracking-wide text-muted"
-                >
-                  {memberInitials(member)}
-                </span>
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-sm font-medium text-foreground">
-                      {name}
-                    </span>
-                    {isCurrentUser ? (
-                      <span className="shrink-0 text-xs text-subtle">You</span>
+            <li key={member.user_id}>
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                onClick={() => setActiveMember(member)}
+                className="group grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-6 px-6 py-4 text-left transition-colors hover:bg-surface-raised/35"
+              >
+                <div className="flex min-w-0 items-center gap-4">
+                  <span
+                    aria-hidden="true"
+                    className="flex size-10 shrink-0 items-center justify-center rounded-full border border-accent/20 bg-accent/10 text-[0.7rem] font-semibold tracking-wide text-accent-bright"
+                  >
+                    {memberInitials(member)}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-sm font-semibold text-foreground">
+                        {name}
+                      </span>
+                      {isCurrentUser ? (
+                        <span className="shrink-0 rounded-full bg-surface-raised px-2 py-0.5 text-[0.65rem] font-medium text-muted">
+                          You
+                        </span>
+                      ) : null}
+                    </div>
+                    {member.name && member.email ? (
+                      <p className="mt-0.5 truncate text-xs leading-5 text-subtle">
+                        {member.email}
+                      </p>
                     ) : null}
                   </div>
-                  <p className="truncate text-xs leading-5 text-subtle">
-                    {member.name && member.email ? `${member.email} · ` : ""}
-                    Joined {joinedDate.format(new Date(member.created_at))}
-                  </p>
                 </div>
-              </div>
-              <RoleBadge role={member.role} />
+                <span className="flex items-center gap-3">
+                  <RoleBadge role={member.role} />
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 20 20"
+                    className="size-4 text-subtle transition-transform group-hover:translate-x-0.5 group-hover:text-muted"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m8 5 5 5-5 5" />
+                  </svg>
+                </span>
+              </button>
             </li>
           );
         })}
       </ul>
-    </div>
+    );
+  }
+
+  return (
+    <section aria-labelledby="workspace-members-title">
+      <div className="flex flex-wrap items-center justify-between gap-5 px-6 py-6">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h3
+              id="workspace-members-title"
+              className="text-sm font-semibold text-foreground"
+            >
+              Workspace members
+            </h3>
+            {state.kind === "ready" ? (
+              <span className="rounded-full border border-border/30 bg-background/30 px-2 py-0.5 text-[0.65rem] font-medium text-subtle">
+                {state.members.length}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-1 max-w-xl text-sm leading-6 text-muted">
+            People who can open and contribute to this workspace.
+          </p>
+        </div>
+        {action}
+      </div>
+      {content}
+      {activeMember ? (
+        <MemberActionsDialog
+          member={activeMember}
+          workspaceId={workspaceId}
+          currentUserId={currentUserId}
+          currentRole={currentRole}
+          permissions={permissions}
+          onClose={() => setActiveMember(null)}
+          onMemberUpdated={(updatedMember) => {
+            setState((current) =>
+              current.kind === "ready"
+                ? {
+                    kind: "ready",
+                    members: current.members.map((member) =>
+                      member.user_id === updatedMember.user_id
+                        ? updatedMember
+                        : member,
+                    ),
+                  }
+                : current,
+            );
+            setActiveMember(updatedMember);
+          }}
+          onMemberRemoved={(userId) => {
+            setState((current) =>
+              current.kind === "ready"
+                ? {
+                    kind: "ready",
+                    members: current.members.filter(
+                      (member) => member.user_id !== userId,
+                    ),
+                  }
+                : current,
+            );
+          }}
+        />
+      ) : null}
+    </section>
   );
 }

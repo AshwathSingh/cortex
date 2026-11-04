@@ -6,69 +6,17 @@ import { Button } from "@/components/ui/button";
 import {
   InviteMemberModal,
   type InviteRoleOption,
-  type InviteRoleSelection,
 } from "@/components/workspaces/invite-member-modal";
 import { ApiError } from "@/lib/api";
 import type {
   WorkspacePermission,
-  WorkspaceRole,
   WorkspaceRoleDefinition,
 } from "@/lib/api-types";
 import {
   createWorkspaceInvite,
   listWorkspaceRoles,
 } from "@/lib/invite-client";
-
-const BUILT_IN_ROLE_DESCRIPTIONS: Record<WorkspaceRole, string> = {
-  OWNER: "Full workspace access",
-  EDITOR: "Can contribute and sync sources",
-  VIEWER: "Can view workspace knowledge",
-};
-
-function isBuiltInRole(name: string): name is WorkspaceRole {
-  return name === "OWNER" || name === "EDITOR" || name === "VIEWER";
-}
-
-function roleName(role: WorkspaceRoleDefinition) {
-  if (!role.built_in) return role.name;
-  return `${role.name[0]}${role.name.slice(1).toLowerCase()}`;
-}
-
-function roleDescription(role: WorkspaceRoleDefinition) {
-  if (isBuiltInRole(role.name)) return BUILT_IN_ROLE_DESCRIPTIONS[role.name];
-  if (role.description) return role.description;
-  return role.permissions.length === 0
-    ? "Can view workspace knowledge"
-    : `${role.permissions.length} workspace permission${role.permissions.length === 1 ? "" : "s"}`;
-}
-
-function canGrantRole(
-  role: WorkspaceRoleDefinition,
-  currentRole: string,
-  permissions: WorkspacePermission[],
-) {
-  if (role.built_in && role.name === "OWNER") return currentRole === "OWNER";
-  return role.permissions.every((permission) => permissions.includes(permission));
-}
-
-function toRoleOption(role: WorkspaceRoleDefinition): InviteRoleOption | null {
-  let selection: InviteRoleSelection;
-  if (role.built_in && isBuiltInRole(role.name)) {
-    selection = { role: role.name };
-  } else if (role.id) {
-    selection = { role_id: role.id };
-  } else {
-    return null;
-  }
-
-  return {
-    key: role.id ? `custom:${role.id}` : `builtin:${role.name}`,
-    name: roleName(role),
-    description: roleDescription(role),
-    selection,
-    isDefault: role.built_in && role.name === "EDITOR",
-  };
-}
+import { assignableWorkspaceRoles } from "@/lib/workspace-role-options";
 
 export function WorkspaceInviteAction({
   workspaceId,
@@ -114,13 +62,9 @@ export function WorkspaceInviteAction({
   }, [isOpen, loadAttempt, workspaceId]);
 
   const roleOptions = useMemo(
-    () =>
-      roles
-        .filter((role) => canGrantRole(role, currentRole, permissions))
-        .map(toRoleOption)
-        .filter((role): role is InviteRoleOption => role !== null),
+    () => assignableWorkspaceRoles(roles, currentRole, permissions),
     [currentRole, permissions, roles],
-  );
+  ) satisfies InviteRoleOption[];
 
   const availableRolesError =
     rolesError ??

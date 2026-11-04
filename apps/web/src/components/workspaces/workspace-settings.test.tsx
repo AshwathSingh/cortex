@@ -102,11 +102,11 @@ describe("WorkspaceSettings", () => {
 
     expect(
       screen.getByRole("heading", { name: "Workspace settings" }),
-    ).toBeInTheDocument();
+    ).toHaveClass("sr-only");
     expect(screen.getByText(WORKSPACE.name)).toBeInTheDocument();
     expect(screen.getByText(WORKSPACE.description)).toBeInTheDocument();
-    expect(screen.getByText("OWNER")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Edit details" })).toBeDisabled();
+    expect(screen.queryByText("Your access")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit details" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Invite member" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Delete workspace" })).toBeDisabled();
   });
@@ -117,8 +117,55 @@ describe("WorkspaceSettings", () => {
     });
 
     expect(screen.getByRole("heading", { name: "Leave workspace" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Invite member" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Invite member" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Leave workspace" })).toBeDisabled();
+  });
+
+  it("lets an owner edit the workspace name and description", async () => {
+    const user = userEvent.setup();
+    const updatedWorkspace = {
+      ...WORKSPACE,
+      name: "Cortex Platform",
+      description: "Shared engineering memory",
+    };
+    const updateWorkspace = vi.fn();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify(
+            init?.method === "PATCH" ? updatedWorkspace : [],
+          ),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderSettings({ updateWorkspace });
+
+    await user.click(screen.getByRole("button", { name: "Edit details" }));
+    const nameInput = screen.getByLabelText("Workspace name");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Cortex Platform");
+    await user.clear(screen.getByLabelText("Description"));
+    await user.type(
+      screen.getByLabelText("Description"),
+      "Shared engineering memory",
+    );
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    const updateRequest = fetchMock.mock.calls.find(
+      ([input, init]) =>
+        String(input).endsWith("/api/workspaces/workspace-1") &&
+        init?.method === "PATCH",
+    );
+    expect(updateRequest).toBeDefined();
+    expect(JSON.parse(updateRequest?.[1]?.body as string)).toEqual({
+      name: "Cortex Platform",
+      description: "Shared engineering memory",
+    });
+    expect(updateWorkspace).toHaveBeenCalledWith(updatedWorkspace);
   });
 
   it("lets custom member managers invite only roles they can grant", async () => {
@@ -156,7 +203,6 @@ describe("WorkspaceSettings", () => {
       },
     });
 
-    expect(screen.getByText("Team lead")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Invite member" }));
 
     expect(

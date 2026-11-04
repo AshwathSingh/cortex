@@ -23,7 +23,11 @@ from app.permissions import (
     permission_values,
     role_label,
 )
-from app.services.workspaces import WorkspaceNameTaken, create_workspace
+from app.services.workspaces import (
+    WorkspaceNameTaken,
+    create_workspace,
+    update_workspace,
+)
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 
@@ -54,6 +58,10 @@ class WorkspaceCreate(BaseModel):
     @classmethod
     def _blank_description_is_none(cls, v: str | None) -> str | None:
         return v or None
+
+
+class WorkspaceUpdate(WorkspaceCreate):
+    """The editable workspace profile fields."""
 
 
 def _summarise(workspace: Workspace, membership: WorkspaceMembership) -> WorkspaceSummary:
@@ -125,4 +133,37 @@ def get_workspace(
     which don't)
     """
     workspace, membership = load_workspace_for_user(session, user, workspace_id)
+    return _summarise(workspace, membership)
+
+
+@router.patch("/{workspace_id}", response_model=WorkspaceSummary)
+def update_workspace_profile(
+    workspace_id: uuid.UUID,
+    payload: WorkspaceUpdate,
+    user: CurrentUser,
+    session: DbSession,
+) -> WorkspaceSummary:
+    workspace, membership = load_workspace_for_user(session, user, workspace_id)
+    if membership.role is not Role.OWNER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace owners can edit workspace details",
+        )
+
+    try:
+        update_workspace(
+            session,
+            workspace=workspace,
+            owner=user,
+            name=payload.name,
+            description=payload.description,
+        )
+        session.commit()
+    except WorkspaceNameTaken:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"You already have a workspace named '{payload.name}'",
+        )
+
     return _summarise(workspace, membership)
