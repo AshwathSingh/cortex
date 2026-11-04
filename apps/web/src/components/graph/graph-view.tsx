@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { GraphCanvas } from "@/components/graph/graph-canvas";
 import { GraphInspector, type InspectorState } from "@/components/graph/graph-inspector";
@@ -44,6 +44,7 @@ const NODE_TYPES: {
 ];
 
 const ALL_NODE_TYPES = NODE_TYPES.map(({ type }) => type);
+const NO_HIGHLIGHTS: string[] = [];
 
 type State =
   | { kind: "loading" }
@@ -63,14 +64,25 @@ export function GraphView({
   const [selection, setSelection] = useState<GraphSelection>(null);
   const [inspectorState, setInspectorState] = useState<InspectorState>({ kind: "loading" });
   const [selectedTypes, setSelectedTypes] = useState<GraphNodeType[]>(ALL_NODE_TYPES);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchTerm(searchInput.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
 
   useEffect(() => {
     const controller = new AbortController();
 
     async function load() {
       try {
+        const params = new URLSearchParams();
+        if (searchTerm) params.set("q", searchTerm);
+        const serializedParams = params.toString();
+        const query = serializedParams ? `?${serializedParams}` : "";
         const graph = await apiRequest<WorkspaceGraph>(
-          `/api/workspaces/${workspaceId}/graph`,
+          `/api/workspaces/${workspaceId}/graph${query}`,
           { signal: controller.signal },
         );
         setState({ kind: "ready", graph });
@@ -96,7 +108,7 @@ export function GraphView({
 
     void load();
     return () => controller.abort();
-  }, [reloadToken, router, workspaceId]);
+  }, [reloadToken, router, searchTerm, workspaceId]);
 
   useEffect(() => {
     if (!selection) return;
@@ -146,14 +158,23 @@ export function GraphView({
   }, [router, selection, workspaceId]);
 
   const graph = state.kind === "ready" ? state.graph : null;
-  const isWorkspaceEmpty = graph !== null && graph.nodes.length === 0;
-  const visibleNodes = graph
-    ? graph.nodes.filter((node) => selectedTypes.includes(node.type))
-    : [];
-  const visibleKeys = new Set(visibleNodes.map((node) => node.key));
-  const visibleEdges = graph
-    ? graph.edges.filter((edge) => visibleKeys.has(edge.source) && visibleKeys.has(edge.target))
-    : [];
+  const isWorkspaceEmpty = graph !== null && graph.nodes.length === 0 && !searchTerm;
+  const isSearchEmpty = graph !== null && graph.nodes.length === 0 && Boolean(searchTerm);
+  const visibleNodes = useMemo(
+    () => graph ? graph.nodes.filter((node) => selectedTypes.includes(node.type)) : [],
+    [graph, selectedTypes],
+  );
+  const visibleKeys = useMemo(() => new Set(visibleNodes.map((node) => node.key)), [visibleNodes]);
+  const visibleEdges = useMemo(
+    () => graph
+      ? graph.edges.filter((edge) => visibleKeys.has(edge.source) && visibleKeys.has(edge.target))
+      : [],
+    [graph, visibleKeys],
+  );
+  const highlightedNodeKeys = useMemo(
+    () => searchTerm ? visibleNodes.map((node) => node.key) : NO_HIGHLIGHTS,
+    [searchTerm, visibleNodes],
+  );
 
   function selectTypes(nextTypes: GraphNodeType[]) {
     setSelectedTypes(nextTypes);
@@ -183,8 +204,59 @@ export function GraphView({
     selectTypes(nextTypes);
   }
 
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSelection(null);
+    setSearchTerm(searchInput.trim());
+  }
+
+  function updateSearchInput(value: string) {
+    setSearchInput(value);
+    setSelection(null);
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {state.kind === "ready" ? (
+        <form
+          role="search"
+          onSubmit={submitSearch}
+          className="flex flex-wrap items-end gap-3 border-b border-[var(--cortex-graph-divider)] px-6 py-3"
+        >
+          <div className="min-w-0 flex-1 sm:max-w-xl">
+            <label htmlFor="graph-search" className="mb-1 block text-xs font-medium text-muted">
+              Search artifacts
+            </label>
+            <input
+              id="graph-search"
+              type="search"
+              value={searchInput}
+              onChange={(event) => updateSearchInput(event.target.value)}
+              placeholder="Search names, titles, repositories, or content"
+              className="h-10 w-full rounded-lg border border-border/60 bg-surface px-3 text-sm text-foreground outline-none placeholder:text-subtle focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30"
+            />
+          </div>
+          <button
+            type="submit"
+            className="h-10 rounded-lg bg-accent px-4 text-sm font-medium text-background transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            Search
+          </button>
+          {searchTerm ? (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchInput("");
+                setSearchTerm("");
+                setSelection(null);
+              }}
+              className="h-10 rounded-lg px-3 text-sm text-muted underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              Clear search
+            </button>
+          ) : null}
+        </form>
+      ) : null}
       {graph && !isWorkspaceEmpty ? (
         <div
           className="flex min-h-14 flex-wrap items-center justify-between gap-4 border-b border-[var(--cortex-graph-divider)] px-6 py-2"
@@ -249,6 +321,15 @@ export function GraphView({
             </div>
           ) : null}
 
+          {isSearchEmpty ? (
+            <section className="grid size-full place-items-center px-6 text-center" aria-live="polite">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">No artifacts match “{searchTerm}”</h2>
+                <p className="mt-2 text-sm text-muted">Try another keyword or clear your search.</p>
+              </div>
+            </section>
+          ) : null}
+
           {isWorkspaceEmpty ? (
             <section className="grid size-full place-items-center px-6 text-center">
               <div>
@@ -295,6 +376,7 @@ export function GraphView({
             <GraphCanvas
               nodes={visibleNodes}
               edges={visibleEdges}
+              highlightedNodeKeys={highlightedNodeKeys}
               onSelectionChange={(nextSelection) => {
                 setSelection(nextSelection);
                 if (nextSelection) setInspectorState({ kind: "loading" });

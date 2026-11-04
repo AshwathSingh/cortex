@@ -172,6 +172,7 @@ def read_workspace_graph(
     node_limit: int = Query(DEFAULT_NODE_LIMIT, ge=1, le=10_000),
     edge_limit: int = Query(DEFAULT_EDGE_LIMIT, ge=1, le=30_000),
     types: list[Literal["Author", "PullRequest", "Issue"]] | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=200),
     driver: Driver = Depends(get_neo4j),
 ) -> GraphResponse:
     load_workspace_for_user(session, user, workspace_id)
@@ -183,6 +184,7 @@ def read_workspace_graph(
             node_limit=node_limit,
             edge_limit=edge_limit,
             node_types=types,
+            search_query=q,
         )
     except (Neo4jError, DriverError):
         raise HTTPException(status_code=503, detail="Graph database unavailable")

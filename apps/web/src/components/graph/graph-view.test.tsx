@@ -14,15 +14,18 @@ vi.mock("@/components/graph/graph-canvas", () => ({
   GraphCanvas: ({
     nodes,
     edges,
+    highlightedNodeKeys,
     onSelectionChange,
   }: {
     nodes: GraphNode[];
     edges: GraphEdge[];
+    highlightedNodeKeys?: string[];
     onSelectionChange: (selection: unknown) => void;
   }) => (
     <div>
       <output data-testid="visible-node-keys">{nodes.map((item) => item.key).join(",")}</output>
       <output data-testid="visible-edge-count">{edges.length}</output>
+      <output data-testid="highlighted-node-keys">{highlightedNodeKeys?.join(",") ?? ""}</output>
       <button onClick={() => onSelectionChange({ kind: "node", key: "PullRequest:20" })}>Select node</button>
       <button onClick={() => onSelectionChange({ kind: "edge", edge: { source: "Author:1", target: "PullRequest:20", type: "AUTHORED" } })}>Select edge</button>
       <button onClick={() => onSelectionChange(null)}>Blank canvas</button>
@@ -185,6 +188,47 @@ describe("GraphView artifact filters", () => {
 
     expect(screen.getByRole("heading", { name: "No artifacts match these filters" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show all artifact types" })).toBeInTheDocument();
+    expect(screen.queryByTestId("visible-node-keys")).not.toBeInTheDocument();
+  });
+
+  it("searches by keyword and highlights the matching graph nodes", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      return Promise.resolve(jsonResponse(url.includes("?q=graph") ? filterGraph : graph));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GraphView workspaceId={WORKSPACE_ID} />);
+
+    await screen.findByTestId("visible-node-keys");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search artifacts" }), {
+      target: { value: "graph" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `/api/workspaces/${WORKSPACE_ID}/graph?q=graph`,
+      expect.objectContaining({ credentials: "same-origin" }),
+    ));
+    await waitFor(() => expect(screen.getByTestId("highlighted-node-keys")).toHaveTextContent(
+      "Author:1,PullRequest:20,Issue:30",
+    ));
+  });
+
+  it("shows an empty graph state when a keyword has no matches", async () => {
+    const emptyGraph = { ...graph, nodes: [], edges: [] };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => Promise.resolve(
+      jsonResponse(String(input).includes("?q=absent") ? emptyGraph : graph),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GraphView workspaceId={WORKSPACE_ID} />);
+
+    await screen.findByTestId("visible-node-keys");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search artifacts" }), {
+      target: { value: "absent" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByRole("heading", { name: "No artifacts match “absent”" })).toBeInTheDocument();
     expect(screen.queryByTestId("visible-node-keys")).not.toBeInTheDocument();
   });
 });

@@ -54,6 +54,7 @@ const KEEP_VISIBLE = 96;
 /** Clickable halo beyond a node's rim / an edge's line, in screen pixels. */
 const NODE_HIT_SLACK = 7;
 const EDGE_HIT_SLACK = 8;
+const NO_HIGHLIGHTS: string[] = [];
 
 type Box = { x1: number; y1: number; x2: number; y2: number };
 type Point = { x: number; y: number };
@@ -65,6 +66,7 @@ export type GraphViewport = {
 type GraphCanvasProps = {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  highlightedNodeKeys?: string[];
   height?: number;
   onSelectionChange?: (selection: GraphSelection) => void;
 };
@@ -263,6 +265,7 @@ function truncate(text: string, max: number): string {
 export function GraphCanvas({
   nodes,
   edges,
+  highlightedNodeKeys = NO_HIGHLIGHTS,
   height = 560,
   onSelectionChange,
 }: GraphCanvasProps) {
@@ -358,6 +361,7 @@ export function GraphCanvas({
         "#8b94a6",
       );
       const byKey = new Map(nodes.map((node) => [node.key, node]));
+      const highlightedKeys = new Set(highlightedNodeKeys);
 
       const degree = new Map<string, number>();
       for (const edge of edges) {
@@ -428,9 +432,16 @@ export function GraphCanvas({
           ctx.fill();
 
           tracePath(ctx, shape, placed.x, placed.y, placed.radius);
-          ctx.lineWidth = RING_WIDTH;
-          ctx.strokeStyle = colour;
+          ctx.strokeStyle = highlightedKeys.has(placed.key) ? "#ffffff" : colour;
+          ctx.lineWidth = highlightedKeys.has(placed.key) ? RING_WIDTH + 2 : RING_WIDTH;
           ctx.stroke();
+
+          if (highlightedKeys.has(placed.key)) {
+            tracePath(ctx, shape, placed.x, placed.y, placed.radius + 4);
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = colour;
+            ctx.stroke();
+          }
 
           tracePath(
             ctx,
@@ -504,7 +515,7 @@ export function GraphCanvas({
       cancelFrame();
       redrawRef.current = null;
     };
-  }, [edges, height, nodes]);
+  }, [edges, height, highlightedNodeKeys, nodes]);
 
   const updateViewport = useCallback((viewport: GraphViewport) => {
     const canvas = canvasRef.current;

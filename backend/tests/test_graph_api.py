@@ -112,6 +112,36 @@ def test_type_filters_are_forwarded_to_the_workspace_scoped_graph_query(api_db):
     )
 
 
+def test_keyword_search_is_forwarded_and_returns_matching_artifacts(api_db):
+    pr = pull_request(100)
+    pr["props"]["title"] = "Graph Search endpoint"
+    unrelated = issue(200)
+    c, driver = setup(api_db, nodes=[pr, unrelated])
+
+    response = c.get(URL, params={"q": "search"})
+
+    assert response.status_code == 200
+    assert [node["key"] for node in response.json()["nodes"]] == ["PullRequest:100"]
+    assert all(call[1]["search_term"] == "search" for call in driver.tx.calls)
+
+
+def test_keyword_search_with_no_matches_returns_an_empty_graph(api_db):
+    c, _ = setup(api_db, nodes=[author(1)])
+
+    response = c.get(URL, params={"q": "nothing-matches"})
+
+    assert response.status_code == 200
+    assert response.json()["nodes"] == []
+    assert response.json()["edges"] == []
+
+
+def test_search_query_is_length_limited(api_db):
+    c, driver = setup(api_db, nodes=[author(1)])
+
+    assert c.get(URL, params={"q": "x" * 201}).status_code == 422
+    assert driver.opened == 0
+
+
 def test_unknown_type_filter_is_rejected(api_db):
     c, driver = setup(api_db, nodes=[author(1)])
     assert c.get(URL, params={"types": "Requirement"}).status_code == 422
