@@ -68,7 +68,25 @@ class FakeTx:
 
     def run(self, cypher, **params):
         self.calls.append((cypher, params))
-        return FakeResult(self.edges if cypher is EDGES_QUERY else self.nodes)
+        node_types = params.get("node_types")
+        if cypher is EDGES_QUERY:
+            records = self.edges
+            if node_types is not None:
+                records = [
+                    record
+                    for record in records
+                    if any(label in node_types for label in record["source_labels"])
+                    and any(label in node_types for label in record["target_labels"])
+                ]
+            return FakeResult(records)
+        records = self.nodes
+        if node_types is not None:
+            records = [
+                record
+                for record in records
+                if any(label in node_types for label in record["labels"])
+            ]
+        return FakeResult(records)
 
 
 class FakeSession:
@@ -104,6 +122,12 @@ def test_both_queries_filter_on_workspace_id():
     assert "n.workspace_id = $workspace_id" in NODES_QUERY
     assert "a.workspace_id = $workspace_id" in EDGES_QUERY
     assert "b.workspace_id = $workspace_id" in EDGES_QUERY
+
+
+def test_queries_filter_nodes_and_both_edge_endpoints_by_selected_types():
+    assert "$node_types IS NULL" in NODES_QUERY
+    assert "label IN $node_types" in NODES_QUERY
+    assert EDGES_QUERY.count("label IN $node_types") == 2
 
 
 def test_edges_require_both_endpoints_in_the_workspace():
@@ -186,6 +210,38 @@ def test_edges_reference_node_keys():
     assert payload.edges == [
         {"source": "Author:1", "target": "PullRequest:100", "type": "AUTHORED"}
     ]
+
+
+def test_selected_types_filter_nodes_and_keep_only_edges_between_visible_types():
+    a, pr, iss = author(1), pull_request(100), issue(200)
+    driver = FakeDriver(
+        nodes=[a, pr, iss],
+        edges=[edge(a, pr), edge(pr, iss)],
+    )
+
+    payload = fetch_graph(driver, WS, node_types=["PullRequest", "Issue"])
+
+    assert [node["type"] for node in payload.nodes] == ["PullRequest", "Issue"]
+    assert payload.edges == [
+        {"source": "PullRequest:100", "target": "Issue:200", "type": "AUTHORED"}
+    ]
+    assert all(call[1]["node_types"] == ["PullRequest", "Issue"] for call in driver.tx.calls)
+
+
+def test_empty_type_filter_returns_an_empty_graph():
+    a, pr = author(1), pull_request(100)
+    payload = fetch_graph(
+        FakeDriver(nodes=[a, pr], edges=[edge(a, pr)]), WS, node_types=[]
+    )
+    assert payload.nodes == []
+    assert payload.edges == []
+
+
+def test_unknown_type_filter_is_rejected_before_database_access():
+    driver = FakeDriver(nodes=[author(1)])
+    with pytest.raises(ValueError, match="Unknown graph node type"):
+        fetch_graph(driver, WS, node_types=["Requirement"])
+    assert driver.opened == 0
 
 
 def test_node_payload_fields():

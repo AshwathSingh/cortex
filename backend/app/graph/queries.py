@@ -44,6 +44,7 @@ def _label_predicate(variable: str) -> str:
 NODES_QUERY = f"""
 MATCH (n)
 WHERE ({_label_predicate("n")}) AND n.workspace_id = $workspace_id
+  AND ($node_types IS NULL OR any(label IN labels(n) WHERE label IN $node_types))
 RETURN labels(n) AS labels, properties(n) AS props
 ORDER BY head(labels(n)), n.id
 LIMIT $limit
@@ -53,6 +54,8 @@ EDGES_QUERY = f"""
 MATCH (a)-[r]->(b)
 WHERE ({_label_predicate("a")}) AND ({_label_predicate("b")})
   AND a.workspace_id = $workspace_id AND b.workspace_id = $workspace_id
+  AND ($node_types IS NULL OR any(label IN labels(a) WHERE label IN $node_types))
+  AND ($node_types IS NULL OR any(label IN labels(b) WHERE label IN $node_types))
 RETURN labels(a) AS source_labels, a.id AS source_id,
        labels(b) AS target_labels, b.id AS target_id,
        type(r) AS type
@@ -179,6 +182,7 @@ def fetch_graph(
     *,
     node_limit: int = DEFAULT_NODE_LIMIT,
     edge_limit: int = DEFAULT_EDGE_LIMIT,
+    node_types: tuple[str, ...] | list[str] | None = None,
 ) -> GraphPayload:
     """Every node and edge in one workspace, in a single read transaction.
 
@@ -186,13 +190,26 @@ def fetch_graph(
     client never receives a dangling endpoint.
     """
     workspace = normalise_workspace_id(workspace_id)
+    if node_types is not None and any(node_type not in GRAPH_LABELS for node_type in node_types):
+        raise ValueError("Unknown graph node type")
+    selected_types = list(node_types) if node_types is not None else None
 
     def work(tx) -> tuple[list, list]:
         nodes = list(
-            tx.run(NODES_QUERY, workspace_id=workspace, limit=node_limit)
+            tx.run(
+                NODES_QUERY,
+                workspace_id=workspace,
+                node_types=selected_types,
+                limit=node_limit,
+            )
         )
         edges = list(
-            tx.run(EDGES_QUERY, workspace_id=workspace, limit=edge_limit)
+            tx.run(
+                EDGES_QUERY,
+                workspace_id=workspace,
+                node_types=selected_types,
+                limit=edge_limit,
+            )
         )
         return nodes, edges
 

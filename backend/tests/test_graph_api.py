@@ -92,6 +92,32 @@ def test_returns_nodes_and_edges(api_db):
     assert body["truncated"] is False
 
 
+def test_type_filters_are_forwarded_to_the_workspace_scoped_graph_query(api_db):
+    a, pr, iss = author(1), pull_request(100), issue(200)
+    c, driver = setup(
+        api_db,
+        nodes=[a, pr, iss],
+        edges=[edge(a, pr), edge(pr, iss)],
+    )
+
+    body = c.get(URL, params=[("types", "PullRequest"), ("types", "Issue")]).json()
+
+    assert [node["type"] for node in body["nodes"]] == ["PullRequest", "Issue"]
+    assert body["edges"] == [
+        {"source": "PullRequest:100", "target": "Issue:200", "type": "AUTHORED"}
+    ]
+    assert all(
+        call[1]["node_types"] == ["PullRequest", "Issue"]
+        for call in driver.tx.calls
+    )
+
+
+def test_unknown_type_filter_is_rejected(api_db):
+    c, driver = setup(api_db, nodes=[author(1)])
+    assert c.get(URL, params={"types": "Requirement"}).status_code == 422
+    assert driver.opened == 0
+
+
 def test_node_types_are_exposed_for_colouring(api_db):
     """The canvas colours by type; only the three ingested labels exist today."""
     c, _ = setup(api_db, nodes=[author(1), pull_request(100), issue(200)])

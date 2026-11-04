@@ -43,6 +43,8 @@ const NODE_TYPES: {
   },
 ];
 
+const ALL_NODE_TYPES = NODE_TYPES.map(({ type }) => type);
+
 type State =
   | { kind: "loading" }
   | { kind: "ready"; graph: WorkspaceGraph }
@@ -60,6 +62,7 @@ export function GraphView({
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selection, setSelection] = useState<GraphSelection>(null);
   const [inspectorState, setInspectorState] = useState<InspectorState>({ kind: "loading" });
+  const [selectedTypes, setSelectedTypes] = useState<GraphNodeType[]>(ALL_NODE_TYPES);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -144,6 +147,41 @@ export function GraphView({
 
   const graph = state.kind === "ready" ? state.graph : null;
   const isWorkspaceEmpty = graph !== null && graph.nodes.length === 0;
+  const visibleNodes = graph
+    ? graph.nodes.filter((node) => selectedTypes.includes(node.type))
+    : [];
+  const visibleKeys = new Set(visibleNodes.map((node) => node.key));
+  const visibleEdges = graph
+    ? graph.edges.filter((edge) => visibleKeys.has(edge.source) && visibleKeys.has(edge.target))
+    : [];
+
+  function selectTypes(nextTypes: GraphNodeType[]) {
+    setSelectedTypes(nextTypes);
+    if (!selection) return;
+
+    const nextVisibleKeys = new Set(
+      (graph?.nodes ?? [])
+        .filter((node) => nextTypes.includes(node.type))
+        .map((node) => node.key),
+    );
+    const selectionRemainsVisible = selection.kind === "node"
+      ? nextVisibleKeys.has(selection.key)
+      : (graph?.edges ?? []).some((edge) =>
+          nextVisibleKeys.has(edge.source)
+          && nextVisibleKeys.has(edge.target)
+          && edge.source === selection.edge.source
+          && edge.target === selection.edge.target
+          && edge.type === selection.edge.type,
+        );
+    if (!selectionRemainsVisible) setSelection(null);
+  }
+
+  function toggleType(type: GraphNodeType) {
+    const nextTypes = selectedTypes.includes(type)
+      ? selectedTypes.filter((selected) => selected !== type)
+      : [...selectedTypes, type];
+    selectTypes(nextTypes);
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -168,8 +206,31 @@ export function GraphView({
             ))}
           </ul>
 
-          <p className="whitespace-nowrap text-xs text-subtle">
-            {graph.nodes.length} nodes · {graph.edges.length} connections
+          <fieldset className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+            <legend className="sr-only">Filter graph by artifact type</legend>
+            {NODE_TYPES.map(({ type, label }) => (
+              <label key={type} className="inline-flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={selectedTypes.includes(type)}
+                  onChange={() => toggleType(type)}
+                  className="size-3.5 accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                />
+                {label}
+              </label>
+            ))}
+            <button
+              type="button"
+                onClick={() => selectTypes(ALL_NODE_TYPES)}
+              disabled={selectedTypes.length === ALL_NODE_TYPES.length}
+              className="rounded px-1 py-0.5 text-accent underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-default disabled:text-subtle disabled:no-underline"
+            >
+              Show all
+            </button>
+          </fieldset>
+
+          <p aria-live="polite" className="whitespace-nowrap text-xs text-subtle">
+            {visibleNodes.length} nodes · {visibleEdges.length} connections
           </p>
         </div>
       ) : null}
@@ -210,10 +271,30 @@ export function GraphView({
             </section>
           ) : null}
 
-          {graph && !isWorkspaceEmpty ? (
+          {graph && !isWorkspaceEmpty && visibleNodes.length === 0 ? (
+            <section className="grid size-full place-items-center px-6 text-center">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">
+                  No artifacts match these filters
+                </h2>
+                <p className="mt-2 text-sm text-muted">
+                  Select another artifact type or show all types to restore the graph.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => selectTypes(ALL_NODE_TYPES)}
+                  className="mt-4 rounded-lg border border-border/60 px-3 py-2 text-sm font-medium text-accent transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  Show all artifact types
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          {graph && !isWorkspaceEmpty && visibleNodes.length > 0 ? (
             <GraphCanvas
-              nodes={graph.nodes}
-              edges={graph.edges}
+              nodes={visibleNodes}
+              edges={visibleEdges}
               onSelectionChange={(nextSelection) => {
                 setSelection(nextSelection);
                 if (nextSelection) setInspectorState({ kind: "loading" });
@@ -232,7 +313,7 @@ export function GraphView({
               role="status"
               className="absolute right-5 top-5 rounded-md border border-[var(--cortex-graph-divider)] bg-background/80 px-3 py-2 text-xs text-muted backdrop-blur-sm"
             >
-              Display limit reached · showing {graph.nodes.length} nodes
+              Display limit reached · showing {visibleNodes.length} nodes
             </p>
           ) : null}
         </div>
