@@ -372,3 +372,55 @@ def fetch_edge_details(
         "attributes": relation_props,
         "origins": source["origins"] + target["origins"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Workspace deletion (US-05)
+# ---------------------------------------------------------------------------
+
+# Every label the ingestion pipeline writes. Interpolated into Cypher, which is
+# safe only because it is a module constant (see GRAPH_LABELS above).
+WORKSPACE_NODE_LABELS: tuple[str, ...] = ("Repository", *GRAPH_LABELS)
+
+DELETE_BATCH_SIZE = 1_000
+
+
+def _delete_batch_query(label: str | None) -> str:
+    match = f"(n:{label} {{workspace_id: $workspace_id}})" if label else (
+        "(n {workspace_id: $workspace_id})"
+    )
+    # DETACH DELETE also removes every relationship, so edges go with their nodes.
+    return (
+        f"MATCH {match} WITH n LIMIT $batch "
+        "DETACH DELETE n RETURN count(*) AS deleted"
+    )
+
+
+def delete_workspace_graph(
+    driver: Driver, workspace_id: uuid.UUID | str, *, batch_size: int = DELETE_BATCH_SIZE
+) -> int:
+    """Remove every node (and its relationships) the workspace owns; return the count.
+
+    Idempotent and resumable: each batch is its own transaction, so a failure
+    part-way leaves a smaller graph and calling this again carries on. Batching
+    keeps a very large workspace from building one giant transaction.
+
+    Known labels go first because the (label, workspace_id) index makes each
+    batch cheap; a final label-less sweep catches anything a future label or a
+    hand-written node left behind. Uses the same id normaliser as the writer.
+    """
+    ws = normalise_workspace_id(workspace_id)
+    total = 0
+    for label in (*WORKSPACE_NODE_LABELS, None):
+        query = _delete_batch_query(label)
+        while True:
+            with driver.session() as session:
+                deleted = session.execute_write(
+                    lambda tx: tx.run(query, workspace_id=ws, batch=batch_size).single()[
+                        "deleted"
+                    ]
+                )
+            total += deleted
+            if deleted < batch_size:
+                break
+    return total

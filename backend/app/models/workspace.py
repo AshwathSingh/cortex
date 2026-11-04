@@ -29,6 +29,12 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
+#: Workspace lifecycle. A workspace being deleted is hidden from every endpoint
+#: (see ``load_workspace_for_user``) until its rows are gone (US-05).
+WORKSPACE_ACTIVE = "active"
+WORKSPACE_DELETING = "deleting"
+
+
 class Role(str, enum.Enum):
     OWNER = "OWNER"
     EDITOR = "EDITOR"
@@ -37,12 +43,21 @@ class Role(str, enum.Enum):
 
 class Workspace(Base):
     __tablename__ = "workspaces"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'deleting')", name="ck_workspaces_status"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=WORKSPACE_ACTIVE,
+        server_default=WORKSPACE_ACTIVE,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
