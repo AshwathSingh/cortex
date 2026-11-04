@@ -2,34 +2,48 @@
     GET /api/workspaces        every workspace the caller can access
     GET /api/workspaces/{id}   does the user have some access on this workspace
     POST /api/workspaces       create a workspace owned by the caller (US-2)
+    DELETE /api/workspaces/{id} delete it and everything in it (US-05)
 
 Ownership and access roles both live in ``workspace_memberships``, so every
 authorization decision reads the same source of truth.
 """
 
+import logging
 import uuid
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from neo4j import Driver
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
-from app.models import Role, Workspace, WorkspaceMembership
+from app.db.neo4j_driver import get_driver
+from app.models import WORKSPACE_ACTIVE, Role, Workspace, WorkspaceMembership
 from app.permissions import (
     SYSTEM_ROLE_PERMISSIONS,
+    Permission,
     membership_permissions,
     permission_values,
     role_label,
 )
+from app.services.roles import RoleError
 from app.services.workspaces import (
     WorkspaceNameTaken,
     create_workspace,
+    delete_workspace,
     update_workspace,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+
+
+def get_neo4j() -> Driver:
+    """Injectable so tests can supply a fake driver (same shape as app.api.ingest)."""
+    return get_driver()
 
 
 class WorkspaceSummary(BaseModel):
@@ -83,7 +97,10 @@ def list_workspaces(user: CurrentUser, session: DbSession) -> list[WorkspaceSumm
     rows = session.execute(
         select(Workspace, WorkspaceMembership)
         .join(WorkspaceMembership, WorkspaceMembership.workspace_id == Workspace.id)
-        .where(WorkspaceMembership.user_id == user.id)
+        .where(
+            WorkspaceMembership.user_id == user.id,
+            Workspace.status == WORKSPACE_ACTIVE,  # hide ones being deleted
+        )
         .order_by(Workspace.name)
     ).all()
 
@@ -154,7 +171,6 @@ def update_workspace_profile(
         update_workspace(
             session,
             workspace=workspace,
-            owner=user,
             name=payload.name,
             description=payload.description,
         )
@@ -167,3 +183,57 @@ def update_workspace_profile(
         )
 
     return _summarise(workspace, membership)
+
+
+class WorkspaceDelete(BaseModel):
+    #: Typed by the user in the confirmation modal. Optional here only so that a
+    #: missing value is a clear 400 from the handler rather than a generic 422.
+    confirm_name: str | None = None
+
+
+@router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_workspace_endpoint(
+    workspace_id: uuid.UUID,
+    user: CurrentUser,
+    session: DbSession,
+    body: WorkspaceDelete | None = Body(default=None),
+    driver: Driver = Depends(get_neo4j),
+) -> Response:
+    """Delete the workspace and everything in it: graph nodes and edges, members,
+    invites, custom roles and data sources.
+
+    Only an owner (``workspace.delete``), and the body must carry
+    ``{"confirm_name": "<exact workspace name>"}`` (case-sensitive, no trimming) or
+    this is a 400. Both checks run before anything is marked or deleted, in that
+    order: a caller who isn't allowed gets 403 whatever they typed, so the response
+    never reveals whether a guessed name was right. If a store fails part-way the workspace
+    stays hidden in a ``deleting`` state and this endpoint returns 500; calling it
+    again resumes the cleanup. Authorisation runs first, so a refused caller
+    touches no data.
+    """
+    workspace, actor = load_workspace_for_user(
+        session,
+        user,
+        workspace_id,
+        permission=Permission.WORKSPACE_DELETE,
+        include_deleting=True,  # so a half-finished delete can be retried
+    )
+    confirm_name = body.confirm_name if body else None
+    if confirm_name is None or confirm_name != workspace.name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="To delete this workspace, send its exact name as 'confirm_name'. "
+            "Nothing was deleted.",
+        )
+    try:
+        delete_workspace(session, driver, workspace_id, actor)
+    except RoleError as e:  # lost the right to delete between the check and the lock
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except Exception:
+        # Already logged with detail by the service; keep internals out of the body.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The workspace could not be fully deleted. It is hidden and "
+            "no longer usable; try deleting it again to finish.",
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

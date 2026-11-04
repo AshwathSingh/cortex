@@ -185,4 +185,30 @@ describe("WorkspaceMemberList", () => {
     });
     expect(await screen.findByText("VIEWER")).toBeInTheDocument();
   });
+
+  it("does not offer owner actions to a non-owner manager", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(response(MEMBERS));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <WorkspaceMemberList
+        workspaceId="workspace-1"
+        currentUserId="manager-1"
+        currentRole="Team manager"
+        permissions={["members.manage"]}
+      />,
+    );
+
+    const owner = await screen.findByText("Ashwath Singh");
+    await user.click(owner.closest("button") as HTMLButtonElement);
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Workspace role")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/do not have permission to manage their access/i),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

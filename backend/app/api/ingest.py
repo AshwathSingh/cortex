@@ -48,6 +48,7 @@ from app.services.data_sources import (
     record_sync_failure,
     record_sync_success,
 )
+from app.services.workspaces import lock_active_workspace
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 
@@ -91,9 +92,19 @@ def _failed(
     all-or-nothing, so a failed ingestion leaves no nodes and this row is the
     only thing that can render a red "Needs attention" against the source.
     """
+    if not lock_active_workspace(session, workspace_id):
+        # Deleted while we were fetching; there is no source row left to mark.
+        session.rollback()
+        return _workspace_gone()
     record_sync_failure(session, workspace_id=workspace_id, external_ref=repo, error=detail)
     session.commit()
     return HTTPException(status_code=status_code, detail=detail, headers=headers)
+
+
+def _workspace_gone() -> HTTPException:
+    return HTTPException(
+        status_code=409, detail="This workspace is being deleted; nothing was written"
+    )
 
 
 @router.post("/github", response_model=IngestResponse)
@@ -114,6 +125,12 @@ def ingest_github(
         raise HTTPException(status_code=422, detail=str(e))
 
     repo = f"{owner}/{name}"
+    # A source row for a workspace deleted a moment ago would fail its foreign key.
+    # The lock is released by the commit that records the attempt, so it is not held
+    # across the (slow) GitHub fetch.
+    if not lock_active_workspace(session, body.workspace_id):
+        session.rollback()
+        raise _workspace_gone()
     # Before the fetch, not after: ingestion is synchronous and a large
     # repository takes minutes, so this is what lets the Sources page show
     # "Syncing…" meanwhile, and what leaves a trace if the request dies.
@@ -144,6 +161,13 @@ def ingest_github(
         )
     except GitHubAPIError as e:
         raise _failed(session, body.workspace_id, repo, 502, str(e))
+
+    # The fetch above can take minutes. Re-check, and hold a shared lock on the
+    # workspace until the commit below, so a delete can neither clear the graph
+    # under this write nor be followed by it recreating nodes (US-05).
+    if not lock_active_workspace(session, body.workspace_id):
+        session.rollback()
+        raise _workspace_gone()
 
     try:
         write_graph(driver, repo, prs, issues, workspace_id=body.workspace_id)

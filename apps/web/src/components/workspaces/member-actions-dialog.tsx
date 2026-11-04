@@ -66,8 +66,12 @@ export function MemberActionsDialog({
   );
 
   const isCurrentUser = member.user_id === currentUserId;
+  const targetIsOwner = member.role.toUpperCase() === "OWNER";
+  const actorIsOwner = currentRole.toUpperCase() === "OWNER";
   const canManageMember =
-    !isCurrentUser && permissions.includes("members.manage");
+    !isCurrentUser &&
+    permissions.includes("members.manage") &&
+    (!targetIsOwner || actorIsOwner);
   const memberName = member.name?.trim() || member.email || "Workspace member";
 
   useEffect(() => {

@@ -10,7 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.postgres import get_session
-from app.models import User, UserSession, Workspace, WorkspaceMembership
+from app.models import (
+    WORKSPACE_ACTIVE,
+    User,
+    UserSession,
+    Workspace,
+    WorkspaceMembership,
+)
 from app.permissions import PERMISSION_DESCRIPTIONS, Permission, membership_permissions
 from app.security import hash_session_token
 
@@ -52,6 +58,7 @@ def load_workspace_for_user(
     workspace_id: uuid.UUID,
     *,
     permission: Permission | None = None,
+    include_deleting: bool = False,
 ) -> tuple[Workspace, WorkspaceMembership]:
     """The workspace plus the caller's membership on it, or 403.
 
@@ -60,6 +67,10 @@ def load_workspace_for_user(
     narrows that further -- a member whose role lacks it also gets 403, with a
     message naming what the action needs. The membership is read from the
     database on every request, so removals and role changes apply immediately.
+
+    A workspace that is being deleted (US-05) is treated as gone -- the same 403 as
+    one that doesn't exist -- unless ``include_deleting`` is set, which only the
+    delete endpoint uses so that a failed delete can be retried.
     """
     row = session.execute(
         select(Workspace, WorkspaceMembership)
@@ -67,6 +78,7 @@ def load_workspace_for_user(
         .where(
             WorkspaceMembership.workspace_id == workspace_id,
             WorkspaceMembership.user_id == user.id,
+            *([] if include_deleting else [Workspace.status == WORKSPACE_ACTIVE]),
         )
     ).first()
 

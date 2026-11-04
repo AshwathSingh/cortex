@@ -327,6 +327,24 @@ def test_workspace_update_rejects_duplicate_owned_name(api, scenario):
     assert "already have a workspace named" in response.json()["detail"]
 
 
+def test_workspace_update_rejects_duplicate_name_for_any_co_owner(api, scenario):
+    client, sessions = api
+    with sessions() as session:
+        apollo = session.get(Workspace, scenario.apollo.id)
+        outsider = session.get(User, scenario.outsider.id)
+        grant(session, apollo, outsider, Role.OWNER)
+        session.commit()
+    authenticate(client, sessions, scenario.owner)
+
+    response = client.patch(
+        f"/api/workspaces/{scenario.apollo.id}",
+        json={"name": "Private Project", "description": None},
+    )
+
+    assert response.status_code == 409
+    assert "already have a workspace named" in response.json()["detail"]
+
+
 def test_workspace_update_validates_profile_fields(api, scenario):
     client, sessions = api
     authenticate(client, sessions, scenario.owner)
