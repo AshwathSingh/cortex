@@ -18,6 +18,7 @@ const WORKSPACE = {
     "sources.write",
     "members.manage",
     "roles.manage",
+    "workspace.update",
     "workspace.delete",
   ],
   created_at: "2026-09-28T00:00:00Z",

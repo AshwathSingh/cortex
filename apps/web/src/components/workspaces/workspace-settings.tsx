@@ -31,6 +31,8 @@ export function WorkspaceSettings() {
   const workspaceName = workspace?.name ?? "Loading workspace…";
   const description = workspace?.description || "No description added";
   const isOwner = workspace?.role === "OWNER";
+  const canEditWorkspace =
+    workspace?.permissions.includes("workspace.update") ?? false;
   const canInviteMembers = canManageMembers(workspace?.permissions);
 
   async function copyWorkspaceId() {
@@ -69,11 +71,11 @@ export function WorkspaceSettings() {
             </div>
             <div className="flex items-center justify-between gap-5 border-t border-border/20 px-6 py-4">
               <p className="text-xs leading-5 text-subtle">
-                {isOwner
+                {canEditWorkspace
                   ? "Workspace details can be changed by owners."
                   : "Only workspace owners can change these details."}
               </p>
-              {isOwner ? (
+              {canEditWorkspace ? (
                 <Button
                   type="button"
                   size="small"

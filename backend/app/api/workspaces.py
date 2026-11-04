@@ -160,12 +160,9 @@ def update_workspace_profile(
     user: CurrentUser,
     session: DbSession,
 ) -> WorkspaceSummary:
-    workspace, membership = load_workspace_for_user(session, user, workspace_id)
-    if membership.role is not Role.OWNER:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only workspace owners can edit workspace details",
-        )
+    workspace, membership = load_workspace_for_user(
+        session, user, workspace_id, permission=Permission.WORKSPACE_UPDATE
+    )
 
     try:
         update_workspace(

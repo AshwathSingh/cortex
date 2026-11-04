@@ -68,6 +68,7 @@ def test_permission_catalogue_marks_owner_only(w):
     r = w.as_("owner").get("/api/permissions")
     assert r.status_code == 200
     by_key = {p["key"]: p for p in r.json()}
+    assert by_key["workspace.update"]["grantable"] is False
     assert by_key["workspace.delete"]["grantable"] is False
     assert by_key["sources.write"]["grantable"] is True
 

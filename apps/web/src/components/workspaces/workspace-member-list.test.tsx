@@ -144,6 +144,31 @@ describe("WorkspaceMemberList", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the role select controlled while role options load", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn((input: RequestInfo | URL) =>
+      String(input).endsWith("/roles")
+        ? new Promise<Response>(() => undefined)
+        : Promise.resolve(response(MEMBERS)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <WorkspaceMemberList
+        workspaceId="workspace-1"
+        currentUserId="user-1"
+        currentRole="OWNER"
+        permissions={MEMBERS[0].permissions}
+      />,
+    );
+
+    const teammate = await screen.findByText("teammate@example.com");
+    await user.click(teammate.closest("button") as HTMLButtonElement);
+
+    expect(await screen.findByLabelText("Workspace role")).toHaveValue("");
+    expect(screen.getByRole("option", { name: "Loading roles…" })).toHaveValue("");
+  });
+
   it("opens member actions and updates a role", async () => {
     const user = userEvent.setup();
     const updatedMember = { ...MEMBERS[1], role: "VIEWER", permissions: [] };
@@ -184,6 +209,61 @@ describe("WorkspaceMemberList", () => {
       role: "VIEWER",
     });
     expect(await screen.findByText("VIEWER")).toBeInTheDocument();
+  });
+
+  it("explains when the current role cannot be granted by the manager", async () => {
+    const user = userEvent.setup();
+    const restrictedMember = {
+      ...MEMBERS[1],
+      role: "Release manager",
+      role_id: "role-release-manager",
+      permissions: ["roles.manage"],
+    } satisfies WorkspaceMember;
+    const restrictedRole = {
+      id: "role-release-manager",
+      name: "Release manager",
+      description: "Controls release access",
+      permissions: ["roles.manage"],
+      built_in: false,
+      member_count: 1,
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(
+        response(
+          String(input).endsWith("/roles")
+            ? [...ROLES, restrictedRole]
+            : [restrictedMember],
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <WorkspaceMemberList
+        workspaceId="workspace-1"
+        currentUserId="manager-1"
+        currentRole="Member manager"
+        permissions={["members.manage"]}
+      />,
+    );
+
+    const member = await screen.findByText("teammate@example.com");
+    await user.click(member.closest("button") as HTMLButtonElement);
+
+    const roleSelect = await screen.findByLabelText("Workspace role");
+    expect(roleSelect).toHaveValue("custom:role-release-manager");
+    expect(
+      screen.getByRole("option", {
+        name: "Release manager — Current role (cannot assign)",
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/grants permissions you cannot assign/i),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save role" })).toBeDisabled();
+
+    await user.selectOptions(roleSelect, "builtin:VIEWER");
+    expect(screen.getByRole("button", { name: "Save role" })).toBeEnabled();
   });
 
   it("does not offer owner actions to a non-owner manager", async () => {

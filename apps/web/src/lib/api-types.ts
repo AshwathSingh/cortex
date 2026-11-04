@@ -10,6 +10,7 @@ export type WorkspacePermission =
   | "sources.write"
   | "members.manage"
   | "roles.manage"
+  | "workspace.update"
   | "workspace.delete";
 
 export type WorkspaceSummary = {

@@ -311,7 +311,7 @@ def test_non_owner_cannot_update_workspace_profile(api, scenario):
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "Only workspace owners can edit workspace details"
+    assert "workspace.update" in response.json()["detail"]
 
 
 def test_workspace_update_rejects_duplicate_owned_name(api, scenario):

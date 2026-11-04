@@ -52,11 +52,12 @@ export function MemberActionsDialog({
   onMemberUpdated: (member: WorkspaceMember) => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const currentRoleKey = roleKey(member);
   const [roles, setRoles] = useState<WorkspaceRoleDefinition[]>([]);
   const [rolesError, setRolesError] = useState<string | null>(null);
-  const [isLoadingRoles, setIsLoadingRoles] = useState(false);
+  const [isLoadingRoles, setIsLoadingRoles] = useState(true);
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const [selectedRoleKey, setSelectedRoleKey] = useState(roleKey(member));
+  const [selectedRoleKey, setSelectedRoleKey] = useState(currentRoleKey);
   const [isSaving, setIsSaving] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [isConfirmingRemoval, setIsConfirmingRemoval] = useState(false);
@@ -112,6 +113,11 @@ export function MemberActionsDialog({
   const selectedRole = roleOptions.find(
     (option) => option.key === selectedRoleKey,
   );
+  const currentRoleIsAssignable = roleOptions.some(
+    (option) => option.key === currentRoleKey,
+  );
+  const showRestrictedCurrentRole =
+    !isLoadingRoles && !rolesError && !currentRoleIsAssignable;
 
   function closeDialog() {
     if (isSaving || isRemoving) return;
@@ -136,7 +142,7 @@ export function MemberActionsDialog({
 
   async function saveRole(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selectedRole || selectedRole.key === roleKey(member)) return;
+    if (!selectedRole || selectedRole.key === currentRoleKey) return;
 
     setIsSaving(true);
     setActionError(null);
@@ -249,12 +255,17 @@ export function MemberActionsDialog({
               <div className="relative mt-2">
                 <select
                   id="member-role"
-                  value={selectedRoleKey}
+                  value={isLoadingRoles ? "" : selectedRoleKey}
                   disabled={isLoadingRoles || isSaving || roleOptions.length === 0}
                   onChange={(event) => setSelectedRoleKey(event.target.value)}
                   className={`${fieldControlClassName} mt-0 h-11 appearance-none pr-10`}
                 >
-                  {isLoadingRoles ? <option>Loading roles…</option> : null}
+                  {isLoadingRoles ? <option value="">Loading roles…</option> : null}
+                  {showRestrictedCurrentRole ? (
+                    <option value={currentRoleKey} disabled>
+                      {member.role} — Current role (cannot assign)
+                    </option>
+                  ) : null}
                   {roleOptions.map((option) => (
                     <option key={option.key} value={option.key}>
                       {option.name}
@@ -275,7 +286,10 @@ export function MemberActionsDialog({
                 </svg>
               </div>
               <p className="mt-2 text-xs leading-5 text-subtle">
-                {selectedRole?.description || "Choose this member's access level."}
+                {selectedRole?.description ||
+                  (showRestrictedCurrentRole
+                    ? "This role grants permissions you cannot assign. Choose an available role to replace it."
+                    : "Choose this member's access level.")}
               </p>
             </Field>
             {rolesError ? (
@@ -299,7 +313,7 @@ export function MemberActionsDialog({
                 disabled={
                   isSaving ||
                   !selectedRole ||
-                  selectedRole.key === roleKey(member)
+                  selectedRole.key === currentRoleKey
                 }
               >
                 {isSaving ? "Saving…" : "Save role"}
