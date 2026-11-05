@@ -352,6 +352,27 @@ describe("GraphExplorer", () => {
     expect(screen.getByText("3 nodes · 2 connections")).toBeInTheDocument();
   });
 
+  it("shows relationship controls to workspace writers", async () => {
+    stubCanvas();
+    mockFetch(200, graph());
+    renderExplorer("EDITOR");
+
+    expect(
+      await screen.findByRole("button", { name: "Create relationship" }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides relationship controls from viewers", async () => {
+    stubCanvas();
+    mockFetch(200, graph());
+    renderExplorer("VIEWER");
+
+    expect(await screen.findByRole("img")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create relationship" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("offers filters for the node types that exist today", async () => {
     stubCanvas();
     mockFetch(200, graph());

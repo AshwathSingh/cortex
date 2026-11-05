@@ -4,8 +4,11 @@ import { useState } from "react";
 
 import { GraphSyncStatus } from "@/components/graph/graph-sync-status";
 import { GraphView } from "@/components/graph/graph-view";
+import { useWorkspace } from "@/components/workspaces/workspace-context";
 
 export function GraphExplorer({ workspaceId }: { workspaceId: string }) {
+  const { workspace } = useWorkspace();
+  const canEditGraph = workspace?.permissions.includes("sources.write") ?? false;
   // Bumped when an ingestion lands new data. The canvas is fetched once on
   // mount, so without this a finished re-sync would leave it showing the graph
   // from before the sync it just reported.
@@ -39,7 +42,11 @@ export function GraphExplorer({ workspaceId }: { workspaceId: string }) {
         </div>
       </header>
 
-      <GraphView workspaceId={workspaceId} reloadToken={graphVersion} />
+      <GraphView
+        workspaceId={workspaceId}
+        reloadToken={graphVersion}
+        canEdit={canEditGraph}
+      />
     </main>
   );
 }
