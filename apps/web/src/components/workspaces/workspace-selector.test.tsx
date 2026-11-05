@@ -1,9 +1,14 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceSelector } from "@/components/workspaces/workspace-selector";
 import type { AuthenticatedUser, WorkspaceSummary } from "@/lib/api-types";
 import { rememberLastWorkspace } from "@/lib/last-workspace";
+import {
+  getPendingWorkspaceDeletions,
+  rememberPendingWorkspaceDeletion,
+} from "@/lib/workspace-delete-recovery";
 
 const router = { push: vi.fn(), replace: vi.fn(), refresh: vi.fn() };
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
@@ -105,5 +110,64 @@ describe("WorkspaceSelector", () => {
     await vi.waitFor(() =>
       expect(router.replace).toHaveBeenCalledWith("/workspaces/workspace-2"),
     );
+  });
+
+  it("shows pending cleanup instead of auto-resuming the only workspace", async () => {
+    rememberPendingWorkspaceDeletion(USER.id, {
+      workspaceId: "workspace-deleting",
+      workspaceName: "Interrupted workspace",
+    });
+    mockWorkspaceRequests([WORKSPACES[0]]);
+
+    render(<WorkspaceSelector />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Finish workspace deletion" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Interrupted workspace")).toBeInTheDocument();
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("retries a persisted deletion with its original confirmation", async () => {
+    const user = userEvent.setup();
+    const pending = {
+      workspaceId: "workspace-deleting",
+      workspaceName: "Interrupted workspace",
+    };
+    rememberPendingWorkspaceDeletion(USER.id, pending);
+    const fetchMock = vi.fn(
+      (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "DELETE") {
+          return Promise.resolve(new Response(null, { status: 204 }));
+        }
+        const body = String(input).endsWith("/api/auth/me") ? USER : WORKSPACES;
+        return Promise.resolve(
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<WorkspaceSelector />);
+    await user.click(
+      await screen.findByRole("button", { name: "Retry cleanup" }),
+    );
+
+    await vi.waitFor(() =>
+      expect(getPendingWorkspaceDeletions(USER.id)).toEqual([]),
+    );
+    const deleteRequest = fetchMock.mock.calls.find(
+      ([, init]) => init?.method === "DELETE",
+    );
+    expect(deleteRequest?.[0]).toBe("/api/workspaces/workspace-deleting");
+    expect(JSON.parse(deleteRequest?.[1]?.body as string)).toEqual({
+      confirm_name: pending.workspaceName,
+    });
+    expect(
+      screen.queryByRole("heading", { name: "Finish workspace deletion" }),
+    ).not.toBeInTheDocument();
   });
 });

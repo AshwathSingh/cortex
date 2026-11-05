@@ -8,6 +8,10 @@ import {
 } from "@/components/workspaces/workspace-context";
 import { WorkspaceSettings } from "@/components/workspaces/workspace-settings";
 import type { WorkspaceSummary } from "@/lib/api-types";
+import {
+  getPendingWorkspaceDeletions,
+  rememberPendingWorkspaceDeletion,
+} from "@/lib/workspace-delete-recovery";
 
 const router = { push: vi.fn(), replace: vi.fn(), refresh: vi.fn() };
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
@@ -66,7 +70,7 @@ function renderSettings(overrides: Partial<WorkspaceContextValue> = {}) {
       value={{
         workspaceId: WORKSPACE.id,
         workspace: WORKSPACE,
-        user: null,
+        user: USER,
         isLoading: false,
         error: null,
         ...overrides,
@@ -333,6 +337,10 @@ describe("WorkspaceSettings", () => {
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
+    rememberPendingWorkspaceDeletion(USER.id, {
+      workspaceId: WORKSPACE.id,
+      workspaceName: WORKSPACE.name,
+    });
     window.localStorage.setItem("cortex:last-workspace:user-1", WORKSPACE.id);
     renderSettings({ user: USER });
 
@@ -356,6 +364,7 @@ describe("WorkspaceSettings", () => {
       confirm_name: WORKSPACE.name,
     });
     expect(window.localStorage.getItem("cortex:last-workspace:user-1")).toBeNull();
+    expect(getPendingWorkspaceDeletions(USER.id)).toEqual([]);
   });
 
   it("locks the modal while deletion is in progress", async () => {
@@ -394,10 +403,8 @@ describe("WorkspaceSettings", () => {
   });
 
   it.each([
-    [401, "Your session has expired"],
     [400, "The workspace name may have changed"],
     [403, "Only the workspace owner can delete it"],
-    [500, "The workspace could not be fully deleted"],
   ])("shows deletion feedback for a %i response", async (status, message) => {
     const user = userEvent.setup();
     vi.stubGlobal(
@@ -437,5 +444,86 @@ describe("WorkspaceSettings", () => {
       screen.getAllByRole("button", { name: "Delete workspace" })[1],
     ).toBeEnabled();
     expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("provides a sign-in action when the session expires", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(
+          init?.method === "DELETE"
+            ? new Response(JSON.stringify({ detail: "Not authenticated" }), {
+                status: 401,
+                headers: { "Content-Type": "application/json" },
+              })
+            : new Response("[]", {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              }),
+        ),
+      ),
+    );
+    renderSettings();
+
+    await user.click(screen.getByRole("button", { name: "Delete workspace" }));
+    await user.type(
+      screen.getByLabelText(`Type ${WORKSPACE.name} to confirm`),
+      WORKSPACE.name,
+    );
+    await user.click(
+      screen.getAllByRole("button", { name: "Delete workspace" })[1],
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your session has expired",
+    );
+    expect(
+      screen.getByLabelText(`Type ${WORKSPACE.name} to confirm`),
+    ).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Sign in again" }));
+    expect(router.replace).toHaveBeenCalledWith("/login");
+  });
+
+  it("persists interrupted cleanup and opens the recovery page", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+        Promise.resolve(
+          init?.method === "DELETE"
+            ? new Response(
+                JSON.stringify({
+                  detail: "The workspace could not be fully deleted",
+                }),
+                {
+                  status: 500,
+                  headers: { "Content-Type": "application/json" },
+                },
+              )
+            : new Response("[]", {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              }),
+        ),
+      ),
+    );
+    renderSettings();
+
+    await user.click(screen.getByRole("button", { name: "Delete workspace" }));
+    await user.type(
+      screen.getByLabelText(`Type ${WORKSPACE.name} to confirm`),
+      WORKSPACE.name,
+    );
+    await user.click(
+      screen.getAllByRole("button", { name: "Delete workspace" })[1],
+    );
+
+    await vi.waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/workspaces"),
+    );
+    expect(getPendingWorkspaceDeletions(USER.id)).toEqual([
+      { workspaceId: WORKSPACE.id, workspaceName: WORKSPACE.name },
+    ]);
   });
 });

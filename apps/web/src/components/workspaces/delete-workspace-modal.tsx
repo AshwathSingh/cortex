@@ -17,6 +17,10 @@ import type { WorkspaceSummary } from "@/lib/api-types";
 import { forgetLastWorkspace } from "@/lib/last-workspace";
 import { routes } from "@/lib/routes";
 import { deleteWorkspace } from "@/lib/workspace-client";
+import {
+  forgetPendingWorkspaceDeletion,
+  rememberPendingWorkspaceDeletion,
+} from "@/lib/workspace-delete-recovery";
 
 function deleteErrorMessage(error: unknown) {
   if (!(error instanceof ApiError)) {
@@ -40,7 +44,7 @@ export function DeleteWorkspaceModal({
   onClose,
 }: {
   workspace: WorkspaceSummary;
-  userId?: string;
+  userId: string;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -49,6 +53,7 @@ export function DeleteWorkspaceModal({
   const [confirmation, setConfirmation] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [needsSignIn, setNeedsSignIn] = useState(false);
   const isConfirmed = confirmation === workspace.name;
 
   useEffect(() => {
@@ -77,11 +82,23 @@ export function DeleteWorkspaceModal({
     setError(null);
     try {
       await deleteWorkspace(workspace.id, confirmation);
-      if (userId) forgetLastWorkspace(userId);
+      forgetPendingWorkspaceDeletion(userId, workspace.id);
+      forgetLastWorkspace(userId);
       router.replace(routes.workspaces);
     } catch (requestError) {
       setError(deleteErrorMessage(requestError));
       setIsDeleting(false);
+      if (requestError instanceof ApiError && requestError.status === 401) {
+        setNeedsSignIn(true);
+        return;
+      }
+      if (requestError instanceof ApiError && requestError.status >= 500) {
+        const recoverySaved = rememberPendingWorkspaceDeletion(userId, {
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
+        });
+        if (recoverySaved) router.replace(routes.workspaces);
+      }
     }
   }
 
@@ -152,10 +169,10 @@ export function DeleteWorkspaceModal({
             value={confirmation}
             autoComplete="off"
             aria-describedby="delete-workspace-confirmation-hint"
-            disabled={isDeleting}
+            disabled={isDeleting || needsSignIn}
             onChange={(event) => {
               setConfirmation(event.target.value);
-              setError(null);
+              if (!needsSignIn) setError(null);
             }}
             className={`${fieldControlClassName} h-11 border-red-400/30 focus:border-red-300/80 focus:ring-red-400/15`}
           />
@@ -172,13 +189,23 @@ export function DeleteWorkspaceModal({
           >
             Cancel
           </Button>
-          <Button
-            type="submit"
-            variant="danger"
-            disabled={isDeleting || !isConfirmed}
-          >
-            {isDeleting ? "Deleting workspace…" : "Delete workspace"}
-          </Button>
+          {needsSignIn ? (
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => router.replace("/login")}
+            >
+              Sign in again
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              variant="danger"
+              disabled={isDeleting || !isConfirmed}
+            >
+              {isDeleting ? "Deleting workspace…" : "Delete workspace"}
+            </Button>
+          )}
         </div>
       </form>
     </dialog>

@@ -34,7 +34,9 @@ export function WorkspaceSettings() {
   const description = workspace?.description || "No description added";
   const isOwner = workspace?.role === "OWNER";
   const canDeleteWorkspace =
-    isOwner && (workspace?.permissions.includes("workspace.delete") ?? false);
+    Boolean(user) &&
+    isOwner &&
+    (workspace?.permissions.includes("workspace.delete") ?? false);
   const canEditWorkspace =
     workspace?.permissions.includes("workspace.update") ?? false;
   const canInviteMembers = canManageMembers(workspace?.permissions);
@@ -186,10 +188,10 @@ export function WorkspaceSettings() {
             />
           ) : null}
 
-          {workspace && canDeleteWorkspace && isDeletingWorkspace ? (
+          {workspace && user && canDeleteWorkspace && isDeletingWorkspace ? (
             <DeleteWorkspaceModal
               workspace={workspace}
-              userId={user?.id}
+              userId={user.id}
               onClose={() => setIsDeletingWorkspace(false)}
             />
           ) : null}
