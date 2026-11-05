@@ -48,6 +48,8 @@
   --cortex-graph-author: #78a0ff;
   --cortex-graph-pull-request: #7ddfa0;
   --cortex-graph-issue: #e0a86a;
+  --cortex-graph-document: #c48fe8;
+  --cortex-graph-document-section: #9fb0c9;
   --cortex-graph-node-unknown: #a4adbd;
   --cortex-graph-edge: rgb(120 160 255 / 22%);
   --cortex-graph-edge-hub: rgb(120 160 255 / 38%);

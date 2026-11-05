@@ -339,7 +339,7 @@ describe("GraphExplorer", () => {
     await waitFor(() => expect(graphCalls(fetchFn)).toHaveLength(1));
     const graphUrl = new URL(String(graphCalls(fetchFn)[0][0]), "http://localhost");
     expect(graphUrl.pathname).toBe(`/api/workspaces/${WORKSPACE_ID}/graph`);
-    expect(graphUrl.searchParams.getAll("types")).toEqual(["Author", "PullRequest", "Issue"]);
+    expect(graphUrl.searchParams.getAll("types")).toEqual(["Author", "PullRequest", "Issue", "Document", "DocumentSection"]);
   });
 
   it("renders the canvas with node and connection counts", async () => {
