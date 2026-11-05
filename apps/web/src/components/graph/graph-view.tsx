@@ -54,10 +54,12 @@ type State =
 export function GraphView({
   workspaceId,
   reloadToken = 0,
+  canEdit = false,
 }: {
   workspaceId: string;
   /** Change it to refetch the graph; the header bumps it after an ingestion. */
   reloadToken?: number;
+  canEdit?: boolean;
 }) {
   const router = useRouter();
   const [state, setState] = useState<State>({ kind: "loading" });
@@ -226,7 +228,7 @@ export function GraphView({
 
 
   async function removeSelectedEdge() {
-    if (selection?.kind !== "edge" || state.kind !== "ready") return;
+    if (!canEdit || selection?.kind !== "edge" || state.kind !== "ready") return;
     const edge = selection.edge;
     if (!window.confirm("Remove this relationship from the workspace graph?")) return;
     const previous = state.graph;
@@ -261,7 +263,12 @@ export function GraphView({
         setLinkSource(null);
         return;
       }
-      const rationale = window.prompt("Why are these nodes connected? (optional)") ?? "";
+      const rationale = window.prompt("Why are these nodes connected? (optional)");
+      if (rationale === null) {
+        setLinkSource(null);
+        setRelationshipNotice("Relationship creation cancelled.");
+        return;
+      }
       setLinkSource(null);
       try {
         const edge = await apiRequest<{ source: string; target: string; type: string }>(
@@ -498,23 +505,25 @@ export function GraphView({
 
           {graph && !isWorkspaceEmpty && visibleNodes.length > 0 ? (
             <>
-              <button
-                type="button"
-                onClick={() => {
-                  if (linkMode) {
-                    setLinkMode(false);
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (linkMode) {
+                      setLinkMode(false);
+                      setLinkSource(null);
+                      setRelationshipNotice("");
+                      return;
+                    }
                     setLinkSource(null);
-                    setRelationshipNotice("");
-                    return;
-                  }
-                  setLinkSource(null);
-                  setLinkMode(true);
-                  setRelationshipNotice("Select the first node, then the second node to connect them.");
-                }}
-                className="absolute right-4 top-4 z-10 rounded-lg border border-border bg-background/90 px-3 py-2 text-xs font-medium text-foreground shadow"
-              >
-                {linkMode ? "Cancel relationship" : "Create relationship"}
-              </button>
+                    setLinkMode(true);
+                    setRelationshipNotice("Select the first node, then the second node to connect them.");
+                  }}
+                  className="absolute right-4 top-4 z-10 rounded-lg border border-border bg-background/90 px-3 py-2 text-xs font-medium text-foreground shadow"
+                >
+                  {linkMode ? "Cancel relationship" : "Create relationship"}
+                </button>
+              ) : null}
               <GraphCanvas
                 nodes={visibleNodes}
                 edges={visibleEdges}
@@ -558,7 +567,7 @@ export function GraphView({
               state={inspectorState}
               onClose={() => setSelection(null)}
               onDelete={() => void removeSelectedEdge()}
-              canEdit
+              canEdit={canEdit}
             />
           </div>
         ) : null}

@@ -55,6 +55,9 @@ class Session:
     def execute_read(self, callback):
         return callback(self.tx)
 
+    def execute_write(self, callback):
+        return callback(self.tx)
+
 
 class Driver:
     def __init__(self, record=None):
@@ -187,3 +190,71 @@ def test_edge_detail_endpoint_returns_relationship_evidence_and_sources(api_db):
     assert [origin["key"] for origin in response.json()["origins"]] == [
         "Author:1", "PullRequest:20",
     ]
+
+
+MUTATION_URL = f"/api/workspaces/{TEST_WORKSPACE_ID}/graph/edges"
+MUTATION_BODY = {
+    "source_key": "Author:1",
+    "target_key": "PullRequest:20",
+    "edge_type": "MANUAL_RELATIONSHIP",
+    "relationship_type": "RELATED_TO",
+    "rationale": "Both artifacts describe the same change.",
+}
+
+
+@pytest.mark.parametrize("method", ["POST", "DELETE"])
+def test_edge_mutations_require_sources_write(api_db, method):
+    client, sessions = api_db
+    driver = Driver({"deleted": 1})
+    app.dependency_overrides[get_neo4j] = lambda: driver
+    sign_in_with_role(client, sessions, TEST_WORKSPACE_ID, Role.VIEWER)
+
+    response = client.request(method, MUTATION_URL, json=MUTATION_BODY)
+
+    assert response.status_code == 403
+    assert driver.opened == 0
+
+
+def test_editor_can_create_manual_relationship(api_db):
+    client, sessions = api_db
+    driver = Driver({"type": "MANUAL_RELATIONSHIP"})
+    app.dependency_overrides[get_neo4j] = lambda: driver
+    sign_in_with_role(client, sessions, TEST_WORKSPACE_ID, Role.EDITOR)
+
+    response = client.post(MUTATION_URL, json=MUTATION_BODY)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "source": "Author:1",
+        "target": "PullRequest:20",
+        "type": "MANUAL_RELATIONSHIP",
+    }
+    params = driver.tx.calls[0][1]
+    assert params["workspace_id"] == TEST_WORKSPACE_ID
+    assert params["source_type"] == "Author"
+    assert params["source_id"] == 1
+    assert params["target_type"] == "PullRequest"
+    assert params["target_id"] == 20
+    assert params["relationship_type"] == "RELATED_TO"
+    assert params["rationale"] == MUTATION_BODY["rationale"]
+    assert params["created_by"]
+
+
+def test_owner_can_delete_relationship(api_db):
+    client, sessions = api_db
+    driver = Driver({"deleted": 1})
+    app.dependency_overrides[get_neo4j] = lambda: driver
+    sign_in_with_role(client, sessions, TEST_WORKSPACE_ID, Role.OWNER)
+
+    response = client.request("DELETE", MUTATION_URL, json=MUTATION_BODY)
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True}
+    assert driver.tx.calls[0][1] == {
+        "workspace_id": TEST_WORKSPACE_ID,
+        "source_type": "Author",
+        "source_id": 1,
+        "target_type": "PullRequest",
+        "target_id": 20,
+        "edge_type": "MANUAL_RELATIONSHIP",
+    }
