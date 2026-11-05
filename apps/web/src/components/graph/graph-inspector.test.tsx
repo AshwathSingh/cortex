@@ -87,6 +87,6 @@ describe("GraphInspector", () => {
         onClose={onClose}
       />,
     );
-    expect(screen.getByRole("alert")).toHaveTextContent("Graph unavailable");
+    expect(screen.getByRole("alert")).toHaveTextContent("Evidence details unavailable for this node");
   });
 });

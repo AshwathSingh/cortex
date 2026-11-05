@@ -240,7 +240,7 @@ export function GraphView({
         body: JSON.stringify({ source_key: edge.source, target_key: edge.target, edge_type: edge.type }),
       });
       setRelationshipNotice("Relationship removed.");
-    } catch (requestError) {
+    } catch {
       setState((current) => current.kind === "ready" ? { ...current, graph: previous } : current);
       setRelationshipNotice("Failed to remove relationship. Please try again.");
     }
@@ -447,27 +447,41 @@ export function GraphView({
 
           {graph && !isWorkspaceEmpty && visibleNodes.length > 0 ? (
             <>
-            <button type="button" onClick={() => { setLinkSource(null); setLinkMode(true); setRelationshipNotice("Select the first node, then the second node to connect them."); }} className="absolute right-4 top-4 z-10 rounded-lg border border-border bg-background/90 px-3 py-2 text-xs font-medium text-foreground shadow">
-              Create relationship
-            </button>
-            <GraphCanvas
-              nodes={visibleNodes}
-              edges={visibleEdges}
-              highlightedNodeKeys={highlightedNodeKeys}
-              onSelectionChange={(nextSelection) => {
-                if (linkMode) {
-                  if (nextSelection?.kind === "node") {
-                    if (!linkSource) setLinkSource(nextSelection.key);
-                    else {
-                      setLinkMode(false);
-                      void handleCanvasSelection(nextSelection);
-                    }
+              <button
+                type="button"
+                onClick={() => {
+                  if (linkMode) {
+                    setLinkMode(false);
+                    setLinkSource(null);
+                    setRelationshipNotice("");
+                    return;
                   }
-                  return;
-                }
-                void handleCanvasSelection(nextSelection);
-              }}
-            />
+                  setLinkSource(null);
+                  setLinkMode(true);
+                  setRelationshipNotice("Select the first node, then the second node to connect them.");
+                }}
+                className="absolute right-4 top-4 z-10 rounded-lg border border-border bg-background/90 px-3 py-2 text-xs font-medium text-foreground shadow"
+              >
+                {linkMode ? "Cancel relationship" : "Create relationship"}
+              </button>
+              <GraphCanvas
+                nodes={visibleNodes}
+                edges={visibleEdges}
+                highlightedNodeKeys={highlightedNodeKeys}
+                onSelectionChange={(nextSelection) => {
+                  if (linkMode) {
+                    if (nextSelection?.kind === "node") {
+                      if (!linkSource) setLinkSource(nextSelection.key);
+                      else {
+                        setLinkMode(false);
+                        void handleCanvasSelection(nextSelection);
+                      }
+                    }
+                    return;
+                  }
+                  void handleCanvasSelection(nextSelection);
+                }}
+              />
             </>
           ) : null}
 
