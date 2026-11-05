@@ -7,7 +7,8 @@ const variants = {
   muted:
     "border border-border/40 text-muted enabled:hover:border-border enabled:hover:bg-surface-raised enabled:hover:text-foreground",
   ghost: "text-muted enabled:hover:bg-surface enabled:hover:text-foreground",
-  danger: "border border-red-400/25 text-red-300",
+  danger:
+    "border border-red-400/30 bg-red-500/10 text-red-200 enabled:hover:border-red-300/45 enabled:hover:bg-red-500/20",
 } as const;
 
 const sizes = {
