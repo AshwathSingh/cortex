@@ -24,6 +24,7 @@ function source(over: Partial<WorkspaceSource> = {}): WorkspaceSource {
     last_attempted_at: minutesAgo(5),
     last_synced_at: minutesAgo(5),
     last_error: null,
+    last_error_code: null,
     last_synced_by: "11111111-0000-4000-8000-000000000001",
     last_synced_by_name: "Ashwath",
     ...over,
@@ -62,22 +63,29 @@ const { replace, routerMock } = vi.hoisted(() => {
 
 vi.mock("next/navigation", () => ({ useRouter: () => routerMock }));
 
-function mockFetch(status: number, body: unknown) {
-  const fn = vi.fn().mockResolvedValue(
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    }),
-  );
-  vi.stubGlobal("fetch", fn);
-  return fn;
-}
-
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+/**
+ * Answer the source list with `body` and every other endpoint with an empty
+ * array.
+ *
+ * A fresh Response per call, not one shared instance: a Response body can only
+ * be read once, so a single object silently fails the second reader -- and the
+ * page makes two requests now that T-12.2 polls for failures as well.
+ */
+function mockFetch(status: number, body: unknown) {
+  const fn = vi.fn((input: RequestInfo | URL) =>
+    Promise.resolve(
+      String(input).endsWith("/sources") ? jsonResponse(body, status) : jsonResponse([]),
+    ),
+  );
+  vi.stubGlobal("fetch", fn);
+  return fn;
 }
 
 const INGESTED = { repo: "openai/cortex", pull_requests: 8, issues: 3 };
@@ -94,6 +102,7 @@ function mockApi(
   let reads = 0;
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === "POST") return onIngest();
+    if (!String(input).endsWith("/sources")) return Promise.resolve(jsonResponse([]));
     const page = pages[Math.min(reads, pages.length - 1)];
     reads += 1;
     return Promise.resolve(jsonResponse(page));
@@ -121,7 +130,11 @@ describe("SourceInventory", () => {
     const fetchFn = mockFetch(200, []);
     renderInventory();
     await screen.findByText(/connect your first source/i);
-    expect(fetchFn.mock.calls[0][0]).toBe(`/api/workspaces/${WORKSPACE_ID}/sources`);
+    // Found rather than indexed: the page also polls for failures (T-12.2) and
+    // the order the two effects run in is React's business, not this test's.
+    expect(
+      fetchFn.mock.calls.map(([url]) => String(url)),
+    ).toContain(`/api/workspaces/${WORKSPACE_ID}/sources`);
   });
 
   it("shows connected repositories and their indexed counts", async () => {
@@ -219,16 +232,27 @@ describe("SourceInventory", () => {
   });
 
   it("shows access errors and can retry", async () => {
-    const fetchFn = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Workspace access denied" }), { status: 403, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    // Routed by URL rather than by call order: the page also polls for failures
+    // (T-12.2), so "the first request" is no longer the source list.
+    let sourceReadCount = 0;
+    const fetchFn = vi.fn((input: RequestInfo | URL) => {
+      if (!String(input).endsWith("/sources")) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      sourceReadCount += 1;
+      return Promise.resolve(
+        sourceReadCount === 1
+          ? jsonResponse({ detail: "Workspace access denied" }, 403)
+          : jsonResponse([]),
+      );
+    });
     vi.stubGlobal("fetch", fetchFn);
     const user = userEvent.setup();
     renderInventory();
     expect(await screen.findByRole("alert")).toHaveTextContent(/access denied/i);
     await user.click(screen.getByRole("button", { name: /try again/i }));
     expect(await screen.findByText(/connect your first source/i)).toBeInTheDocument();
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(sourceReadCount).toBe(2);
   });
 
   // Re-syncing a connected source, and polling while one is mid-ingestion.

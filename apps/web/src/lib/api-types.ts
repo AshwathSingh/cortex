@@ -35,7 +35,44 @@ export type WorkspaceSource = IngestResult & {
    *  a source can be failing and still be showing three-day-old data. */
   last_synced_at: string | null;
   last_error: string | null;
+  /** T-12.1: which kind of failure, so a row can offer the right fix. */
+  last_error_code: SourceFailureCategory | null;
   last_synced_by: string | null;
+  last_synced_by_name: string | null;
+};
+
+/** Mirrors `app.services.source_failures.FailureCategory`. */
+export type SourceFailureCategory =
+  | "AUTH"
+  | "NOT_FOUND"
+  | "RATE_LIMIT"
+  | "UPSTREAM"
+  | "GRAPH"
+  | "UNKNOWN";
+
+/**
+ * T-12.1: one unresolved ingestion failure.
+ *
+ * The server decides `needs_reauth` and `can_retry` rather than the page
+ * inferring them from the category: which failures a sign-in can fix is a fact
+ * about the GitHub integration, and a second copy of that rule in TypeScript
+ * would be a second place for it to go stale.
+ */
+export type SourceFailure = {
+  repo: string;
+  kind: string;
+  category: SourceFailureCategory;
+  /** Short noun phrase for the badge, e.g. "Authorization expired". */
+  label: string;
+  /** What the server recorded when it failed. */
+  message: string | null;
+  /** What the reader should do, in one sentence. */
+  advice: string;
+  needs_reauth: boolean;
+  can_retry: boolean;
+  last_attempted_at: string | null;
+  /** Kept for a failing source: the graph is still showing data this old. */
+  last_synced_at: string | null;
   last_synced_by_name: string | null;
 };
 
