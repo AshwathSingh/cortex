@@ -221,104 +221,153 @@ export function GraphView({
     setSelection(null);
   }
 
+  function clearSearch() {
+    setSearchInput("");
+    setSearchTerm("");
+    setSelection(null);
+  }
+
+  const isUpdatingGraph = Boolean(
+    graph && (!graphMatchesRequest || searchInput.trim() !== searchTerm),
+  );
+  const resultSummary = searchTerm
+    ? `${visibleNodes.length} ${visibleNodes.length === 1 ? "match" : "matches"}`
+    : `${visibleNodes.length} ${visibleNodes.length === 1 ? "node" : "nodes"}`;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {graph ? (
-        <form
-          role="search"
-          onSubmit={submitSearch}
-          className="flex flex-wrap items-end gap-3 border-b border-[var(--cortex-graph-divider)] px-6 py-3"
+      {graph && !isWorkspaceEmpty ? (
+        <div
+          className="border-b border-[var(--cortex-graph-divider)] bg-background/30 px-6 py-3"
         >
-          <div className="min-w-0 flex-1 sm:max-w-xl">
-            <label htmlFor="graph-search" className="mb-1 block text-xs font-medium text-muted">
-              Search artifacts
-            </label>
-            <input
-              id="graph-search"
-              type="search"
-              value={searchInput}
-              onChange={(event) => updateSearchInput(event.target.value)}
-              placeholder="Search names, titles, repositories, or content"
-              className="h-10 w-full rounded-lg border border-border/60 bg-surface px-3 text-sm text-foreground outline-none placeholder:text-subtle focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30"
-            />
-          </div>
-          <button
-            type="submit"
-            className="h-10 rounded-lg bg-accent px-4 text-sm font-medium text-background transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-          >
-            Search
-          </button>
-          {searchTerm ? (
-            <button
-              type="button"
-              onClick={() => {
-                setSearchInput("");
-                setSearchTerm("");
-                setSelection(null);
-              }}
-              className="h-10 rounded-lg px-3 text-sm text-muted underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <form
+              role="search"
+              onSubmit={submitSearch}
+              className="relative min-w-[18rem] flex-1 basis-[24rem] sm:max-w-[30rem]"
             >
-              Clear search
-            </button>
-          ) : null}
-        </form>
-      ) : null}
-      {graph && (!graphMatchesRequest || searchInput.trim() !== searchTerm) ? (
-        <p role="status" className="px-6 py-2 text-xs text-muted">Updating graph…</p>
+              <label htmlFor="graph-search" className="sr-only">
+                Search artifacts
+              </label>
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 20 20"
+                className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-subtle"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+              >
+                <circle cx="8.5" cy="8.5" r="4.75" />
+                <path d="m12 12 4 4" />
+              </svg>
+              <input
+                id="graph-search"
+                type="text"
+                role="searchbox"
+                inputMode="search"
+                enterKeyHint="search"
+                value={searchInput}
+                maxLength={200}
+                autoComplete="off"
+                aria-describedby="graph-search-status"
+                onChange={(event) => updateSearchInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && searchInput) {
+                    event.preventDefault();
+                    clearSearch();
+                  }
+                }}
+                placeholder="Search this graph"
+                className="h-10 w-full appearance-none rounded-xl border border-border/45 bg-surface/70 pl-10 pr-10 text-sm text-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.025)] outline-none transition-[border-color,background-color,box-shadow] placeholder:text-subtle hover:border-border/70 focus-visible:border-accent-bright/70 focus-visible:bg-surface focus-visible:ring-2 focus-visible:ring-accent-bright/15"
+              />
+              {searchInput ? (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={clearSearch}
+                  className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-lg text-subtle transition-colors hover:bg-background/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+                >
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 20 20"
+                    className="size-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  >
+                    <path d="m6 6 8 8M14 6l-8 8" />
+                  </svg>
+                </button>
+              ) : null}
+            </form>
+
+            <span
+              aria-hidden="true"
+              className="hidden h-6 w-px bg-[var(--cortex-graph-divider)] lg:block"
+            />
+
+            <fieldset className="flex flex-wrap items-center gap-1.5">
+              <legend className="sr-only">Filter graph by artifact type</legend>
+              {NODE_TYPES.map(({ type, label, colour, shapeClass }) => {
+                const selected = selectedTypes.includes(type);
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => toggleType(type)}
+                    className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-[border-color,background-color,color] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                      selected
+                        ? "border-border/45 bg-surface-raised/80 text-foreground"
+                        : "border-transparent bg-transparent text-subtle hover:border-border/25 hover:bg-surface/50 hover:text-muted"
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="inline-flex size-3 items-center justify-center"
+                    >
+                      <span
+                        className={`block size-2 border-2 ${shapeClass} ${
+                          selected ? "opacity-100" : "opacity-45"
+                        }`}
+                        style={{ borderColor: colour }}
+                      />
+                    </span>
+                    {label}
+                  </button>
+                );
+              })}
+              {selectedTypes.length !== ALL_NODE_TYPES.length ? (
+                <button
+                  type="button"
+                  onClick={() => selectTypes(ALL_NODE_TYPES)}
+                  className="h-9 rounded-lg px-2.5 text-xs font-medium text-accent-bright transition-colors hover:bg-accent/10 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  Reset
+                </button>
+              ) : null}
+            </fieldset>
+
+            <p
+              id="graph-search-status"
+              role="status"
+              aria-live="polite"
+              className="ml-auto whitespace-nowrap px-2 text-xs text-subtle"
+            >
+              {isUpdatingGraph
+                ? "Updating…"
+                : `${resultSummary} · ${visibleEdges.length} ${
+                    visibleEdges.length === 1 ? "connection" : "connections"
+                  }`}
+            </p>
+          </div>
+        </div>
       ) : null}
       {state.kind === "ready" && state.requestError && state.requestErrorKey === requestKey ? (
         <div className="px-6 py-2"><FeedbackAlert message={state.requestError} /></div>
       ) : null}
-      {graph && !isWorkspaceEmpty ? (
-        <div
-          className="flex min-h-14 flex-wrap items-center justify-between gap-4 border-b border-[var(--cortex-graph-divider)] px-6 py-2"
-        >
-          <ul className="flex items-center gap-5" aria-label="Node types">
-            {NODE_TYPES.map(({ type, label, colour, shapeClass }) => (
-              <li key={type} className="flex items-center gap-2 text-xs text-muted">
-                <span
-                  aria-hidden="true"
-                  className="inline-flex size-3 items-center justify-center"
-                >
-                  <span
-                    className={`block size-2 border-2 ${shapeClass}`}
-                    style={{ borderColor: colour }}
-                  />
-                </span>
-                {label}
-              </li>
-            ))}
-          </ul>
-
-          <fieldset className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
-            <legend className="sr-only">Filter graph by artifact type</legend>
-            {NODE_TYPES.map(({ type, label }) => (
-              <label key={type} className="inline-flex cursor-pointer items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  checked={selectedTypes.includes(type)}
-                  onChange={() => toggleType(type)}
-                  className="size-3.5 accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                />
-                {label}
-              </label>
-            ))}
-            <button
-              type="button"
-                onClick={() => selectTypes(ALL_NODE_TYPES)}
-              disabled={selectedTypes.length === ALL_NODE_TYPES.length}
-              className="rounded px-1 py-0.5 text-accent underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-default disabled:text-subtle disabled:no-underline"
-            >
-              Show all
-            </button>
-          </fieldset>
-
-          <p aria-live="polite" className="whitespace-nowrap text-xs text-subtle">
-            {visibleNodes.length} nodes · {visibleEdges.length} connections
-          </p>
-        </div>
-      ) : null}
-
       <div className="relative flex min-h-0 flex-1">
         <div className="graph-scene relative min-w-0 flex-1 overflow-hidden" aria-live="polite">
           {state.kind === "loading" ? (

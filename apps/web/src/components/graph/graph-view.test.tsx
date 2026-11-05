@@ -167,14 +167,18 @@ describe("GraphView artifact filters", () => {
     );
     expect(screen.getByTestId("visible-edge-count")).toHaveTextContent("2");
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Issue" }));
+    fireEvent.click(screen.getByRole("button", { name: "Issue" }));
     expect(screen.getByTestId("visible-node-keys")).toHaveTextContent(
       "Author:1,PullRequest:20",
     );
     expect(screen.getByTestId("visible-edge-count")).toHaveTextContent("1");
+    expect(screen.getByRole("button", { name: "Issue" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain("types=Author&types=PullRequest"));
 
-    fireEvent.click(screen.getByRole("checkbox", { name: "Author" }));
+    fireEvent.click(screen.getByRole("button", { name: "Author" }));
     expect(screen.getByTestId("visible-node-keys")).toHaveTextContent("PullRequest:20");
     expect(screen.getByTestId("visible-edge-count")).toHaveTextContent("0");
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -186,7 +190,7 @@ describe("GraphView artifact filters", () => {
 
     await screen.findByTestId("visible-node-keys");
     for (const type of ["Author", "Pull request", "Issue"]) {
-      fireEvent.click(screen.getByRole("checkbox", { name: type }));
+      fireEvent.click(screen.getByRole("button", { name: type }));
     }
 
     expect(screen.getByRole("heading", { name: "No artifacts match these filters" })).toBeInTheDocument();
@@ -206,7 +210,7 @@ describe("GraphView artifact filters", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search artifacts" }), {
       target: { value: "graph" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.submit(screen.getByRole("search"));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       `/api/workspaces/${WORKSPACE_ID}/graph?q=graph&types=Author&types=PullRequest&types=Issue`,
@@ -234,7 +238,7 @@ describe("GraphView artifact filters", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search artifacts" }), {
       target: { value: "missing" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.submit(screen.getByRole("search"));
 
     expect(await screen.findByText("Graph database unavailable")).toBeInTheDocument();
     expect(screen.getByTestId("visible-node-keys")).toHaveTextContent("Author:1,PullRequest:20");
@@ -253,9 +257,36 @@ describe("GraphView artifact filters", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: "Search artifacts" }), {
       target: { value: "absent" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    fireEvent.submit(screen.getByRole("search"));
 
     expect(await screen.findByRole("heading", { name: "No artifacts match “absent”" })).toBeInTheDocument();
     expect(screen.queryByTestId("visible-node-keys")).not.toBeInTheDocument();
+  });
+
+  it("uses one active-search control with inline clear and keyboard reset", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(jsonResponse(String(input).includes("?q=graph") ? filterGraph : graph)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GraphView workspaceId={WORKSPACE_ID} />);
+
+    const searchbox = await screen.findByRole("searchbox", {
+      name: "Search artifacts",
+    });
+    expect(searchbox).toHaveAttribute("type", "text");
+    expect(searchbox).toHaveAttribute("inputmode", "search");
+    expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
+
+    fireEvent.change(searchbox, { target: { value: "graph" } });
+    expect(screen.getByRole("button", { name: "Clear search" })).toBeInTheDocument();
+    fireEvent.submit(screen.getByRole("search"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `/api/workspaces/${WORKSPACE_ID}/graph?q=graph&types=Author&types=PullRequest&types=Issue`,
+      expect.anything(),
+    ));
+
+    fireEvent.keyDown(searchbox, { key: "Escape" });
+    expect(searchbox).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "Clear search" })).not.toBeInTheDocument();
   });
 });
