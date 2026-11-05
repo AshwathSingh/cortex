@@ -70,6 +70,8 @@ export function GraphInspector({
   state,
   onClose,
   children,
+  onDelete,
+  canEdit = false,
 }: {
   selection: Exclude<GraphSelection, null>;
   state: InspectorState;
@@ -80,6 +82,8 @@ export function GraphInspector({
    * and a failed details read must still leave the discussion reachable.
    */
   children?: ReactNode;
+  onDelete?: () => void;
+  canEdit?: boolean;
 }) {
   const kind = selection.kind === "node" ? "Node" : "Connection";
   const details = state.kind === "node" || state.kind === "edge" ? state.details : null;
@@ -111,7 +115,9 @@ export function GraphInspector({
         <p role="status" className="mt-5 text-sm text-muted">Loading graph details…</p>
       ) : null}
       {state.kind === "error" ? (
-        <p role="alert" className="mt-5 text-sm text-danger">{state.message}</p>
+        <p role="alert" className="mt-5 text-sm text-danger">
+          {selection.kind === "edge" ? "Evidence details unavailable for this edge" : "Evidence details unavailable for this node"}
+        </p>
       ) : null}
       {details ? (
         <>
@@ -127,11 +133,16 @@ export function GraphInspector({
               {state.kind === "edge" ? "Evidence" : "Content"}
             </h3>
             <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-foreground">
-              {details.content || "No content is available."}
+              {details.content || (state.kind === "edge" ? "Evidence details unavailable for this edge" : "No content is available.")}
             </p>
           </section>
           <Attributes attributes={details.attributes} />
           <OriginLinks details={details} />
+          {state.kind === "edge" && canEdit ? (
+            <button type="button" onClick={onDelete} className="mt-6 w-full rounded-lg border border-danger/40 px-3 py-2 text-sm font-medium text-danger hover:bg-danger/10">
+              Remove relationship
+            </button>
+          ) : null}
         </>
       ) : null}
       {children}

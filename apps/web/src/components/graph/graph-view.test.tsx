@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GraphView } from "@/components/graph/graph-view";
 import type { GraphEdge, GraphNode, WorkspaceGraph } from "@/lib/api-types";
@@ -27,6 +28,7 @@ vi.mock("@/components/graph/graph-canvas", () => ({
       <output data-testid="visible-edge-count">{edges.length}</output>
       <output data-testid="highlighted-node-keys">{highlightedNodeKeys?.join(",") ?? ""}</output>
       <button onClick={() => onSelectionChange({ kind: "node", key: "PullRequest:20" })}>Select node</button>
+      <button onClick={() => onSelectionChange({ kind: "node", key: "Issue:30" })}>Select issue</button>
       <button onClick={() => onSelectionChange({ kind: "edge", edge: { source: "Author:1", target: "PullRequest:20", type: "AUTHORED" } })}>Select edge</button>
       <button onClick={() => onSelectionChange(null)}>Blank canvas</button>
     </div>
@@ -61,6 +63,10 @@ const filterGraph: WorkspaceGraph = {
   ],
   truncated: false,
 };
+const mutationGraph: WorkspaceGraph = {
+  ...filterGraph,
+  edges: [edge],
+};
 const nodeDetails = {
   key: node.key, id: node.id, type: node.type, title: node.title, content: "Change details",
   attributes: { state: "open" },
@@ -79,6 +85,21 @@ function jsonResponse(body: unknown) {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+beforeEach(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value() {
+      this.setAttribute("open", "");
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value() {
+      this.removeAttribute("open");
+    },
+  });
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -150,6 +171,126 @@ describe("GraphView inspector flow", () => {
     await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain(
       "/graph/edges?source_key=Author%3A1&target_key=PullRequest%3A20&edge_type=AUTHORED",
     ));
+  });
+});
+
+describe("GraphView relationship mutations", () => {
+  it("hides create and delete controls from read-only users", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("/graph/edges?")) return Promise.resolve(jsonResponse(edgeDetails));
+      return Promise.resolve(jsonResponse(mutationGraph));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<GraphView workspaceId={WORKSPACE_ID} />);
+
+    expect(await screen.findByRole("button", { name: "Select edge" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Create relationship" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Select edge" }));
+    expect(await screen.findByText(edgeDetails.content)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove relationship" })).not.toBeInTheDocument();
+  });
+
+  it("creates a relationship for a workspace writer", async () => {
+    const user = userEvent.setup();
+    const manualEdge = {
+      source: "PullRequest:20",
+      target: "Issue:30",
+      type: "MANUAL_RELATIONSHIP",
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return Promise.resolve(jsonResponse(manualEdge));
+      return Promise.resolve(jsonResponse(mutationGraph));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GraphView workspaceId={WORKSPACE_ID} canEdit />);
+
+    await user.click(await screen.findByRole("button", { name: "Create relationship" }));
+    expect(screen.getByText("Choose the first node")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Select node" }));
+    expect(screen.getByText("Now choose the second node")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Select issue" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Create relationship" });
+    expect(dialog).toBeVisible();
+    expect(screen.getByText("#3 Add graph details")).toBeInTheDocument();
+    expect(screen.getByText("#4 Bug")).toBeInTheDocument();
+    expect(screen.getByLabelText("Why are these nodes connected?")).toHaveFocus();
+
+    await user.type(
+      screen.getByLabelText("Why are these nodes connected?"),
+      "They address the same change.",
+    );
+    await user.click(screen.getAllByRole("button", { name: "Create relationship" }).at(-1)!);
+
+    expect(await screen.findByText("Relationship added.")).toBeInTheDocument();
+    expect(screen.getByTestId("visible-edge-count")).toHaveTextContent("2");
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/workspaces/${WORKSPACE_ID}/graph/edges`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          source_key: "PullRequest:20",
+          target_key: "Issue:30",
+          relationship_type: "RELATED_TO",
+          rationale: "They address the same change.",
+        }),
+      }),
+    );
+  });
+
+  it("does not create a relationship when the rationale prompt is cancelled", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return Promise.resolve(jsonResponse(mutationGraph));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<GraphView workspaceId={WORKSPACE_ID} canEdit />);
+
+    await user.click(await screen.findByRole("button", { name: "Create relationship" }));
+    await user.click(screen.getByRole("button", { name: "Select node" }));
+    await user.click(screen.getByRole("button", { name: "Select issue" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByText("Relationship creation cancelled.")).toBeInTheDocument();
+    // Counting every call would also count US-27's comment activity read; what
+    // cancelling has to prevent is the write.
+    const writes = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).includes("/graph/edges") && init?.method === "POST",
+    );
+    expect(writes).toHaveLength(0);
+  });
+
+  it("deletes a selected relationship for a workspace writer", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") return Promise.resolve(jsonResponse({ deleted: true }));
+      if (String(input).includes("/graph/edges?")) return Promise.resolve(jsonResponse(edgeDetails));
+      return Promise.resolve(jsonResponse(mutationGraph));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<GraphView workspaceId={WORKSPACE_ID} canEdit />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Select edge" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Remove relationship" }));
+
+    expect(await screen.findByText("Relationship removed.")).toBeInTheDocument();
+    expect(screen.getByTestId("visible-edge-count")).toHaveTextContent("0");
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/workspaces/${WORKSPACE_ID}/graph/edges`,
+      expect.objectContaining({
+        method: "DELETE",
+        body: JSON.stringify({
+          source_key: "Author:1",
+          target_key: "PullRequest:20",
+          edge_type: "AUTHORED",
+        }),
+      }),
+    );
   });
 });
 

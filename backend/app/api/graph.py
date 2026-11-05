@@ -18,7 +18,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from neo4j import Driver
 from neo4j.exceptions import DriverError, Neo4jError
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
 from app.db.neo4j_driver import get_driver
@@ -30,8 +30,10 @@ from app.graph.queries import (
     fetch_graph,
     fetch_node_details,
     fetch_source_summaries,
+    mutate_graph_edge,
 )
 from app.models import SyncStatus
+from app.permissions import Permission
 from app.services.data_sources import build_source_inventory, list_synced_sources
 
 router = APIRouter(prefix="/api/workspaces", tags=["graph"])
@@ -117,6 +119,14 @@ class GraphEdgeDetails(BaseModel):
     target: GraphEndpointDetails
     attributes: dict[str, Any]
     origins: list[GraphOrigin]
+
+
+class GraphEdgeMutation(BaseModel):
+    source_key: str
+    target_key: str
+    edge_type: str = Field(default="MANUAL_RELATIONSHIP", min_length=1, max_length=100)
+    relationship_type: str = Field(default="RELATED_TO", min_length=1, max_length=100)
+    rationale: str = Field(default="", max_length=2000)
 
 
 def get_neo4j() -> Driver:
@@ -250,3 +260,47 @@ def read_graph_edge_details(
     if payload is None:
         raise HTTPException(status_code=404, detail="Graph edge not found")
     return GraphEdgeDetails(**payload)
+
+
+@router.delete("/{workspace_id}/graph/edges")
+def delete_graph_edge(
+    workspace_id: uuid.UUID,
+    body: GraphEdgeMutation,
+    user: CurrentUser,
+    session: DbSession,
+    driver: Driver = Depends(get_neo4j),
+) -> dict[str, bool]:
+    load_workspace_for_user(session, user, workspace_id, permission=Permission.SOURCES_WRITE)
+    try:
+        deleted = mutate_graph_edge(driver, workspace_id, body.source_key, body.target_key,
+                                    body.edge_type, delete=True)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid graph node key")
+    except (Neo4jError, DriverError):
+        raise HTTPException(status_code=503, detail="Graph database unavailable")
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Graph edge not found")
+    return {"deleted": True}
+
+
+@router.post("/{workspace_id}/graph/edges", response_model=GraphEdge)
+def create_graph_edge(
+    workspace_id: uuid.UUID,
+    body: GraphEdgeMutation,
+    user: CurrentUser,
+    session: DbSession,
+    driver: Driver = Depends(get_neo4j),
+) -> GraphEdge:
+    load_workspace_for_user(session, user, workspace_id, permission=Permission.SOURCES_WRITE)
+    try:
+        created = mutate_graph_edge(driver, workspace_id, body.source_key, body.target_key,
+                                    "MANUAL_RELATIONSHIP", delete=False,
+                                    relationship_type=body.relationship_type,
+                                    rationale=body.rationale, created_by=str(user.id))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid graph node key")
+    except (Neo4jError, DriverError):
+        raise HTTPException(status_code=503, detail="Graph database unavailable")
+    if not created:
+        raise HTTPException(status_code=409, detail="Relationship already exists or node not found")
+    return GraphEdge(source=body.source_key, target=body.target_key, type="MANUAL_RELATIONSHIP")
