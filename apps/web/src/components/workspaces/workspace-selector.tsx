@@ -16,6 +16,12 @@ import {
   rememberLastWorkspace,
 } from "@/lib/last-workspace";
 import { routes } from "@/lib/routes";
+import { deleteWorkspace } from "@/lib/workspace-client";
+import {
+  forgetPendingWorkspaceDeletion,
+  getPendingWorkspaceDeletions,
+  type PendingWorkspaceDeletion,
+} from "@/lib/workspace-delete-recovery";
 
 export function WorkspaceSelector() {
   const router = useRouter();
@@ -24,6 +30,12 @@ export function WorkspaceSelector() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [pendingDeletions, setPendingDeletions] = useState<
+    PendingWorkspaceDeletion[]
+  >([]);
+  const [retryingWorkspaceId, setRetryingWorkspaceId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -44,14 +56,16 @@ export function WorkspaceSelector() {
         const lastWorkspace = availableWorkspaces.find(
           (workspace) => workspace.id === lastWorkspaceId,
         );
+        const deletionRecoveries = getPendingWorkspaceDeletions(currentUser.id);
 
         if (lastWorkspaceId && !lastWorkspace) {
           forgetLastWorkspace(currentUser.id);
         }
 
-        const workspaceToResume =
-          lastWorkspace ??
-          (availableWorkspaces.length === 1 ? availableWorkspaces[0] : null);
+        const workspaceToResume = deletionRecoveries.length
+          ? null
+          : lastWorkspace ??
+            (availableWorkspaces.length === 1 ? availableWorkspaces[0] : null);
 
         if (workspaceToResume) {
           isResumingWorkspace = true;
@@ -62,6 +76,7 @@ export function WorkspaceSelector() {
 
         setUser(currentUser);
         setWorkspaces(availableWorkspaces);
+        setPendingDeletions(deletionRecoveries);
       } catch (requestError) {
         if (controller.signal.aborted) {
           return;
@@ -100,6 +115,41 @@ export function WorkspaceSelector() {
           : "Unable to log out. Please try again.",
       );
       setIsLoggingOut(false);
+    }
+  }
+
+  async function retryWorkspaceDeletion(deletion: PendingWorkspaceDeletion) {
+    if (!user) return;
+    setRetryingWorkspaceId(deletion.workspaceId);
+    setError(null);
+    try {
+      await deleteWorkspace(deletion.workspaceId, deletion.workspaceName);
+      forgetPendingWorkspaceDeletion(user.id, deletion.workspaceId);
+      const remainingDeletions = pendingDeletions.filter(
+        (candidate) => candidate.workspaceId !== deletion.workspaceId,
+      );
+      const remainingWorkspaces = workspaces.filter(
+        (workspace) => workspace.id !== deletion.workspaceId,
+      );
+      setPendingDeletions(remainingDeletions);
+      setWorkspaces(remainingWorkspaces);
+
+      if (remainingDeletions.length === 0 && remainingWorkspaces.length === 1) {
+        rememberLastWorkspace(user.id, remainingWorkspaces[0].id);
+        router.replace(routes.workspace.home(remainingWorkspaces[0].id));
+      }
+    } catch (requestError) {
+      if (requestError instanceof ApiError && requestError.status === 401) {
+        router.replace("/login");
+        return;
+      }
+      setError(
+        requestError instanceof ApiError
+          ? requestError.message
+          : "Unable to finish deleting this workspace. Please try again.",
+      );
+    } finally {
+      setRetryingWorkspaceId(null);
     }
   }
 
@@ -157,6 +207,52 @@ export function WorkspaceSelector() {
         />
 
           <FeedbackAlert message={error} />
+
+          {pendingDeletions.length > 0 ? (
+            <section
+              aria-labelledby="deletion-recovery-heading"
+              className="mt-8 overflow-hidden rounded-2xl border border-red-400/25 bg-red-500/5"
+            >
+              <div className="px-6 py-5">
+                <h2
+                  id="deletion-recovery-heading"
+                  className="text-base font-semibold text-foreground"
+                >
+                  Finish workspace deletion
+                </h2>
+                <p className="mt-1 text-sm leading-6 text-muted">
+                  Cortex could not finish an earlier cleanup. Retry it to remove
+                  the remaining workspace data.
+                </p>
+              </div>
+              {pendingDeletions.map((deletion) => (
+                <div
+                  key={deletion.workspaceId}
+                  className="flex items-center justify-between gap-5 border-t border-red-400/15 px-6 py-4"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {deletion.workspaceName}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-muted">
+                      This workspace remains hidden until cleanup succeeds.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="small"
+                    variant="danger"
+                    disabled={retryingWorkspaceId !== null}
+                    onClick={() => retryWorkspaceDeletion(deletion)}
+                  >
+                    {retryingWorkspaceId === deletion.workspaceId
+                      ? "Retrying cleanup…"
+                      : "Retry cleanup"}
+                  </Button>
+                </div>
+              ))}
+            </section>
+          ) : null}
 
           <div className="mt-10 grid gap-4 sm:grid-cols-2">
             {workspaces.map((workspace) => (

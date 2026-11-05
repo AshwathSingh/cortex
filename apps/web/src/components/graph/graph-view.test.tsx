@@ -155,7 +155,10 @@ describe("GraphView inspector flow", () => {
 
 describe("GraphView artifact filters", () => {
   it("reactively filters nodes and keeps edges only when both endpoints remain", async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(filterGraph)));
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      void input;
+      return Promise.resolve(jsonResponse(filterGraph));
+    });
     vi.stubGlobal("fetch", fetchMock);
     render(<GraphView workspaceId={WORKSPACE_ID} />);
 
