@@ -92,6 +92,15 @@ class DataSource(Base):
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     #: The user-facing detail of the last failure; cleared by a success.
     last_error: Mapped[str | None] = mapped_column(Text)
+    # T-12.1: which *kind* of failure, so the UI can offer the right fix --
+    # re-authorize, wait, or correct the reference. ``last_error`` alone cannot
+    # be branched on without parsing English.
+    #
+    # Plain text rather than a database enum, for the same reason ``kind`` is:
+    # adding a category should not need a migration. The application maps it
+    # through ``app.services.source_failures.FailureCategory`` and treats
+    # anything it does not recognise as UNKNOWN.
+    last_error_code: Mapped[str | None] = mapped_column(String(32))
     # Who last refreshed it. The workspace is shared, so "Synced 5 min ago by
     # Ashwath" answers the question the timestamp alone raises. SET NULL rather
     # than CASCADE: losing a member must not erase the source's sync history.

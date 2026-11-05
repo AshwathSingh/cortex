@@ -6,9 +6,11 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { CreateRelationshipDialog } from "@/components/graph/create-relationship-dialog";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
+import { GraphComments } from "@/components/graph/graph-comments";
 import { GraphInspector, type InspectorState } from "@/components/graph/graph-inspector";
 import { buttonClassName } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
+import { useOptionalWorkspace } from "@/components/workspaces/workspace-context";
 import { ApiError, apiRequest } from "@/lib/api";
 import type {
   GraphEdgeDetails,
@@ -18,6 +20,8 @@ import type {
   GraphSelection,
   WorkspaceGraph,
 } from "@/lib/api-types";
+import { activityKey, targetFor } from "@/lib/graph-comment-target";
+import { useCommentActivity } from "@/lib/use-comment-activity";
 
 const NODE_TYPES: {
   type: GraphNodeType;
@@ -69,9 +73,12 @@ export function GraphView({
   canEdit?: boolean;
 }) {
   const router = useRouter();
+  const workspaceContext = useOptionalWorkspace();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selection, setSelection] = useState<GraphSelection>(null);
   const [inspectorState, setInspectorState] = useState<InspectorState>({ kind: "loading" });
+  // T-27.4: which nodes and edges carry comments, for the canvas badges.
+  const { activity, refresh: refreshActivity } = useCommentActivity(workspaceId);
   const [selectedTypes, setSelectedTypes] = useState<GraphNodeType[]>(ALL_NODE_TYPES);
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -175,6 +182,7 @@ export function GraphView({
   }, [router, selection, workspaceId]);
 
   const graph = state.kind === "ready" ? state.graph : null;
+  const commentTarget = targetFor(selection);
   const graphMatchesRequest = state.kind === "ready" && state.requestKey === requestKey;
   const isWorkspaceEmpty = graph !== null
     && graph.nodes.length === 0
@@ -455,18 +463,32 @@ export function GraphView({
               ) : null}
             </fieldset>
 
-            <p
-              id="graph-search-status"
-              role="status"
-              aria-live="polite"
-              className="ml-auto whitespace-nowrap px-2 text-xs text-subtle"
-            >
-              {isUpdatingGraph
-                ? "Updating…"
-                : `${resultSummary} · ${visibleEdges.length} ${
-                    visibleEdges.length === 1 ? "connection" : "connections"
-                  }`}
-            </p>
+            <div className="ml-auto flex items-center gap-4">
+              {/* Only shown once something is actually commented on: a legend
+                  entry for a mark the reader will never see is just noise. */}
+              {activity.length > 0 ? (
+                <p className="flex items-center gap-2 whitespace-nowrap text-xs text-muted">
+                  <span
+                    aria-hidden="true"
+                    className="block size-2.5 rounded-full"
+                    style={{ backgroundColor: "var(--cortex-graph-comment)" }}
+                  />
+                  Unseen comments
+                </p>
+              ) : null}
+              <p
+                id="graph-search-status"
+                role="status"
+                aria-live="polite"
+                className="whitespace-nowrap px-2 text-xs text-subtle"
+              >
+                {isUpdatingGraph
+                  ? "Updating…"
+                  : `${resultSummary} · ${visibleEdges.length} ${
+                      visibleEdges.length === 1 ? "connection" : "connections"
+                    }`}
+              </p>
+            </div>
           </div>
         </div>
       ) : null}
@@ -592,6 +614,7 @@ export function GraphView({
                 nodes={visibleNodes}
                 edges={visibleEdges}
                 highlightedNodeKeys={linkSource ? [linkSource] : highlightedNodeKeys}
+                commentActivity={activity}
                 onSelectionChange={(nextSelection) => {
                   if (linkMode) {
                     if (nextSelection?.kind === "node") {
@@ -611,7 +634,8 @@ export function GraphView({
 
           <span id="graph-interaction-help" className="sr-only">
             Drag to pan, use the mouse wheel or graph controls to zoom, and select a
-            node or connection to inspect its details. Click empty graph space to close
+            node or connection to inspect its details and its comments. A filled dot
+            marks comments you have not read. Click empty graph space to close
             the inspector.
           </span>
 
@@ -632,7 +656,19 @@ export function GraphView({
               onClose={() => setSelection(null)}
               onDelete={() => void removeSelectedEdge()}
               canEdit={canEdit}
-            />
+            >
+              {commentTarget ? (
+                <GraphComments
+                  // Keyed on the target, so selecting a different node starts a
+                  // clean thread instead of carrying the last draft across.
+                  key={activityKey(commentTarget)}
+                  workspaceId={workspaceId}
+                  target={commentTarget}
+                  currentUserId={workspaceContext?.user?.id ?? null}
+                  onActivityChange={refreshActivity}
+                />
+              ) : null}
+            </GraphInspector>
           </div>
         ) : null}
       </div>

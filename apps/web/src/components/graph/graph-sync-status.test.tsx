@@ -32,6 +32,7 @@ function source(over: Partial<WorkspaceSource> = {}): WorkspaceSource {
     last_attempted_at: minutesAgo(5),
     last_synced_at: minutesAgo(5),
     last_error: null,
+    last_error_code: null,
     last_synced_by: "11111111-0000-4000-8000-000000000001",
     last_synced_by_name: "Ashwath",
     ...over,

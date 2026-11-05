@@ -80,6 +80,9 @@ class SourceSummary(BaseModel):
     last_attempted_at: datetime | None = None
     last_synced_at: datetime | None = None
     last_error: str | None = None
+    #: T-12.1: the failure category behind ``last_error``, or null when the
+    #: source is not failing. ``app.services.source_failures.FailureCategory``.
+    last_error_code: str | None = None
     last_synced_by: uuid.UUID | None = None
     last_synced_by_name: str | None = None
 
@@ -166,6 +169,7 @@ def read_workspace_sources(
             last_attempted_at=item.last_attempted_at,
             last_synced_at=item.last_synced_at,
             last_error=item.last_error,
+            last_error_code=item.last_error_code,
             last_synced_by=item.last_synced_by,
             last_synced_by_name=item.last_synced_by_name,
         )

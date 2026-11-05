@@ -64,6 +64,10 @@ function mockWorkspaceRequests(workspaceStatus = 200, workspaceBody: unknown = W
     if (path.endsWith("/assistant/query")) {
       return jsonResponse(200, ASSISTANT_RESPONSE);
     }
+    // The shell polls for broken sources on every workspace page (US-12 AC1).
+    if (path.endsWith("/source-failures")) {
+      return jsonResponse(200, []);
+    }
     return jsonResponse(200, USER);
   });
   vi.stubGlobal("fetch", fetchMock);

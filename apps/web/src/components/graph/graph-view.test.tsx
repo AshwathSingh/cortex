@@ -241,7 +241,11 @@ describe("GraphView relationship mutations", () => {
 
   it("does not create a relationship when the rationale prompt is cancelled", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(mutationGraph)));
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return Promise.resolve(jsonResponse(mutationGraph));
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<GraphView workspaceId={WORKSPACE_ID} canEdit />);
@@ -252,7 +256,12 @@ describe("GraphView relationship mutations", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.getByText("Relationship creation cancelled.")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Counting every call would also count US-27's comment activity read; what
+    // cancelling has to prevent is the write.
+    const writes = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).includes("/graph/edges") && init?.method === "POST",
+    );
+    expect(writes).toHaveLength(0);
   });
 
   it("deletes a selected relationship for a workspace writer", async () => {
@@ -313,7 +322,11 @@ describe("GraphView artifact filters", () => {
     fireEvent.click(screen.getByRole("button", { name: "Author" }));
     expect(screen.getByTestId("visible-node-keys")).toHaveTextContent("PullRequest:20");
     expect(screen.getByTestId("visible-edge-count")).toHaveTextContent("0");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // Graph reads only: US-27's comment activity is a request of its own.
+    const graphReads = fetchMock.mock.calls.filter(([url]) =>
+      new URL(String(url), "http://localhost").pathname.endsWith("/graph"),
+    );
+    expect(graphReads).toHaveLength(3);
   });
 
   it("shows a clear empty graph state when no artifact types are selected", async () => {

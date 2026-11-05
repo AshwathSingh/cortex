@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { SourceFailureList } from "@/components/sources/source-failures";
 import { SourceStatus } from "@/components/sources/source-status";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -13,6 +14,7 @@ import { useWorkspace } from "@/components/workspaces/workspace-context";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { IngestResult, WorkspaceSource } from "@/lib/api-types";
 import { routes } from "@/lib/routes";
+import { useSourceFailures } from "@/lib/use-source-failures";
 import { canManageSources } from "@/lib/workspace-permissions";
 
 type State =
@@ -63,6 +65,9 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
   const [syncingRepo, setSyncingRepo] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const resyncControllerRef = useRef<AbortController | null>(null);
+  // T-12.2: the same list the workspace banner counts, so the two cannot
+  // disagree about what is broken.
+  const { failures, refresh: refreshFailures } = useSourceFailures(workspaceId);
 
   useEffect(() => () => resyncControllerRef.current?.abort(), []);
 
@@ -159,6 +164,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
       if (!controller.signal.aborted) {
         setSyncingRepo(null);
         setRequestVersion((version) => version + 1);
+        refreshFailures();
       }
       if (resyncControllerRef.current === controller) {
         resyncControllerRef.current = null;
@@ -203,6 +209,17 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
             Try again
           </button>
         </div>
+      ) : null}
+
+      {state.kind === "ready" && !isWorkspaceLoading ? (
+        <SourceFailureList
+          workspaceId={workspaceId}
+          failures={failures}
+          onChanged={() => {
+            setRequestVersion((version) => version + 1);
+            refreshFailures();
+          }}
+        />
       ) : null}
 
       {state.kind === "ready" && !isWorkspaceLoading && sources.length === 0 ? (

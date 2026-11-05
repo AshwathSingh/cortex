@@ -6,11 +6,13 @@ from app.api import (
     assistant,
     auth,
     graph,
+    graph_comments,
     health,
     ingest,
     invites,
     members,
     roles,
+    source_failures,
     workspaces,
 )
 from app.db.neo4j_driver import close_driver
@@ -40,6 +42,11 @@ app.include_router(members.router)
 # After workspaces.router: both own /api/workspaces, and the more specific
 # /{workspace_id}/graph must not be shadowed by /{workspace_id}.
 app.include_router(graph.router)
+# Before graph.router would also work -- the paths are literal and do not
+# overlap -- but keeping every /api/workspaces router after workspaces.router
+# is the rule that stops /{workspace_id} shadowing anything.
+app.include_router(graph_comments.router)
+app.include_router(source_failures.router)
 
 
 @app.get("/health")

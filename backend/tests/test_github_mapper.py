@@ -2,10 +2,13 @@ import pytest
 from pydantic import ValidationError
 
 from app.github.mapper import (
+    PRUNE_ORPHAN_AUTHORS,
     UPSERT_AUTHORS,
     UPSERT_ISSUES,
     UPSERT_PULL_REQUESTS,
     UPSERT_REPOSITORY,
+    _drop_stale_authorship,
+    _prune_vanished,
     build_statements,
     normalise_workspace_id,
     write_graph,
@@ -36,17 +39,29 @@ def issue(**over):
     return {**base, **over}
 
 
-def build(prs, issues, workspace_id=WS):
-    return build_statements("o/r", prs, issues, workspace_id=workspace_id)
+RUN = "run-1"
+
+
+def build(prs, issues, workspace_id=WS, run_id=RUN):
+    return build_statements(
+        "o/r", prs, issues, workspace_id=workspace_id, run_id=run_id
+    )
 
 
 def test_statement_order_and_shape():
     stmts = build([pr()], [issue()])
+    # Upserts first so the AUTHORED MATCHes have their authors, then T-12.3's
+    # reconciliation, which must only ever see what this run wrote.
     assert [s[0] for s in stmts] == [
         UPSERT_REPOSITORY,
         UPSERT_AUTHORS,
         UPSERT_PULL_REQUESTS,
+        _drop_stale_authorship("PullRequest"),
         UPSERT_ISSUES,
+        _drop_stale_authorship("Issue"),
+        _prune_vanished("PullRequest"),
+        _prune_vanished("Issue"),
+        PRUNE_ORPHAN_AUTHORS,
     ]
     assert stmts[1][1]["rows"] == [
         {"id": 7, "login": "octocat", "html_url": "https://github.com/octocat"}
@@ -68,13 +83,22 @@ def test_authors_deduplicated():
 
 def test_deleted_user_has_no_author_edge():
     stmts = build([], [issue(user=None)])
-    assert len(stmts) == 2  # repository + issue; no author statement
+    assert UPSERT_AUTHORS not in [s[0] for s in stmts]
+    assert stmts[1][0] == UPSERT_ISSUES
     assert stmts[1][1]["rows"][0]["author_id"] is None
 
 
 def test_empty_input_still_records_the_repository():
+    # Reconciliation runs even with nothing fetched: a repository whose every
+    # item was deleted upstream has to end up with no items (T-12.3).
     assert build([], []) == [
-        (UPSERT_REPOSITORY, {"repo": "o/r", "workspace_id": WS})
+        (UPSERT_REPOSITORY, {"repo": "o/r", "workspace_id": WS, "run_id": RUN}),
+        (
+            _prune_vanished("PullRequest"),
+            {"repo": "o/r", "workspace_id": WS, "run_id": RUN},
+        ),
+        (_prune_vanished("Issue"), {"repo": "o/r", "workspace_id": WS, "run_id": RUN}),
+        (PRUNE_ORPHAN_AUTHORS, {"workspace_id": WS}),
     ]
 
 
@@ -179,8 +203,10 @@ class FakeDriver:
 
 def test_write_graph_runs_all_statements_in_one_transaction():
     d = FakeDriver()
-    assert write_graph(d, "o/r", [pr()], [issue()], workspace_id=WS) == 4
-    assert len(d.tx.calls) == 4 and d.opened == 1
+    # Four upserts plus five reconciliation statements. One transaction is the
+    # point: a run that dies half way must not prune anything (T-12.3).
+    assert write_graph(d, "o/r", [pr()], [issue()], workspace_id=WS) == 9
+    assert len(d.tx.calls) == 9 and d.opened == 1
 
 
 def test_invalid_payload_touches_no_database():
