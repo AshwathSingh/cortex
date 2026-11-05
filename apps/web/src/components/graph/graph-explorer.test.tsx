@@ -134,7 +134,7 @@ function json(body: unknown, status = 200) {
 }
 
 function graphCalls(fetchFn: ReturnType<typeof mockFetch>) {
-  return fetchFn.mock.calls.filter(([url]) => String(url).endsWith("/graph"));
+  return fetchFn.mock.calls.filter(([url]) => new URL(String(url), "http://localhost").pathname.endsWith("/graph"));
 }
 
 beforeEach(() => {
@@ -322,9 +322,9 @@ describe("GraphExplorer", () => {
     renderExplorer();
 
     await waitFor(() => expect(graphCalls(fetchFn)).toHaveLength(1));
-    expect(graphCalls(fetchFn)[0][0]).toBe(
-      `/api/workspaces/${WORKSPACE_ID}/graph`,
-    );
+    const graphUrl = new URL(String(graphCalls(fetchFn)[0][0]), "http://localhost");
+    expect(graphUrl.pathname).toBe(`/api/workspaces/${WORKSPACE_ID}/graph`);
+    expect(graphUrl.searchParams.getAll("types")).toEqual(["Author", "PullRequest", "Issue"]);
   });
 
   it("renders the canvas with node and connection counts", async () => {

@@ -89,7 +89,7 @@ describe("GraphView inspector flow", () => {
   it("loads selected node details and closes when blank canvas is selected", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/graph")) return Promise.resolve(jsonResponse(graph));
+      if (new URL(url, "http://localhost").pathname.endsWith("/graph")) return Promise.resolve(jsonResponse(graph));
       return Promise.resolve(jsonResponse(nodeDetails));
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -109,7 +109,7 @@ describe("GraphView inspector flow", () => {
   it("keeps the graph on screen when a background refresh fails", async () => {
     let graphReads = 0;
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      if (!String(input).endsWith("/graph")) return Promise.resolve(jsonResponse(nodeDetails));
+      if (!new URL(String(input), "http://localhost").pathname.endsWith("/graph")) return Promise.resolve(jsonResponse(nodeDetails));
       graphReads += 1;
       return Promise.resolve(
         graphReads === 1
@@ -130,16 +130,15 @@ describe("GraphView inspector flow", () => {
     rerender(<GraphView workspaceId={WORKSPACE_ID} reloadToken={1} />);
     await waitFor(() => expect(graphReads).toBe(2));
 
-    // What is on screen is still the last thing the server successfully sent;
-    // replacing it with an error would lose work the user can still read.
+    // Keep the last successful graph visible and explain why its refresh failed.
     expect(screen.getByRole("button", { name: "Select node" })).toBeInTheDocument();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Graph database unavailable");
   });
 
   it("requests selected edge evidence and renders its connected sources", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.endsWith("/graph")) return Promise.resolve(jsonResponse(graph));
+      if (new URL(url, "http://localhost").pathname.endsWith("/graph")) return Promise.resolve(jsonResponse(graph));
       return Promise.resolve(jsonResponse(edgeDetails));
     });
     vi.stubGlobal("fetch", fetchMock);
