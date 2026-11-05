@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { GraphCanvas } from "@/components/graph/graph-canvas";
+import { GraphComments } from "@/components/graph/graph-comments";
 import { GraphInspector, type InspectorState } from "@/components/graph/graph-inspector";
 import { buttonClassName } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
+import { useOptionalWorkspace } from "@/components/workspaces/workspace-context";
 import { ApiError, apiRequest } from "@/lib/api";
 import type {
   GraphEdgeDetails,
@@ -16,6 +18,8 @@ import type {
   GraphSelection,
   WorkspaceGraph,
 } from "@/lib/api-types";
+import { activityKey, targetFor } from "@/lib/graph-comment-target";
+import { useCommentActivity } from "@/lib/use-comment-activity";
 
 const NODE_TYPES: {
   type: GraphNodeType;
@@ -57,9 +61,12 @@ export function GraphView({
   reloadToken?: number;
 }) {
   const router = useRouter();
+  const workspaceContext = useOptionalWorkspace();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selection, setSelection] = useState<GraphSelection>(null);
   const [inspectorState, setInspectorState] = useState<InspectorState>({ kind: "loading" });
+  // T-27.4: which nodes and edges carry comments, for the canvas badges.
+  const { activity, refresh: refreshActivity } = useCommentActivity(workspaceId);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -144,6 +151,7 @@ export function GraphView({
 
   const graph = state.kind === "ready" ? state.graph : null;
   const isWorkspaceEmpty = graph !== null && graph.nodes.length === 0;
+  const commentTarget = targetFor(selection);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -168,9 +176,23 @@ export function GraphView({
             ))}
           </ul>
 
-          <p className="whitespace-nowrap text-xs text-subtle">
-            {graph.nodes.length} nodes · {graph.edges.length} connections
-          </p>
+          <div className="flex items-center gap-5">
+            {/* Only shown once something is actually commented on: a legend
+                entry for a mark the reader will never see is just noise. */}
+            {activity.length > 0 ? (
+              <p className="flex items-center gap-2 whitespace-nowrap text-xs text-muted">
+                <span
+                  aria-hidden="true"
+                  className="block size-2.5 rounded-full"
+                  style={{ backgroundColor: "var(--cortex-graph-comment)" }}
+                />
+                Unseen comments
+              </p>
+            ) : null}
+            <p className="whitespace-nowrap text-xs text-subtle">
+              {graph.nodes.length} nodes · {graph.edges.length} connections
+            </p>
+          </div>
         </div>
       ) : null}
 
@@ -214,6 +236,7 @@ export function GraphView({
             <GraphCanvas
               nodes={graph.nodes}
               edges={graph.edges}
+              commentActivity={activity}
               onSelectionChange={(nextSelection) => {
                 setSelection(nextSelection);
                 if (nextSelection) setInspectorState({ kind: "loading" });
@@ -223,7 +246,8 @@ export function GraphView({
 
           <span id="graph-interaction-help" className="sr-only">
             Drag to pan, use the mouse wheel or graph controls to zoom, and select a
-            node or connection to inspect its details. Click empty graph space to close
+            node or connection to inspect its details and its comments. A filled dot
+            marks comments you have not read. Click empty graph space to close
             the inspector.
           </span>
 
@@ -242,7 +266,19 @@ export function GraphView({
               selection={selection}
               state={inspectorState}
               onClose={() => setSelection(null)}
-            />
+            >
+              {commentTarget ? (
+                <GraphComments
+                  // Keyed on the target, so selecting a different node starts a
+                  // clean thread instead of carrying the last draft across.
+                  key={activityKey(commentTarget)}
+                  workspaceId={workspaceId}
+                  target={commentTarget}
+                  currentUserId={workspaceContext?.user?.id ?? null}
+                  onActivityChange={refreshActivity}
+                />
+              ) : null}
+            </GraphInspector>
           </div>
         ) : null}
       </div>

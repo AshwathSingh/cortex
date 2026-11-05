@@ -1,5 +1,7 @@
 "use client";
 
+import type { ReactNode } from "react";
+
 import type { GraphEdgeDetails, GraphNodeDetails, GraphSelection } from "@/lib/api-types";
 
 export type InspectorState =
@@ -67,10 +69,17 @@ export function GraphInspector({
   selection,
   state,
   onClose,
+  children,
 }: {
   selection: Exclude<GraphSelection, null>;
   state: InspectorState;
   onClose: () => void;
+  /**
+   * Rendered under the details. US-27's thread goes here rather than inside
+   * this component: the comments do not depend on the details having loaded,
+   * and a failed details read must still leave the discussion reachable.
+   */
+  children?: ReactNode;
 }) {
   const kind = selection.kind === "node" ? "Node" : "Connection";
   const details = state.kind === "node" || state.kind === "edge" ? state.details : null;
@@ -125,6 +134,7 @@ export function GraphInspector({
           <OriginLinks details={details} />
         </>
       ) : null}
+      {children}
     </aside>
   );
 }

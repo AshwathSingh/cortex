@@ -9,7 +9,14 @@ import {
   type PointerEvent,
 } from "react";
 
-import type { GraphEdge, GraphNode, GraphNodeType, GraphSelection } from "@/lib/api-types";
+import type {
+  CommentActivity,
+  GraphEdge,
+  GraphNode,
+  GraphNodeType,
+  GraphSelection,
+} from "@/lib/api-types";
+import { activityIndex, edgeTargetKey } from "@/lib/graph-comment-target";
 import { GraphSimulation, type NodeSpec } from "@/lib/graph-layout";
 
 /** Fallbacks keep canvas rendering deterministic when CSS variables are unavailable. */
@@ -54,6 +61,16 @@ const KEEP_VISIBLE = 96;
 /** Clickable halo beyond a node's rim / an edge's line, in screen pixels. */
 const NODE_HIT_SLACK = 7;
 const EDGE_HIT_SLACK = 8;
+/**
+ * T-27.4: the comment badge.
+ *
+ * Unseen is drawn solid and a little larger; already-read is hollow. The
+ * difference is shape, not colour, so it survives a colour-blind reader and a
+ * greyscale screenshot -- the same rule the node types follow.
+ */
+const BADGE_RADIUS = 4.4;
+const BADGE_UNSEEN_RADIUS = 5.4;
+const BADGE_HALO_WIDTH = 2;
 
 type Box = { x1: number; y1: number; x2: number; y2: number };
 type Point = { x: number; y: number };
@@ -67,6 +84,12 @@ type GraphCanvasProps = {
   edges: GraphEdge[];
   height?: number;
   onSelectionChange?: (selection: GraphSelection) => void;
+  /**
+   * T-27.4: which nodes and edges carry comments. Deliberately *not* a
+   * dependency of the layout effect -- a changing badge must repaint the canvas,
+   * never rebuild the simulation (see P-14.1).
+   */
+  commentActivity?: readonly CommentActivity[];
 };
 
 type HitNode = { key: string; x: number; y: number; radius: number };
@@ -265,6 +288,7 @@ export function GraphCanvas({
   edges,
   height = 560,
   onSelectionChange,
+  commentActivity,
 }: GraphCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -275,11 +299,20 @@ export function GraphCanvas({
   const redrawRef = useRef<(() => void) | null>(null);
   const panRef = useRef<PanGesture | null>(null);
   const didDragRef = useRef(false);
+  const activityRef = useRef<Map<string, CommentActivity>>(new Map());
   const [zoomPercent, setZoomPercent] = useState(100);
 
   useEffect(() => {
     selectionHandlerRef.current = onSelectionChange;
   }, [onSelectionChange]);
+
+  // A repaint, not a relayout. Badges change as people comment and as the
+  // reader opens threads, and rebuilding the simulation for that would move
+  // every node -- which is the bug P-14.1 fixed.
+  useEffect(() => {
+    activityRef.current = activityIndex(commentActivity ?? []);
+    redrawRef.current?.();
+  }, [commentActivity]);
 
   useEffect(() => {
     const maybeCanvas = canvasRef.current;
@@ -378,6 +411,8 @@ export function GraphCanvas({
         "--cortex-graph-edge-hub",
         "rgba(120, 160, 255, 0.38)",
       );
+      const badgeColour = cssValue(styles, "--cortex-graph-comment", "#c9a2ff");
+      const badgeHalo = cssValue(styles, "--cortex-graph-badge-halo", "#070a0f");
       const labelColour = cssValue(styles, "--cortex-graph-label", "#c7cedd");
       const dimLabelColour = cssValue(
         styles,
@@ -470,6 +505,56 @@ export function GraphCanvas({
           );
           ctx.fillStyle = colour;
           ctx.fill();
+        }
+
+        // T-27.4: comment badges, drawn above every node and edge so one is
+        // never hidden under the thing it belongs to.
+        const activity = activityRef.current;
+        if (activity.size > 0) {
+          const badge = (x: number, y: number, unseen: boolean) => {
+            const radius = unseen ? BADGE_UNSEEN_RADIUS : BADGE_RADIUS;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            // The halo goes down first and keeps its outer half, so the badge
+            // reads against a node fill or an edge line underneath it.
+            ctx.lineWidth = BADGE_HALO_WIDTH;
+            ctx.strokeStyle = badgeHalo;
+            ctx.stroke();
+            if (unseen) {
+              ctx.fillStyle = badgeColour;
+              ctx.fill();
+              return;
+            }
+            // Already read: a ring rather than a disc.
+            ctx.fillStyle = badgeHalo;
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.lineWidth = 1.6;
+            ctx.strokeStyle = badgeColour;
+            ctx.stroke();
+          };
+
+          for (const edge of edges) {
+            const entry = activity.get(`edge:${edgeTargetKey(edge)}`);
+            if (!entry) continue;
+            const source = simulation.nodeAt(edge.source);
+            const target = simulation.nodeAt(edge.target);
+            if (!source || !target) continue;
+            badge(
+              (source.x + target.x) / 2,
+              (source.y + target.y) / 2,
+              entry.unseen > 0,
+            );
+          }
+
+          for (const placed of drawOrder) {
+            const entry = activity.get(`node:${placed.key}`);
+            if (!entry) continue;
+            // Up and to the right of the rim, where a label never goes.
+            const offset = placed.radius * 0.72;
+            badge(placed.x + offset, placed.y - offset, entry.unseen > 0);
+          }
         }
 
         ctx.font = `${LABEL_FONT}px ${resolvedFamily}`;

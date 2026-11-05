@@ -140,3 +140,31 @@ export type WorkspaceGraph = {
   /** Server hit a node/edge ceiling, so the canvas is showing a subset. */
   truncated: boolean;
 };
+
+/** What a comment can be attached to. Mirrors `app.models.graph_comment.CommentTarget`. */
+export type CommentTarget = "node" | "edge";
+
+/**
+ * T-27.1: one comment on a node or an edge.
+ *
+ * `author_id` and `author_name` are null for a comment whose author has left
+ * the workspace or deleted their account. The comment stays: a discussion other
+ * people took decisions from must not be rewritten.
+ */
+export type GraphComment = {
+  id: string;
+  target_kind: CommentTarget;
+  target_key: string;
+  body: string;
+  author_id: string | null;
+  author_name: string | null;
+  created_at: string;
+};
+
+/** T-27.4: how many comments one target holds, and how many this reader has not seen. */
+export type CommentActivity = {
+  target_kind: CommentTarget;
+  target_key: string;
+  total: number;
+  unseen: number;
+};

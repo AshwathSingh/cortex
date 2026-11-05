@@ -54,6 +54,11 @@
   --cortex-graph-label: #c7cedd;
   --cortex-graph-label-dim: #8b94a6;
   --cortex-graph-divider: rgb(98 136 202 / 16%);
+  /* T-27.4: the badge on a node or edge carrying comments. A hue of its own,
+     because it has to read against every node colour above it, and a filled
+     badge versus a hollow one carries "unseen" without relying on colour. */
+  --cortex-graph-comment: #c9a2ff;
+  --cortex-graph-badge-halo: #070a0f;
 }
 
 @theme inline {
