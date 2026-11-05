@@ -263,7 +263,10 @@ export function GraphView({
               </svg>
               <input
                 id="graph-search"
-                type="search"
+                type="text"
+                role="searchbox"
+                inputMode="search"
+                enterKeyHint="search"
                 value={searchInput}
                 maxLength={200}
                 autoComplete="off"

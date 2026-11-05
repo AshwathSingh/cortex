@@ -273,6 +273,8 @@ describe("GraphView artifact filters", () => {
     const searchbox = await screen.findByRole("searchbox", {
       name: "Search artifacts",
     });
+    expect(searchbox).toHaveAttribute("type", "text");
+    expect(searchbox).toHaveAttribute("inputmode", "search");
     expect(screen.queryByRole("button", { name: "Search" })).not.toBeInTheDocument();
 
     fireEvent.change(searchbox, { target: { value: "graph" } });
