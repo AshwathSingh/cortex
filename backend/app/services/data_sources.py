@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.graph.queries import SourceSummaryPayload
 from app.models import GITHUB_KIND, DataSource, SyncStatus, User
+from app.services.source_failures import FailureCategory
 
 #: ``last_error`` is shown in the UI next to the source, not used as a log.
 MAX_ERROR_LENGTH = 500
@@ -80,6 +81,8 @@ class SourceInventoryItem:
     last_attempted_at: datetime | None
     last_synced_at: datetime | None
     last_error: str | None
+    #: T-12.1: the failure category, so a row can offer the right fix.
+    last_error_code: str | None
     last_synced_by: uuid.UUID | None
     last_synced_by_name: str | None
     sections: int = 0
@@ -194,6 +197,10 @@ def record_sync_success(
     source.last_synced_at = _now()
     source.last_synced_by = user_id
     source.last_error = None
+    # Clearing the category as well as the message is what dismisses the
+    # workspace's failure notice (US-12 AC3): the notice is derived from FAILED
+    # rows, so there is nothing else to dismiss.
+    source.last_error_code = None
     return source
 
 
@@ -203,13 +210,20 @@ def record_sync_failure(
     workspace_id: uuid.UUID,
     external_ref: str,
     error: str,
+    category: FailureCategory = FailureCategory.UNKNOWN,
     kind: str = GITHUB_KIND,
 ) -> DataSource:
     """Mark the attempt failed, leaving ``last_synced_at`` alone: the source may
-    still be showing data from an earlier success, and the UI has to say so."""
+    still be showing data from an earlier success, and the UI has to say so.
+
+    ``category`` defaults to UNKNOWN rather than being required, so a caller
+    that has not been taught the taxonomy still records a usable failure instead
+    of raising inside an error path.
+    """
     source, _ = _upsert(session, workspace_id, kind, external_ref)
     source.status = SyncStatus.FAILED
     source.last_error = error[:MAX_ERROR_LENGTH] or None
+    source.last_error_code = category.value
     return source
 
 
@@ -273,6 +287,7 @@ def build_source_inventory(
                 last_attempted_at=source.last_attempted_at,
                 last_synced_at=source.last_synced_at,
                 last_error=source.last_error,
+                last_error_code=source.last_error_code,
                 last_synced_by=source.last_synced_by,
                 last_synced_by_name=entry.last_synced_by_name,
             )
@@ -301,6 +316,7 @@ def build_source_inventory(
                 last_attempted_at=None,
                 last_synced_at=None,
                 last_error=None,
+                last_error_code=None,
                 last_synced_by=None,
                 last_synced_by_name=None,
             )

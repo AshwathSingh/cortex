@@ -101,6 +101,7 @@ def test_returns_source_counts(api_db):
             "messages": 0,
             "display_name": None,
             "last_attempted_at": None,
+            "last_error_code": None,
             "last_synced_at": None,
             "last_error": None,
             "last_synced_by": None,

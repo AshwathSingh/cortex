@@ -26,6 +26,7 @@ from app.models import (
     SourceCredential,
     SyncStatus,
 )
+from app.services.source_failures import FailureCategory
 from app.sources.discord import DiscordClient
 from app.sources.slack import SlackClient
 from tests.authz import sign_in_with_role
@@ -280,11 +281,15 @@ def test_a_provider_failure_is_recorded_against_the_source(api_db):
 
     response = client.post("/api/ingest/slack", json=body())
 
-    assert response.status_code == 403
+    # 401, not 403: a revoked provider token is the same failure as a dead
+    # GitHub one (US-12's AUTH category), and 403 on these routes means the
+    # caller lacks ``sources.write``.
+    assert response.status_code == 401
     assert "Reconnect the Slack workspace" in response.json()["detail"]
     (source,) = sources(sessions)
     assert source.status is SyncStatus.FAILED
     assert "Reconnect the Slack workspace" in source.last_error
+    assert source.last_error_code == FailureCategory.AUTH.value
 
 
 def test_a_second_ingestion_of_the_same_team_is_refused_while_one_runs(api_db):

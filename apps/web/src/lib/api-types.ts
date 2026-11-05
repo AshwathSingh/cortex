@@ -95,7 +95,44 @@ export type WorkspaceSource = IngestResult & {
    *  a source can be failing and still be showing three-day-old data. */
   last_synced_at: string | null;
   last_error: string | null;
+  /** T-12.1: which kind of failure, so a row can offer the right fix. */
+  last_error_code: SourceFailureCategory | null;
   last_synced_by: string | null;
+  last_synced_by_name: string | null;
+};
+
+/** Mirrors `app.services.source_failures.FailureCategory`. */
+export type SourceFailureCategory =
+  | "AUTH"
+  | "NOT_FOUND"
+  | "RATE_LIMIT"
+  | "UPSTREAM"
+  | "GRAPH"
+  | "UNKNOWN";
+
+/**
+ * T-12.1: one unresolved ingestion failure.
+ *
+ * The server decides `needs_reauth` and `can_retry` rather than the page
+ * inferring them from the category: which failures a sign-in can fix is a fact
+ * about the GitHub integration, and a second copy of that rule in TypeScript
+ * would be a second place for it to go stale.
+ */
+export type SourceFailure = {
+  repo: string;
+  kind: string;
+  category: SourceFailureCategory;
+  /** Short noun phrase for the badge, e.g. "Authorization expired". */
+  label: string;
+  /** What the server recorded when it failed. */
+  message: string | null;
+  /** What the reader should do, in one sentence. */
+  advice: string;
+  needs_reauth: boolean;
+  can_retry: boolean;
+  last_attempted_at: string | null;
+  /** Kept for a failing source: the graph is still showing data this old. */
+  last_synced_at: string | null;
   last_synced_by_name: string | null;
 };
 
@@ -248,4 +285,32 @@ export type WorkspaceFlags = {
   flags: WorkspaceFlag[];
   /** The item ceiling was reached, so the rules saw a subset of the workspace. */
   truncated: boolean;
+};
+
+/** What a comment can be attached to. Mirrors `app.models.graph_comment.CommentTarget`. */
+export type CommentTarget = "node" | "edge";
+
+/**
+ * T-27.1: one comment on a node or an edge.
+ *
+ * `author_id` and `author_name` are null for a comment whose author has left
+ * the workspace or deleted their account. The comment stays: a discussion other
+ * people took decisions from must not be rewritten.
+ */
+export type GraphComment = {
+  id: string;
+  target_kind: CommentTarget;
+  target_key: string;
+  body: string;
+  author_id: string | null;
+  author_name: string | null;
+  created_at: string;
+};
+
+/** T-27.4: how many comments one target holds, and how many this reader has not seen. */
+export type CommentActivity = {
+  target_kind: CommentTarget;
+  target_key: string;
+  total: number;
+  unseen: number;
 };

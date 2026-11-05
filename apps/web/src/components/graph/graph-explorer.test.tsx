@@ -110,12 +110,18 @@ function graph(over: Partial<WorkspaceGraph> = {}): WorkspaceGraph {
   };
 }
 
+/** Endpoints the Graph Explorer reads that are not the graph itself.
+ *  `/sources` feeds the header's sync status and
+ *  `/graph/comments/activity` feeds the comment badges (T-27.4); these tests
+ *  are about the graph, so both answer with nothing. */
+function isSideRequest(url: string) {
+  return url.endsWith("/sources") || url.includes("/graph/comments");
+}
+
 function mockFetch(status: number, body: unknown) {
   const fn = vi.fn((input: RequestInfo | URL) =>
-    // The header's sync status reads /sources; these tests are about the graph,
-    // so the workspace has none and the status bar renders nothing.
     Promise.resolve(
-      String(input).endsWith("/sources")
+      isSideRequest(String(input))
         ? new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } })
         : new Response(JSON.stringify(body), {
             status,
@@ -451,7 +457,8 @@ describe("GraphExplorer", () => {
       pull_requests: 8, issues: 3, total_items: 11,
       last_attempted_at: "2026-10-08T11:55:00Z",
       last_synced_at: "2026-10-08T11:55:00Z",
-      last_error: null, last_synced_by: null, last_synced_by_name: null,
+      last_error: null, last_error_code: null,
+      last_synced_by: null, last_synced_by_name: null,
     };
     let reads = 0;
     const fetchFn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -466,6 +473,7 @@ describe("GraphExplorer", () => {
           reads === 1 ? source : { ...source, last_synced_at: "2026-10-08T12:30:00Z" },
         ]));
       }
+      if (url.includes("/graph/comments")) return Promise.resolve(json([]));
       return Promise.resolve(json(graph()));
     });
     vi.stubGlobal("fetch", fetchFn);

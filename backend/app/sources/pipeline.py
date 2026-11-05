@@ -29,13 +29,48 @@ from neo4j.exceptions import DriverError, Neo4jError
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.sources.base import FetchedSource, SourceAdapter, SourceAPIError, SourceError
+from app.sources.base import (
+    FetchedSource,
+    SourceAdapter,
+    SourceAPIError,
+    SourceError,
+    SourceNotFound,
+    SourceRateLimited,
+    SourceUnauthorized,
+)
+from app.services.source_failures import FailureCategory
 from app.services.data_sources import (
     record_sync_attempt,
     record_sync_failure,
     record_sync_success,
 )
 from app.services.workspaces import lock_active_workspace
+
+
+#: Which failure category each provider error records (T-12.1). Ordered: the
+#: first match wins, so a subclass precedes its base -- GitHub's rate-limit
+#: error is both a SourceRateLimited and a SourceAPIError, and a dead token is
+#: both a SourceUnauthorized and a SourceAPIError.
+ERROR_CATEGORY: tuple[tuple[type[BaseException], FailureCategory], ...] = (
+    (SourceNotFound, FailureCategory.NOT_FOUND),
+    (SourceRateLimited, FailureCategory.RATE_LIMIT),
+    (SourceUnauthorized, FailureCategory.AUTH),
+    (SourceAPIError, FailureCategory.UPSTREAM),
+)
+
+
+def categorise(error: BaseException) -> FailureCategory:
+    """The category a failure is recorded under, for the workspace's failure
+    list to decide whether a sign-in or a retry is what would fix it.
+
+    Derived from the error type rather than passed in at each raise site: the
+    adapters already express the distinction the taxonomy needs, and a second
+    place to keep in step would drift.
+    """
+    for error_type, category in ERROR_CATEGORY:
+        if isinstance(error, error_type):
+            return category
+    return FailureCategory.UNKNOWN
 
 
 class WorkspaceGone(Exception):
@@ -69,6 +104,7 @@ def _fail(
     external_ref: str,
     kind: str,
     detail: str,
+    category: FailureCategory,
 ) -> None:
     if not lock_active_workspace(session, workspace_id):
         # Deleted while we were fetching; there is no source row left to mark.
@@ -80,6 +116,7 @@ def _fail(
         external_ref=external_ref,
         error=detail,
         kind=kind,
+        category=category,
     )
     session.commit()
 
@@ -131,6 +168,7 @@ def run_ingestion(
             external_ref=external_ref,
             kind=adapter.kind,
             detail=adapter.describe(error),
+            category=categorise(error),
         )
         raise
 
@@ -151,6 +189,7 @@ def run_ingestion(
             external_ref=external_ref,
             kind=adapter.kind,
             detail=detail,
+            category=FailureCategory.UPSTREAM,
         )
         raise SourceAPIError(detail) from error
     except (Neo4jError, DriverError) as error:
@@ -161,6 +200,7 @@ def run_ingestion(
             external_ref=external_ref,
             kind=adapter.kind,
             detail=detail,
+            category=FailureCategory.GRAPH,
         )
         raise GraphUnavailable(detail) from error
 

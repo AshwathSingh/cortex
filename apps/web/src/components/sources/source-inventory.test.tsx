@@ -28,6 +28,7 @@ function source(over: Partial<WorkspaceSource> = {}): WorkspaceSource {
     last_attempted_at: minutesAgo(5),
     last_synced_at: minutesAgo(5),
     last_error: null,
+    last_error_code: null,
     last_synced_by: "11111111-0000-4000-8000-000000000001",
     last_synced_by_name: "Ashwath",
     ...over,
@@ -68,22 +69,29 @@ const { replace, routerMock } = vi.hoisted(() => {
 
 vi.mock("next/navigation", () => ({ useRouter: () => routerMock }));
 
-function mockFetch(status: number, body: unknown) {
-  const fn = vi.fn().mockResolvedValue(
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    }),
-  );
-  vi.stubGlobal("fetch", fn);
-  return fn;
-}
-
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+/**
+ * Answer the source list with `body` and every other endpoint with an empty
+ * array.
+ *
+ * A fresh Response per call, not one shared instance: a Response body can only
+ * be read once, so a single object silently fails the second reader -- and the
+ * page makes two requests now that T-12.2 polls for failures as well.
+ */
+function mockFetch(status: number, body: unknown) {
+  const fn = vi.fn((input: RequestInfo | URL) =>
+    Promise.resolve(
+      String(input).endsWith("/sources") ? jsonResponse(body, status) : jsonResponse([]),
+    ),
+  );
+  vi.stubGlobal("fetch", fn);
+  return fn;
 }
 
 const INGESTED = { repo: "openai/cortex", pull_requests: 8, issues: 3 };
@@ -106,9 +114,9 @@ function mockApi(
         jsonResponse({ filename: "prd.md", format: "text", sections: 1, replaced: false }),
       );
     }
-    if (String(input).endsWith("/connections")) {
-      return Promise.resolve(jsonResponse([]));
-    }
+    // Everything else the page reads -- chat connections, failure polling --
+    // answers empty; each has tests of its own.
+    if (!String(input).endsWith("/sources")) return Promise.resolve(jsonResponse([]));
     const page = pages[Math.min(reads, pages.length - 1)];
     reads += 1;
     return Promise.resolve(jsonResponse(page));
@@ -136,7 +144,11 @@ describe("SourceInventory", () => {
     const fetchFn = mockFetch(200, []);
     renderInventory();
     await screen.findByText(/connect your first source/i);
-    expect(fetchFn.mock.calls[0][0]).toBe(`/api/workspaces/${WORKSPACE_ID}/sources`);
+    // Found rather than indexed: the page also polls for failures (T-12.2) and
+    // the order the two effects run in is React's business, not this test's.
+    expect(
+      fetchFn.mock.calls.map(([url]) => String(url)),
+    ).toContain(`/api/workspaces/${WORKSPACE_ID}/sources`);
   });
 
   it("shows connected repositories and their indexed counts", async () => {
@@ -234,16 +246,17 @@ describe("SourceInventory", () => {
   });
 
   it("shows access errors and can retry", async () => {
-    // Routed by URL, not by call order: the page also reads /connections, and
-    // a once-per-call mock would hand it the retry's response.
-    let sourceReads = 0;
+    // Routed by URL rather than by call order: the page also reads chat
+    // connections and polls for failures (T-12.2), so "the first request" is no
+    // longer the source list.
+    let listReads = 0;
     const fetchFn = vi.fn((input: RequestInfo | URL) => {
-      if (String(input).endsWith("/connections")) {
+      if (!String(input).endsWith("/sources")) {
         return Promise.resolve(jsonResponse([]));
       }
-      sourceReads += 1;
+      listReads += 1;
       return Promise.resolve(
-        sourceReads === 1
+        listReads === 1
           ? jsonResponse({ detail: "Workspace access denied" }, 403)
           : jsonResponse([]),
       );
@@ -254,7 +267,7 @@ describe("SourceInventory", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/access denied/i);
     await user.click(screen.getByRole("button", { name: /try again/i }));
     expect(await screen.findByText(/connect your first source/i)).toBeInTheDocument();
-    expect(sourceReads).toBe(2);
+    expect(listReads).toBe(2);
   });
 
   it("renders a Slack source by its team name with chat counts", async () => {

@@ -38,3 +38,15 @@ export function useWorkspace() {
 
   return context;
 }
+
+/**
+ * The workspace context if there is one, else null.
+ *
+ * For components that can use it but do not need it. The Graph Explorer only
+ * wants the signed-in user's id, to decide which comments offer a delete
+ * button, and refusing to render at all without a provider would make that a
+ * requirement it is not.
+ */
+export function useOptionalWorkspace(): WorkspaceContextValue | null {
+  return useContext(WorkspaceContext);
+}

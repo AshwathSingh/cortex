@@ -18,6 +18,7 @@ function source(over: Partial<WorkspaceSource> = {}): WorkspaceSource {
     last_attempted_at: null,
     last_synced_at: null,
     last_error: null,
+    last_error_code: null,
     last_synced_by: null,
     last_synced_by_name: null,
     ...over,

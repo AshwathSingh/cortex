@@ -66,7 +66,9 @@ router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 ERROR_STATUS: tuple[tuple[type[SourceError], int], ...] = (
     (SourceNotFound, 404),
     (SourceRateLimited, 429),
-    (SourceUnauthorized, 403),
+    # 401, not 403: the stored credential is dead, which is a different thing
+    # from the caller lacking ``sources.write`` -- that is what 403 means here.
+    (SourceUnauthorized, 401),
     (GraphUnavailable, 503),
     (SourceAPIError, 502),
 )
