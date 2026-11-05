@@ -35,6 +35,7 @@ from app.db.neo4j_driver import get_driver
 from app.github.client import (
     GitHubAPIError,
     GitHubClient,
+    GitHubUnauthorized,
     InvalidRepoURL,
     RateLimitExceeded,
     RepoNotFound,
@@ -48,6 +49,7 @@ from app.services.data_sources import (
     record_sync_failure,
     record_sync_success,
 )
+from app.services.source_failures import FailureCategory
 from app.services.workspaces import lock_active_workspace
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
@@ -84,6 +86,7 @@ def _failed(
     repo: str,
     status_code: int,
     detail: str,
+    category: FailureCategory,
     headers: dict[str, str] | None = None,
 ) -> HTTPException:
     """Record the failure, commit it, and return the error to raise.
@@ -91,12 +94,22 @@ def _failed(
     Committed before the response leaves the handler: the graph write is
     all-or-nothing, so a failed ingestion leaves no nodes and this row is the
     only thing that can render a red "Needs attention" against the source.
+
+    ``category`` is positional-ish on purpose -- every call site has to decide
+    one, because a failure recorded without it becomes an UNKNOWN that the
+    workspace's failure list can only tell the reader to retry (T-12.1).
     """
     if not lock_active_workspace(session, workspace_id):
         # Deleted while we were fetching; there is no source row left to mark.
         session.rollback()
         return _workspace_gone()
-    record_sync_failure(session, workspace_id=workspace_id, external_ref=repo, error=detail)
+    record_sync_failure(
+        session,
+        workspace_id=workspace_id,
+        external_ref=repo,
+        error=detail,
+        category=category,
+    )
     session.commit()
     return HTTPException(status_code=status_code, detail=detail, headers=headers)
 
@@ -153,14 +166,25 @@ def ingest_github(
         raise _failed(
             session, body.workspace_id, repo, 404,
             f"Repository {repo} not found or not accessible",
+            FailureCategory.NOT_FOUND,
         )
     except RateLimitExceeded as e:
         raise _failed(
             session, body.workspace_id, repo, 429, "GitHub rate limit reached",
+            FailureCategory.RATE_LIMIT,
             headers={"Retry-After": str(int(e.wait_seconds))},
         )
+    except GitHubUnauthorized:
+        # Before the generic handler: GitHubUnauthorized is a GitHubAPIError.
+        raise _failed(
+            session, body.workspace_id, repo, 401,
+            "GitHub rejected this workspace's credentials; sign in again",
+            FailureCategory.AUTH,
+        )
     except GitHubAPIError as e:
-        raise _failed(session, body.workspace_id, repo, 502, str(e))
+        raise _failed(
+            session, body.workspace_id, repo, 502, str(e), FailureCategory.UPSTREAM
+        )
 
     # The fetch above can take minutes. Re-check, and hold a shared lock on the
     # workspace until the commit below, so a delete can neither clear the graph
@@ -175,10 +199,12 @@ def ingest_github(
         raise _failed(
             session, body.workspace_id, repo, 502,
             "GitHub returned an unexpected payload shape",
+            FailureCategory.UPSTREAM,
         )
     except (Neo4jError, DriverError):
         raise _failed(
-            session, body.workspace_id, repo, 503, "Graph database unavailable"
+            session, body.workspace_id, repo, 503, "Graph database unavailable",
+            FailureCategory.GRAPH,
         )
 
     record_sync_success(

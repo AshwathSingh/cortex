@@ -11,6 +11,7 @@ from app.api import (
     invites,
     members,
     roles,
+    source_failures,
     workspaces,
 )
 from app.db.neo4j_driver import close_driver
@@ -40,6 +41,7 @@ app.include_router(members.router)
 # After workspaces.router: both own /api/workspaces, and the more specific
 # /{workspace_id}/graph must not be shadowed by /{workspace_id}.
 app.include_router(graph.router)
+app.include_router(source_failures.router)
 
 
 @app.get("/health")
