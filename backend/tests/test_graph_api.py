@@ -92,6 +92,73 @@ def test_returns_nodes_and_edges(api_db):
     assert body["truncated"] is False
 
 
+def test_type_filters_are_forwarded_to_the_workspace_scoped_graph_query(api_db):
+    a, pr, iss = author(1), pull_request(100), issue(200)
+    c, driver = setup(
+        api_db,
+        nodes=[a, pr, iss],
+        edges=[edge(a, pr), edge(pr, iss)],
+    )
+
+    body = c.get(URL, params=[("types", "PullRequest"), ("types", "Issue")]).json()
+
+    assert [node["type"] for node in body["nodes"]] == ["PullRequest", "Issue"]
+    assert body["edges"] == [
+        {"source": "PullRequest:100", "target": "Issue:200", "type": "AUTHORED"}
+    ]
+    assert all(
+        call[1]["node_types"] == ["PullRequest", "Issue"]
+        for call in driver.tx.calls
+    )
+
+
+def test_keyword_search_is_forwarded_and_returns_matching_artifacts(api_db):
+    pr = pull_request(100)
+    pr["props"]["title"] = "Graph Search endpoint"
+    unrelated = issue(200)
+    c, driver = setup(api_db, nodes=[pr, unrelated])
+
+    response = c.get(URL, params={"q": "search"})
+
+    assert response.status_code == 200
+    assert [node["key"] for node in response.json()["nodes"]] == ["PullRequest:100"]
+    assert all(call[1]["search_term"] == "search" for call in driver.tx.calls)
+
+
+def test_keyword_search_with_no_matches_returns_an_empty_graph(api_db):
+    c, _ = setup(api_db, nodes=[author(1)])
+
+    response = c.get(URL, params={"q": "nothing-matches"})
+
+    assert response.status_code == 200
+    assert response.json()["nodes"] == []
+    assert response.json()["edges"] == []
+
+
+def test_search_query_is_length_limited(api_db):
+    c, driver = setup(api_db, nodes=[author(1)])
+
+    assert c.get(URL, params={"q": "x" * 201}).status_code == 422
+    assert driver.opened == 0
+
+
+def test_unknown_type_filter_is_rejected(api_db):
+    c, driver = setup(api_db, nodes=[author(1)])
+    assert c.get(URL, params={"types": "Requirement"}).status_code == 422
+    assert driver.opened == 0
+
+
+def test_empty_type_filter_returns_no_graph_items(api_db):
+    c, driver = setup(api_db, nodes=[author(1)])
+
+    response = c.get(URL, params={"types": ""})
+
+    assert response.status_code == 200
+    assert response.json()["nodes"] == []
+    assert response.json()["edges"] == []
+    assert all(call[1]["node_types"] == [] for call in driver.tx.calls)
+
+
 def test_node_types_are_exposed_for_colouring(api_db):
     """The canvas colours by type; only the three ingested labels exist today."""
     c, _ = setup(api_db, nodes=[author(1), pull_request(100), issue(200)])

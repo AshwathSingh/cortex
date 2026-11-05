@@ -1,7 +1,7 @@
 """A display name for sources whose reference is not their name (T-9.1).
 
 Revision ID: 20261031_12
-Revises: 20261026_10
+Revises: 20261103_13
 Create Date: 2026-10-31
 
 Additive and nullable, so there is no backfill: a GitHub source's
@@ -9,9 +9,9 @@ Additive and nullable, so there is no backfill: a GitHub source's
 honest way to say "nothing else to call this".
 
 Numbered 12 rather than 11 because US-08 branched off the same head and took 11.
-Both revise 20261026_10, so merging the two branches leaves Alembic with two
-heads; the fix is to point whichever lands second at the other (change its
-``down_revision``), not to add a merge revision.
+This one was written against 20261026_10 and lands after main reached
+20261103_13, so it revises that instead: one lineage, no merge revision. US-08
+still revises 20261026_10 and needs the same repoint when it lands.
 """
 
 from collections.abc import Sequence
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20261031_12"
-down_revision: str | None = "20261026_10"
+down_revision: str | None = "20261103_13"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

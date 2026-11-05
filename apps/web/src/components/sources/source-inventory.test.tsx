@@ -42,6 +42,7 @@ function renderInventory(role: WorkspaceRole = "OWNER") {
           name: "Cortex",
           description: null,
           role,
+          permissions: role === "VIEWER" ? [] : ["sources.write"],
           created_at: "2026-09-24T00:00:00Z",
         },
         user: null,

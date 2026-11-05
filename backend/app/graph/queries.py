@@ -52,6 +52,9 @@ def _label_predicate(variable: str) -> str:
 NODES_QUERY = f"""
 MATCH (n)
 WHERE ({_label_predicate("n")}) AND n.workspace_id = $workspace_id
+  AND ($node_types IS NULL OR any(label IN labels(n) WHERE label IN $node_types))
+  AND ($search_term IS NULL OR any(value IN [n.title, n.login, n.body, n.repo, n.number, n.id]
+      WHERE value IS NOT NULL AND toLower(toString(value)) CONTAINS $search_term))
 RETURN labels(n) AS labels, properties(n) AS props
 ORDER BY head(labels(n)), n.id
 LIMIT $limit
@@ -61,6 +64,13 @@ EDGES_QUERY = f"""
 MATCH (a)-[r]->(b)
 WHERE ({_label_predicate("a")}) AND ({_label_predicate("b")})
   AND a.workspace_id = $workspace_id AND b.workspace_id = $workspace_id
+  AND ($node_types IS NULL OR any(label IN labels(a) WHERE label IN $node_types))
+  AND ($node_types IS NULL OR any(label IN labels(b) WHERE label IN $node_types))
+  AND ($search_term IS NULL OR (
+      any(value IN [a.title, a.login, a.body, a.repo, a.number, a.id]
+          WHERE value IS NOT NULL AND toLower(toString(value)) CONTAINS $search_term)
+      AND any(value IN [b.title, b.login, b.body, b.repo, b.number, b.id]
+          WHERE value IS NOT NULL AND toLower(toString(value)) CONTAINS $search_term)))
 RETURN labels(a) AS source_labels, a.id AS source_id,
        labels(b) AS target_labels, b.id AS target_id,
        type(r) AS type
@@ -231,6 +241,8 @@ def fetch_graph(
     *,
     node_limit: int = DEFAULT_NODE_LIMIT,
     edge_limit: int = DEFAULT_EDGE_LIMIT,
+    node_types: tuple[str, ...] | list[str] | None = None,
+    search_query: str | None = None,
 ) -> GraphPayload:
     """Every node and edge in one workspace, in a single read transaction.
 
@@ -238,13 +250,29 @@ def fetch_graph(
     client never receives a dangling endpoint.
     """
     workspace = normalise_workspace_id(workspace_id)
+    if node_types is not None and any(node_type not in GRAPH_LABELS for node_type in node_types):
+        raise ValueError("Unknown graph node type")
+    selected_types = list(node_types) if node_types is not None else None
+    search_term = (" ".join(search_query.casefold().split()) or None) if search_query else None
 
     def work(tx) -> tuple[list, list]:
         nodes = list(
-            tx.run(NODES_QUERY, workspace_id=workspace, limit=node_limit)
+            tx.run(
+                NODES_QUERY,
+                workspace_id=workspace,
+                node_types=selected_types,
+                search_term=search_term,
+                limit=node_limit,
+            )
         )
         edges = list(
-            tx.run(EDGES_QUERY, workspace_id=workspace, limit=edge_limit)
+            tx.run(
+                EDGES_QUERY,
+                workspace_id=workspace,
+                node_types=selected_types,
+                search_term=search_term,
+                limit=edge_limit,
+            )
         )
         return nodes, edges
 
@@ -455,3 +483,55 @@ def fetch_edge_details(
         "attributes": relation_props,
         "origins": source["origins"] + target["origins"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Workspace deletion (US-05)
+# ---------------------------------------------------------------------------
+
+# Every label the ingestion pipeline writes. Interpolated into Cypher, which is
+# safe only because it is a module constant (see GRAPH_LABELS above).
+WORKSPACE_NODE_LABELS: tuple[str, ...] = ("Repository", *GRAPH_LABELS)
+
+DELETE_BATCH_SIZE = 1_000
+
+
+def _delete_batch_query(label: str | None) -> str:
+    match = f"(n:{label} {{workspace_id: $workspace_id}})" if label else (
+        "(n {workspace_id: $workspace_id})"
+    )
+    # DETACH DELETE also removes every relationship, so edges go with their nodes.
+    return (
+        f"MATCH {match} WITH n LIMIT $batch "
+        "DETACH DELETE n RETURN count(*) AS deleted"
+    )
+
+
+def delete_workspace_graph(
+    driver: Driver, workspace_id: uuid.UUID | str, *, batch_size: int = DELETE_BATCH_SIZE
+) -> int:
+    """Remove every node (and its relationships) the workspace owns; return the count.
+
+    Idempotent and resumable: each batch is its own transaction, so a failure
+    part-way leaves a smaller graph and calling this again carries on. Batching
+    keeps a very large workspace from building one giant transaction.
+
+    Known labels go first because the (label, workspace_id) index makes each
+    batch cheap; a final label-less sweep catches anything a future label or a
+    hand-written node left behind. Uses the same id normaliser as the writer.
+    """
+    ws = normalise_workspace_id(workspace_id)
+    total = 0
+    for label in (*WORKSPACE_NODE_LABELS, None):
+        query = _delete_batch_query(label)
+        while True:
+            with driver.session() as session:
+                deleted = session.execute_write(
+                    lambda tx: tx.run(query, workspace_id=ws, batch=batch_size).single()[
+                        "deleted"
+                    ]
+                )
+            total += deleted
+            if deleted < batch_size:
+                break
+    return total

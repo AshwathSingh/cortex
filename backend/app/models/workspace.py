@@ -25,7 +25,14 @@ from app.db.base import Base
 
 if TYPE_CHECKING:
     from app.models.data_source import DataSource
+    from app.models.workspace_invite import WorkspaceInvite
     from app.models.user import User
+
+
+#: Workspace lifecycle. A workspace being deleted is hidden from every endpoint
+#: (see ``load_workspace_for_user``) until its rows are gone (US-05).
+WORKSPACE_ACTIVE = "active"
+WORKSPACE_DELETING = "deleting"
 
 
 class Role(str, enum.Enum):
@@ -36,12 +43,21 @@ class Role(str, enum.Enum):
 
 class Workspace(Base):
     __tablename__ = "workspaces"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'deleting')", name="ck_workspaces_status"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=WORKSPACE_ACTIVE,
+        server_default=WORKSPACE_ACTIVE,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -53,6 +69,9 @@ class Workspace(Base):
         back_populates="workspace", cascade="all, delete-orphan"
     )
     custom_roles: Mapped[list["WorkspaceRole"]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
+    invites: Mapped[list["WorkspaceInvite"]] = relationship(
         back_populates="workspace", cascade="all, delete-orphan"
     )
 
@@ -142,11 +161,21 @@ class WorkspaceMembership(Base):
     custom_role_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), index=True
     )
+    # Who invited this member; None for a workspace's creator and for members added
+    # directly. SET NULL so deleting the inviter's account keeps the membership.
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default="active"
+    )
     invited_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    user: Mapped["User"] = relationship(back_populates="memberships")
+    user: Mapped["User"] = relationship(
+        back_populates="memberships", foreign_keys=[user_id]
+    )
     workspace: Mapped[Workspace] = relationship(back_populates="memberships")
     # Read-only: the composite foreign key also spans workspace_id, which this
     # relationship must never write. Assign roles through ``custom_role_id``.
