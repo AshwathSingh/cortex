@@ -11,6 +11,7 @@ import {
 } from "@/components/auth/auth-form-primitives";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { AuthenticatedUser } from "@/lib/api-types";
+import { postAuthDestination } from "@/lib/invite-link";
 
 /** Developer-focused account flow with GitHub and email options. */
 export function SignupForm() {
@@ -33,7 +34,7 @@ export function SignupForm() {
           password: formData.get("password"),
         }),
       });
-      router.replace("/workspaces");
+      router.replace(postAuthDestination());
       router.refresh();
     } catch (requestError) {
       setError(

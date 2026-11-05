@@ -33,6 +33,7 @@ from app.services.workspaces import (
     WorkspaceNameTaken,
     create_workspace,
     delete_workspace,
+    update_workspace,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,10 @@ class WorkspaceCreate(BaseModel):
     @classmethod
     def _blank_description_is_none(cls, v: str | None) -> str | None:
         return v or None
+
+
+class WorkspaceUpdate(WorkspaceCreate):
+    """The editable workspace profile fields."""
 
 
 def _summarise(workspace: Workspace, membership: WorkspaceMembership) -> WorkspaceSummary:
@@ -145,6 +150,35 @@ def get_workspace(
     which don't)
     """
     workspace, membership = load_workspace_for_user(session, user, workspace_id)
+    return _summarise(workspace, membership)
+
+
+@router.patch("/{workspace_id}", response_model=WorkspaceSummary)
+def update_workspace_profile(
+    workspace_id: uuid.UUID,
+    payload: WorkspaceUpdate,
+    user: CurrentUser,
+    session: DbSession,
+) -> WorkspaceSummary:
+    workspace, membership = load_workspace_for_user(
+        session, user, workspace_id, permission=Permission.WORKSPACE_UPDATE
+    )
+
+    try:
+        update_workspace(
+            session,
+            workspace=workspace,
+            name=payload.name,
+            description=payload.description,
+        )
+        session.commit()
+    except WorkspaceNameTaken:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"You already have a workspace named '{payload.name}'",
+        )
+
     return _summarise(workspace, membership)
 
 

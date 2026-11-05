@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import {
@@ -251,9 +251,18 @@ export function WorkspaceShell({
     return () => controller.abort();
   }, [router, workspaceId]);
 
+  const updateWorkspace = useCallback((updated: WorkspaceSummary) => {
+    setWorkspace(updated);
+    setWorkspaces((current) =>
+      current.map((candidate) =>
+        candidate.id === updated.id ? updated : candidate,
+      ),
+    );
+  }, []);
+
   const workspaceContext = useMemo(
-    () => ({ workspaceId, workspace, user, isLoading, error }),
-    [error, isLoading, user, workspace, workspaceId],
+    () => ({ workspaceId, workspace, user, isLoading, error, updateWorkspace }),
+    [error, isLoading, updateWorkspace, user, workspace, workspaceId],
   );
 
   return (

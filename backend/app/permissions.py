@@ -19,6 +19,7 @@ class Permission(str, enum.Enum):
     SOURCES_WRITE = "sources.write"
     MEMBERS_MANAGE = "members.manage"
     ROLES_MANAGE = "roles.manage"
+    WORKSPACE_UPDATE = "workspace.update"
     WORKSPACE_DELETE = "workspace.delete"
 
 
@@ -26,12 +27,14 @@ PERMISSION_DESCRIPTIONS: dict[Permission, str] = {
     Permission.SOURCES_WRITE: "Connect data sources and run ingestion",
     Permission.MEMBERS_MANAGE: "Invite and remove members and change their roles",
     Permission.ROLES_MANAGE: "Create, edit and delete custom roles",
+    Permission.WORKSPACE_UPDATE: "Edit workspace details (owners only)",
     Permission.WORKSPACE_DELETE: "Delete the workspace (owners only)",
 }
 
-# Owner-only: a custom role can never carry these, so the workspace can always be
-# deleted by (and only by) someone holding the built-in OWNER role.
-OWNER_ONLY: frozenset[Permission] = frozenset({Permission.WORKSPACE_DELETE})
+# Owner-only: custom roles can never edit or delete the workspace itself.
+OWNER_ONLY: frozenset[Permission] = frozenset(
+    {Permission.WORKSPACE_UPDATE, Permission.WORKSPACE_DELETE}
+)
 
 GRANTABLE: frozenset[Permission] = frozenset(Permission) - OWNER_ONLY
 

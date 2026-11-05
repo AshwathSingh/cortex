@@ -115,6 +115,11 @@ body {
   outline-offset: 0;
 }
 
+.cortex-field-control:focus-visible {
+  outline: none;
+  outline-offset: 0;
+}
+
 .graph-scene {
   background-color: rgb(8 13 22 / 42%);
   background-image:

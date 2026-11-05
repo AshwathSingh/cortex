@@ -10,6 +10,7 @@ export type WorkspaceContextValue = {
   user: AuthenticatedUser | null;
   isLoading: boolean;
   error: string | null;
+  updateWorkspace?: (workspace: WorkspaceSummary) => void;
 };
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
