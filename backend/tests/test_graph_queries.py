@@ -68,7 +68,49 @@ class FakeTx:
 
     def run(self, cypher, **params):
         self.calls.append((cypher, params))
-        return FakeResult(self.edges if cypher is EDGES_QUERY else self.nodes)
+        node_types = params.get("node_types")
+        search_term = params.get("search_term")
+
+        def matches_search(record):
+            props = record["props"]
+            searchable = [props.get(key) for key in ("title", "login", "body", "repo", "number", "id")]
+            return search_term is None or any(
+                search_term in str(value).casefold()
+                for value in searchable
+                if value is not None
+            )
+
+        if cypher is EDGES_QUERY:
+            records = self.edges
+            if node_types is not None:
+                records = [
+                    record
+                    for record in records
+                    if any(label in node_types for label in record["source_labels"])
+                    and any(label in node_types for label in record["target_labels"])
+                ]
+            if search_term is not None:
+                by_key = {
+                    node_key(record["labels"], record["props"]["id"]): record
+                    for record in self.nodes
+                }
+                records = [
+                    record
+                    for record in records
+                    if matches_search(by_key[node_key(record["source_labels"], record["source_id"])])
+                    and matches_search(by_key[node_key(record["target_labels"], record["target_id"])])
+                ]
+            return FakeResult(records)
+        records = self.nodes
+        if node_types is not None:
+            records = [
+                record
+                for record in records
+                if any(label in node_types for label in record["labels"])
+            ]
+        if search_term is not None:
+            records = [record for record in records if matches_search(record)]
+        return FakeResult(records)
 
 
 class FakeSession:
@@ -104,6 +146,25 @@ def test_both_queries_filter_on_workspace_id():
     assert "n.workspace_id = $workspace_id" in NODES_QUERY
     assert "a.workspace_id = $workspace_id" in EDGES_QUERY
     assert "b.workspace_id = $workspace_id" in EDGES_QUERY
+
+
+def test_queries_filter_nodes_and_both_edge_endpoints_by_selected_types():
+    assert "$node_types IS NULL" in NODES_QUERY
+    assert "label IN $node_types" in NODES_QUERY
+    assert EDGES_QUERY.count("label IN $node_types") == 2
+
+
+def test_search_queries_match_text_properties_on_nodes_and_both_edge_endpoints():
+    assert "toLower(toString(value)) CONTAINS $search_term" in NODES_QUERY
+    assert EDGES_QUERY.count("toLower(toString(value)) CONTAINS $search_term") == 2
+    assert "$search_term IS NULL" in NODES_QUERY
+    assert "$search_term IS NULL" in EDGES_QUERY
+
+
+def test_type_filters_run_before_node_and_edge_limits():
+    for query in (NODES_QUERY, EDGES_QUERY):
+        assert "$node_types IS NULL" in query
+        assert query.index("$node_types IS NULL") < query.index("LIMIT $limit")
 
 
 def test_edges_require_both_endpoints_in_the_workspace():
@@ -186,6 +247,73 @@ def test_edges_reference_node_keys():
     assert payload.edges == [
         {"source": "Author:1", "target": "PullRequest:100", "type": "AUTHORED"}
     ]
+
+
+def test_selected_types_filter_nodes_and_keep_only_edges_between_visible_types():
+    a, pr, iss = author(1), pull_request(100), issue(200)
+    driver = FakeDriver(
+        nodes=[a, pr, iss],
+        edges=[edge(a, pr), edge(pr, iss)],
+    )
+
+    payload = fetch_graph(driver, WS, node_types=["PullRequest", "Issue"])
+
+    assert [node["type"] for node in payload.nodes] == ["PullRequest", "Issue"]
+    assert payload.edges == [
+        {"source": "PullRequest:100", "target": "Issue:200", "type": "AUTHORED"}
+    ]
+    assert all(call[1]["node_types"] == ["PullRequest", "Issue"] for call in driver.tx.calls)
+
+
+def test_empty_type_filter_returns_an_empty_graph():
+    a, pr = author(1), pull_request(100)
+    payload = fetch_graph(
+        FakeDriver(nodes=[a, pr], edges=[edge(a, pr)]), WS, node_types=[]
+    )
+    assert payload.nodes == []
+    assert payload.edges == []
+
+
+def test_search_matches_case_insensitive_node_text_and_keeps_only_matching_edges():
+    alice = author(1, "Alice")
+    matching_pr = pull_request(100)
+    matching_pr["props"]["title"] = "Search graph endpoint"
+    other_pr = pull_request(101)
+    other_pr["props"]["title"] = "Unrelated change"
+    driver = FakeDriver(
+        nodes=[alice, matching_pr, other_pr],
+        edges=[edge(alice, matching_pr), edge(alice, other_pr)],
+    )
+
+    payload = fetch_graph(driver, WS, search_query="  SEARCH   ")
+
+    assert [node["key"] for node in payload.nodes] == ["PullRequest:100"]
+    assert payload.edges == []
+    assert all(call[1]["search_term"] == "search" for call in driver.tx.calls)
+
+
+def test_search_can_match_author_login_and_return_no_matching_nodes():
+    driver = FakeDriver(nodes=[author(1, "OctoCat")])
+
+    assert [node["key"] for node in fetch_graph(driver, WS, search_query="octo").nodes] == ["Author:1"]
+    empty = fetch_graph(FakeDriver(nodes=[author(1)]), WS, search_query="missing")
+    assert empty.nodes == [] and empty.edges == []
+
+
+def test_blank_search_query_does_not_filter_the_graph():
+    driver = FakeDriver(nodes=[author(1)])
+
+    payload = fetch_graph(driver, WS, search_query="  \t  ")
+
+    assert [node["key"] for node in payload.nodes] == ["Author:1"]
+    assert all(call[1]["search_term"] is None for call in driver.tx.calls)
+
+
+def test_unknown_type_filter_is_rejected_before_database_access():
+    driver = FakeDriver(nodes=[author(1)])
+    with pytest.raises(ValueError, match="Unknown graph node type"):
+        fetch_graph(driver, WS, node_types=["Requirement"])
+    assert driver.opened == 0
 
 
 def test_node_payload_fields():

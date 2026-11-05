@@ -238,7 +238,7 @@ describe("GraphSyncStatus", () => {
     fireEvent.click(screen.getByRole("button", { name: /re-sync/i }));
 
     expect(await screen.findByText("Synced just now")).toBeInTheDocument();
-    expect(onGraphChanged).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onGraphChanged).toHaveBeenCalledTimes(1));
   });
 
   it("says how long an in-flight ingestion has been running", async () => {

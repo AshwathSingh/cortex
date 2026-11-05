@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { GraphCanvas } from "@/components/graph/graph-canvas";
 import { GraphInspector, type InspectorState } from "@/components/graph/graph-inspector";
@@ -43,9 +43,12 @@ const NODE_TYPES: {
   },
 ];
 
+const ALL_NODE_TYPES = NODE_TYPES.map(({ type }) => type);
+const NO_HIGHLIGHTS: string[] = [];
+
 type State =
   | { kind: "loading" }
-  | { kind: "ready"; graph: WorkspaceGraph }
+  | { kind: "ready"; graph: WorkspaceGraph; requestKey: string; requestError?: string; requestErrorKey?: string }
   | { kind: "error"; message: string };
 
 export function GraphView({
@@ -60,17 +63,31 @@ export function GraphView({
   const [state, setState] = useState<State>({ kind: "loading" });
   const [selection, setSelection] = useState<GraphSelection>(null);
   const [inspectorState, setInspectorState] = useState<InspectorState>({ kind: "loading" });
+  const [selectedTypes, setSelectedTypes] = useState<GraphNodeType[]>(ALL_NODE_TYPES);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const requestKey = JSON.stringify([searchTerm, [...selectedTypes].sort()]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchTerm(searchInput.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
 
   useEffect(() => {
     const controller = new AbortController();
-
     async function load() {
       try {
+        const params = new URLSearchParams();
+        if (searchTerm) params.set("q", searchTerm);
+        for (const type of selectedTypes) params.append("types", type);
+        if (selectedTypes.length === 0) params.set("types", "");
+        const serializedParams = params.toString();
+        const query = serializedParams ? `?${serializedParams}` : "";
         const graph = await apiRequest<WorkspaceGraph>(
-          `/api/workspaces/${workspaceId}/graph`,
+          `/api/workspaces/${workspaceId}/graph${query}`,
           { signal: controller.signal },
         );
-        setState({ kind: "ready", graph });
+        setState({ kind: "ready", graph, requestKey });
       } catch (requestError) {
         if (controller.signal.aborted) return;
         if (requestError instanceof ApiError && requestError.status === 401) {
@@ -85,15 +102,15 @@ export function GraphView({
         // screen is still the last thing the server successfully sent, and
         // replacing it with an error loses work the user can still read. Only
         // the first load, which has nothing to fall back on, shows the error.
-        setState((previous) =>
-          previous.kind === "ready" ? previous : { kind: "error", message },
-        );
+        setState((previous) => previous.kind === "ready"
+          ? { ...previous, requestError: message, requestErrorKey: requestKey }
+          : { kind: "error", message });
       }
     }
 
     void load();
     return () => controller.abort();
-  }, [reloadToken, router, workspaceId]);
+  }, [reloadToken, requestKey, router, searchTerm, selectedTypes, workspaceId]);
 
   useEffect(() => {
     if (!selection) return;
@@ -143,10 +160,115 @@ export function GraphView({
   }, [router, selection, workspaceId]);
 
   const graph = state.kind === "ready" ? state.graph : null;
-  const isWorkspaceEmpty = graph !== null && graph.nodes.length === 0;
+  const graphMatchesRequest = state.kind === "ready" && state.requestKey === requestKey;
+  const isWorkspaceEmpty = graph !== null
+    && graph.nodes.length === 0
+    && !searchTerm
+    && selectedTypes.length === ALL_NODE_TYPES.length;
+  const isSearchEmpty = graph !== null && graph.nodes.length === 0 && Boolean(searchTerm);
+  const visibleNodes = useMemo(
+    () => graph ? graph.nodes.filter((node) => selectedTypes.includes(node.type)) : [],
+    [graph, selectedTypes],
+  );
+  const visibleKeys = useMemo(() => new Set(visibleNodes.map((node) => node.key)), [visibleNodes]);
+  const visibleEdges = useMemo(
+    () => graph
+      ? graph.edges.filter((edge) => visibleKeys.has(edge.source) && visibleKeys.has(edge.target))
+      : [],
+    [graph, visibleKeys],
+  );
+  const highlightedNodeKeys = useMemo(
+    () => graphMatchesRequest && searchTerm ? visibleNodes.map((node) => node.key) : NO_HIGHLIGHTS,
+    [graphMatchesRequest, searchTerm, visibleNodes],
+  );
+
+  function selectTypes(nextTypes: GraphNodeType[]) {
+    setSelectedTypes(nextTypes);
+    if (!selection) return;
+
+    const nextVisibleKeys = new Set(
+      (graph?.nodes ?? [])
+        .filter((node) => nextTypes.includes(node.type))
+        .map((node) => node.key),
+    );
+    const selectionRemainsVisible = selection.kind === "node"
+      ? nextVisibleKeys.has(selection.key)
+      : (graph?.edges ?? []).some((edge) =>
+          nextVisibleKeys.has(edge.source)
+          && nextVisibleKeys.has(edge.target)
+          && edge.source === selection.edge.source
+          && edge.target === selection.edge.target
+          && edge.type === selection.edge.type,
+        );
+    if (!selectionRemainsVisible) setSelection(null);
+  }
+
+  function toggleType(type: GraphNodeType) {
+    const nextTypes = selectedTypes.includes(type)
+      ? selectedTypes.filter((selected) => selected !== type)
+      : [...selectedTypes, type];
+    selectTypes(nextTypes);
+  }
+
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSelection(null);
+    setSearchTerm(searchInput.trim());
+  }
+
+  function updateSearchInput(value: string) {
+    setSearchInput(value);
+    setSelection(null);
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {graph ? (
+        <form
+          role="search"
+          onSubmit={submitSearch}
+          className="flex flex-wrap items-end gap-3 border-b border-[var(--cortex-graph-divider)] px-6 py-3"
+        >
+          <div className="min-w-0 flex-1 sm:max-w-xl">
+            <label htmlFor="graph-search" className="mb-1 block text-xs font-medium text-muted">
+              Search artifacts
+            </label>
+            <input
+              id="graph-search"
+              type="search"
+              value={searchInput}
+              onChange={(event) => updateSearchInput(event.target.value)}
+              placeholder="Search names, titles, repositories, or content"
+              className="h-10 w-full rounded-lg border border-border/60 bg-surface px-3 text-sm text-foreground outline-none placeholder:text-subtle focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/30"
+            />
+          </div>
+          <button
+            type="submit"
+            className="h-10 rounded-lg bg-accent px-4 text-sm font-medium text-background transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            Search
+          </button>
+          {searchTerm ? (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchInput("");
+                setSearchTerm("");
+                setSelection(null);
+              }}
+              className="h-10 rounded-lg px-3 text-sm text-muted underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              Clear search
+            </button>
+          ) : null}
+        </form>
+      ) : null}
+      {graph && (!graphMatchesRequest || searchInput.trim() !== searchTerm) ? (
+        <p role="status" className="px-6 py-2 text-xs text-muted">Updating graph…</p>
+      ) : null}
+      {state.kind === "ready" && state.requestError && state.requestErrorKey === requestKey ? (
+        <div className="px-6 py-2"><FeedbackAlert message={state.requestError} /></div>
+      ) : null}
       {graph && !isWorkspaceEmpty ? (
         <div
           className="flex min-h-14 flex-wrap items-center justify-between gap-4 border-b border-[var(--cortex-graph-divider)] px-6 py-2"
@@ -168,8 +290,31 @@ export function GraphView({
             ))}
           </ul>
 
-          <p className="whitespace-nowrap text-xs text-subtle">
-            {graph.nodes.length} nodes · {graph.edges.length} connections
+          <fieldset className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+            <legend className="sr-only">Filter graph by artifact type</legend>
+            {NODE_TYPES.map(({ type, label }) => (
+              <label key={type} className="inline-flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={selectedTypes.includes(type)}
+                  onChange={() => toggleType(type)}
+                  className="size-3.5 accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                />
+                {label}
+              </label>
+            ))}
+            <button
+              type="button"
+                onClick={() => selectTypes(ALL_NODE_TYPES)}
+              disabled={selectedTypes.length === ALL_NODE_TYPES.length}
+              className="rounded px-1 py-0.5 text-accent underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-default disabled:text-subtle disabled:no-underline"
+            >
+              Show all
+            </button>
+          </fieldset>
+
+          <p aria-live="polite" className="whitespace-nowrap text-xs text-subtle">
+            {visibleNodes.length} nodes · {visibleEdges.length} connections
           </p>
         </div>
       ) : null}
@@ -186,6 +331,15 @@ export function GraphView({
             <div className="mx-auto max-w-xl px-6 pt-8">
               <FeedbackAlert message={state.message} />
             </div>
+          ) : null}
+
+          {isSearchEmpty ? (
+            <section className="grid size-full place-items-center px-6 text-center" aria-live="polite">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">No artifacts match “{searchTerm}”</h2>
+                <p className="mt-2 text-sm text-muted">Try another keyword or clear your search.</p>
+              </div>
+            </section>
           ) : null}
 
           {isWorkspaceEmpty ? (
@@ -210,10 +364,31 @@ export function GraphView({
             </section>
           ) : null}
 
-          {graph && !isWorkspaceEmpty ? (
+          {graph && !isWorkspaceEmpty && visibleNodes.length === 0 ? (
+            <section className="grid size-full place-items-center px-6 text-center">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">
+                  No artifacts match these filters
+                </h2>
+                <p className="mt-2 text-sm text-muted">
+                  Select another artifact type or show all types to restore the graph.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => selectTypes(ALL_NODE_TYPES)}
+                  className="mt-4 rounded-lg border border-border/60 px-3 py-2 text-sm font-medium text-accent transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  Show all artifact types
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          {graph && !isWorkspaceEmpty && visibleNodes.length > 0 ? (
             <GraphCanvas
-              nodes={graph.nodes}
-              edges={graph.edges}
+              nodes={visibleNodes}
+              edges={visibleEdges}
+              highlightedNodeKeys={highlightedNodeKeys}
               onSelectionChange={(nextSelection) => {
                 setSelection(nextSelection);
                 if (nextSelection) setInspectorState({ kind: "loading" });
@@ -232,7 +407,7 @@ export function GraphView({
               role="status"
               className="absolute right-5 top-5 rounded-md border border-[var(--cortex-graph-divider)] bg-background/80 px-3 py-2 text-xs text-muted backdrop-blur-sm"
             >
-              Display limit reached · showing {graph.nodes.length} nodes
+              Display limit reached · showing {visibleNodes.length} nodes
             </p>
           ) : null}
         </div>
