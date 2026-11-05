@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { updateWorkspaceProfile } from "@/lib/workspace-client";
+import {
+  deleteWorkspace,
+  updateWorkspaceProfile,
+} from "@/lib/workspace-client";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -27,6 +30,23 @@ describe("workspace client", () => {
           name: "Cortex Platform",
           description: "Project memory",
         }),
+      }),
+    );
+  });
+
+  it("deletes a workspace with its exact confirmation name", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(null, { status: 204 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await deleteWorkspace("workspace/one", "Cortex Engineering");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/workspaces/workspace%2Fone",
+      expect.objectContaining({
+        method: "DELETE",
+        body: JSON.stringify({ confirm_name: "Cortex Engineering" }),
       }),
     );
   });

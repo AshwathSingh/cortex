@@ -18,3 +18,13 @@ export function updateWorkspaceProfile(
     },
   );
 }
+
+export function deleteWorkspace(workspaceId: string, confirmName: string) {
+  return apiRequest<void>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}`,
+    {
+      method: "DELETE",
+      body: JSON.stringify({ confirm_name: confirmName }),
+    },
+  );
+}
