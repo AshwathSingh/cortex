@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GraphView } from "@/components/graph/graph-view";
 import type { GraphEdge, GraphNode, WorkspaceGraph } from "@/lib/api-types";
@@ -84,6 +85,21 @@ function jsonResponse(body: unknown) {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+beforeEach(() => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value() {
+      this.setAttribute("open", "");
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value() {
+      this.removeAttribute("open");
+    },
+  });
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -176,6 +192,7 @@ describe("GraphView relationship mutations", () => {
   });
 
   it("creates a relationship for a workspace writer", async () => {
+    const user = userEvent.setup();
     const manualEdge = {
       source: "PullRequest:20",
       target: "Issue:30",
@@ -186,13 +203,25 @@ describe("GraphView relationship mutations", () => {
       return Promise.resolve(jsonResponse(mutationGraph));
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(window, "prompt").mockReturnValue("They address the same change.");
-
     render(<GraphView workspaceId={WORKSPACE_ID} canEdit />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Create relationship" }));
-    fireEvent.click(screen.getByRole("button", { name: "Select node" }));
-    fireEvent.click(screen.getByRole("button", { name: "Select issue" }));
+    await user.click(await screen.findByRole("button", { name: "Create relationship" }));
+    expect(screen.getByText("Choose the first node")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Select node" }));
+    expect(screen.getByText("Now choose the second node")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Select issue" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Create relationship" });
+    expect(dialog).toBeVisible();
+    expect(screen.getByText("#3 Add graph details")).toBeInTheDocument();
+    expect(screen.getByText("#4 Bug")).toBeInTheDocument();
+    expect(screen.getByLabelText("Why are these nodes connected?")).toHaveFocus();
+
+    await user.type(
+      screen.getByLabelText("Why are these nodes connected?"),
+      "They address the same change.",
+    );
+    await user.click(screen.getAllByRole("button", { name: "Create relationship" }).at(-1)!);
 
     expect(await screen.findByText("Relationship added.")).toBeInTheDocument();
     expect(screen.getByTestId("visible-edge-count")).toHaveTextContent("2");
@@ -211,15 +240,16 @@ describe("GraphView relationship mutations", () => {
   });
 
   it("does not create a relationship when the rationale prompt is cancelled", async () => {
+    const user = userEvent.setup();
     const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(mutationGraph)));
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(window, "prompt").mockReturnValue(null);
 
     render(<GraphView workspaceId={WORKSPACE_ID} canEdit />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Create relationship" }));
-    fireEvent.click(screen.getByRole("button", { name: "Select node" }));
-    fireEvent.click(screen.getByRole("button", { name: "Select issue" }));
+    await user.click(await screen.findByRole("button", { name: "Create relationship" }));
+    await user.click(screen.getByRole("button", { name: "Select node" }));
+    await user.click(screen.getByRole("button", { name: "Select issue" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.getByText("Relationship creation cancelled.")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
