@@ -301,34 +301,61 @@ export function GraphCanvas({
       frameRef.current = null;
     }
 
-    function renderGraph() {
-      if (disposed) return;
-      cancelFrame();
+    function measure() {
+      const rect = parent.getBoundingClientRect();
+      return {
+        width: Math.max(1, Math.round(parent.clientWidth || rect.width || 960)),
+        height: Math.max(
+          1,
+          Math.round(parent.clientHeight || rect.height || height),
+        ),
+      };
+    }
 
-      const parentRect = parent.getBoundingClientRect();
-      const width = Math.max(1, Math.round(parent.clientWidth || parentRect.width || 960));
-      const measuredHeight = Math.max(
-        1,
-        Math.round(parent.clientHeight || parentRect.height || height),
-      );
+    /**
+     * P-14.1: the box the simulation lays out in, measured once per graph.
+     *
+     * It deliberately does not follow the element. Opening the inspector takes
+     * 22rem off the canvas, and rebuilding the simulation against the narrower
+     * box re-seeded every node -- so selecting one node rearranged the whole
+     * graph underneath the reader, including the node they had just clicked.
+     *
+     * Positions belong to the data, not to the viewport. The canvas still
+     * resizes; only the layout stays put, and panning and zooming cover the
+     * difference.
+     */
+    const layout = measure();
+
+    /** The canvas as it is right now, in CSS px, with its device-pixel scale. */
+    const view = {
+      width: layout.width,
+      height: layout.height,
+      scaleX: 1,
+      scaleY: 1,
+    };
+
+    function sizeCanvas() {
+      const { width, height: measuredHeight } = measure();
       const ratio = window.devicePixelRatio || 1;
       const deviceWidth = Math.round(width * ratio);
       const deviceHeight = Math.round(measuredHeight * ratio);
-      const deviceScaleX = deviceWidth / width;
-      const deviceScaleY = deviceHeight / measuredHeight;
-
       canvas.width = deviceWidth;
       canvas.height = deviceHeight;
       canvas.style.width = `${width}px`;
       canvas.style.height = `${measuredHeight}px`;
-      ctx.setTransform(
-        deviceScaleX,
-        0,
-        0,
-        deviceScaleY,
-        0,
-        0,
-      );
+      view.width = width;
+      view.height = measuredHeight;
+      view.scaleX = deviceWidth / width;
+      view.scaleY = deviceHeight / measuredHeight;
+    }
+
+    function renderGraph() {
+      if (disposed) return;
+      cancelFrame();
+
+      sizeCanvas();
+      const { width, height: measuredHeight } = layout;
+      ctx.setTransform(view.scaleX, 0, 0, view.scaleY, 0, 0);
 
       const styles = window.getComputedStyle(canvas);
       const resolvedFamily = styles.fontFamily || "system-ui, sans-serif";
@@ -386,8 +413,10 @@ export function GraphCanvas({
       );
 
       function draw() {
-        ctx.setTransform(deviceScaleX, 0, 0, deviceScaleY, 0, 0);
-        ctx.clearRect(0, 0, width, measuredHeight);
+        // The live canvas, not the layout box: the two differ as soon as the
+        // inspector opens, and clearing the old size leaves a smear.
+        ctx.setTransform(view.scaleX, 0, 0, view.scaleY, 0, 0);
+        ctx.clearRect(0, 0, view.width, view.height);
         ctx.save();
         const viewport = viewportRef.current;
         ctx.translate(viewport.offsetX, viewport.offsetY);
@@ -492,9 +521,34 @@ export function GraphCanvas({
       }
     }
 
+    /**
+     * Follow the element without touching the layout: resize the backing store,
+     * then slide the viewport by half the change so whatever was in the middle
+     * of the canvas stays there. Without the slide, opening a 22rem inspector
+     * would shift the graph 11rem to the right of where the reader left it.
+     */
+    function handleResize() {
+      if (disposed) return;
+      const previous = { width: view.width, height: view.height };
+      sizeCanvas();
+      const dx = (view.width - previous.width) / 2;
+      const dy = (view.height - previous.height) / 2;
+      if (dx !== 0 || dy !== 0) {
+        viewportRef.current = clampPan(
+          {
+            ...viewportRef.current,
+            offsetX: viewportRef.current.offsetX + dx,
+            offsetY: viewportRef.current.offsetY + dy,
+          },
+          { width: view.width, height: view.height },
+        );
+      }
+      redrawRef.current?.();
+    }
+
     renderGraph();
     if (typeof ResizeObserver !== "undefined") {
-      resizeObserver = new ResizeObserver(renderGraph);
+      resizeObserver = new ResizeObserver(handleResize);
       resizeObserver.observe(parent);
     }
 
