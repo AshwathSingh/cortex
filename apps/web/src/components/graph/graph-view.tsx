@@ -66,6 +66,9 @@ export function GraphView({
   const [selectedTypes, setSelectedTypes] = useState<GraphNodeType[]>(ALL_NODE_TYPES);
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [relationshipNotice, setRelationshipNotice] = useState("");
+  const [linkSource, setLinkSource] = useState<string | null>(null);
+  const [linkMode, setLinkMode] = useState(false);
   const requestKey = JSON.stringify([searchTerm, [...selectedTypes].sort()]);
 
   useEffect(() => {
@@ -221,6 +224,63 @@ export function GraphView({
     setSelection(null);
   }
 
+  async function removeSelectedEdge() {
+    if (selection?.kind !== "edge" || state.kind !== "ready") return;
+    const edge = selection.edge;
+    if (!window.confirm("Remove this relationship from the workspace graph?")) return;
+    const previous = state.graph;
+    setState({ ...state, graph: { ...previous, edges: previous.edges.filter((item) =>
+      !(item.source === edge.source && item.target === edge.target && item.type === edge.type)) } });
+    setSelection(null);
+    setRelationshipNotice("");
+    try {
+      await apiRequest(`/api/workspaces/${workspaceId}/graph/edges`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_key: edge.source, target_key: edge.target, edge_type: edge.type }),
+      });
+      setRelationshipNotice("Relationship removed.");
+    } catch (requestError) {
+      setState((current) => current.kind === "ready" ? { ...current, graph: previous } : current);
+      setRelationshipNotice("Failed to remove relationship. Please try again.");
+    }
+  }
+
+  async function handleCanvasSelection(nextSelection: GraphSelection) {
+    if (linkSource && nextSelection?.kind === "node") {
+      if (linkSource === nextSelection.key) {
+        setRelationshipNotice("Choose two different nodes.");
+        return;
+      }
+      const currentGraph = state.kind === "ready" ? state.graph : null;
+      if (currentGraph?.edges.some((edge) =>
+        (edge.source === linkSource && edge.target === nextSelection.key)
+        || (edge.source === nextSelection.key && edge.target === linkSource))) {
+        setRelationshipNotice("That relationship already exists.");
+        setLinkSource(null);
+        return;
+      }
+      const rationale = window.prompt("Why are these nodes connected? (optional)") ?? "";
+      setLinkSource(null);
+      try {
+        const edge = await apiRequest<{ source: string; target: string; type: string }>(
+          `/api/workspaces/${workspaceId}/graph/edges`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ source_key: linkSource, target_key: nextSelection.key,
+              relationship_type: "RELATED_TO", rationale }),
+          });
+        setState((current) => current.kind === "ready" ? { ...current,
+          graph: { ...current.graph, edges: [...current.graph.edges, edge] } } : current);
+        setRelationshipNotice("Relationship added.");
+      } catch {
+        setRelationshipNotice("Unable to add relationship. Check your permissions and try again.");
+      }
+      return;
+    }
+    setSelection(nextSelection);
+    if (nextSelection) setInspectorState({ kind: "loading" });
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {graph ? (
@@ -269,6 +329,7 @@ export function GraphView({
       {state.kind === "ready" && state.requestError && state.requestErrorKey === requestKey ? (
         <div className="px-6 py-2"><FeedbackAlert message={state.requestError} /></div>
       ) : null}
+      {relationshipNotice ? <p role="status" className="px-6 py-2 text-sm text-muted">{relationshipNotice}</p> : null}
       {graph && !isWorkspaceEmpty ? (
         <div
           className="flex min-h-14 flex-wrap items-center justify-between gap-4 border-b border-[var(--cortex-graph-divider)] px-6 py-2"
@@ -385,15 +446,29 @@ export function GraphView({
           ) : null}
 
           {graph && !isWorkspaceEmpty && visibleNodes.length > 0 ? (
+            <>
+            <button type="button" onClick={() => { setLinkSource(null); setLinkMode(true); setRelationshipNotice("Select the first node, then the second node to connect them."); }} className="absolute right-4 top-4 z-10 rounded-lg border border-border bg-background/90 px-3 py-2 text-xs font-medium text-foreground shadow">
+              Create relationship
+            </button>
             <GraphCanvas
               nodes={visibleNodes}
               edges={visibleEdges}
               highlightedNodeKeys={highlightedNodeKeys}
               onSelectionChange={(nextSelection) => {
-                setSelection(nextSelection);
-                if (nextSelection) setInspectorState({ kind: "loading" });
+                if (linkMode) {
+                  if (nextSelection?.kind === "node") {
+                    if (!linkSource) setLinkSource(nextSelection.key);
+                    else {
+                      setLinkMode(false);
+                      void handleCanvasSelection(nextSelection);
+                    }
+                  }
+                  return;
+                }
+                void handleCanvasSelection(nextSelection);
               }}
             />
+            </>
           ) : null}
 
           <span id="graph-interaction-help" className="sr-only">
@@ -417,6 +492,8 @@ export function GraphView({
               selection={selection}
               state={inspectorState}
               onClose={() => setSelection(null)}
+              onDelete={() => void removeSelectedEdge()}
+              canEdit
             />
           </div>
         ) : null}
