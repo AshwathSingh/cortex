@@ -26,6 +26,7 @@ from app.graph.queries import (
     DEFAULT_EDGE_LIMIT,
     DEFAULT_NODE_LIMIT,
     GRAPH_LABELS,
+    coerce_node_id,
     fetch_edge_details,
     fetch_graph,
     fetch_node_details,
@@ -34,6 +35,7 @@ from app.graph.queries import (
 )
 from app.models import SyncStatus
 from app.permissions import Permission
+from app.services.chat_credentials import list_chat_connections
 from app.services.data_sources import build_source_inventory, list_synced_sources
 
 router = APIRouter(prefix="/api/workspaces", tags=["graph"])
@@ -66,9 +68,11 @@ class GraphResponse(BaseModel):
 class SourceSummary(BaseModel):
     """One connected source: sync state from Postgres, counts from Neo4j.
 
-    ``repo`` is the source's ``external_ref``; ``kind`` is "github", the only
-    kind that exists. The field name predates US-10 and the Sources page builds
-    on it, so it stays.
+    ``repo`` is the source's ``external_ref`` -- ``owner/name`` for GitHub, the
+    Slack team id or Discord guild id for a chat source. The field name predates
+    US-08 and the Sources page builds on it, so it stays. Which pair of counts
+    is meaningful depends on ``kind``: a repository leaves channels/messages at
+    zero and a chat connection leaves pull_requests/issues at zero.
     """
 
     repo: str
@@ -77,6 +81,11 @@ class SourceSummary(BaseModel):
     pull_requests: int
     issues: int
     total_items: int
+    channels: int = 0
+    messages: int = 0
+    #: Present for a chat source: what to call it on screen, since a team id is
+    #: not something a reader recognises.
+    display_name: str | None = None
     last_attempted_at: datetime | None = None
     last_synced_at: datetime | None = None
     last_error: str | None = None
@@ -147,6 +156,10 @@ def read_workspace_sources(
     A Neo4j outage is still a 503 rather than a degraded list: the counts would
     read as zero, which is exactly how a failed ingestion looks, and quietly
     showing that is worse than an error the page already offers a retry for.
+
+    Chat sources carry a display name (US-08 AC3): their ``external_ref`` is a
+    Slack team id or Discord guild id, and the graph does not hold the team's
+    name, so it is read from the connection that was authorised.
     """
     load_workspace_for_user(session, user, workspace_id)
 
@@ -154,6 +167,11 @@ def read_workspace_sources(
         summaries = fetch_source_summaries(driver, workspace_id)
     except (Neo4jError, DriverError):
         raise HTTPException(status_code=503, detail="Graph database unavailable")
+
+    display_names = {
+        row.external_ref: row.display_name
+        for row in list_chat_connections(session, workspace_id).values()
+    }
 
     return [
         SourceSummary(
@@ -163,6 +181,9 @@ def read_workspace_sources(
             pull_requests=item.pull_requests,
             issues=item.issues,
             total_items=item.total_items,
+            channels=item.channels,
+            messages=item.messages,
+            display_name=item.display_name,
             last_attempted_at=item.last_attempted_at,
             last_synced_at=item.last_synced_at,
             last_error=item.last_error,
@@ -170,7 +191,7 @@ def read_workspace_sources(
             last_synced_by_name=item.last_synced_by_name,
         )
         for item in build_source_inventory(
-            list_synced_sources(session, workspace_id), summaries
+            list_synced_sources(session, workspace_id), summaries, display_names
         )
     ]
 
@@ -213,20 +234,27 @@ def read_workspace_graph(
 
 
 @router.get(
-    "/{workspace_id}/graph/nodes/{node_type}/{node_id}",
+    # ``:path`` because a chat node id contains slashes
+    # (``slack/C0ABC/1730000000.123456``); without it the id would be split
+    # across path segments and never match a route.
+    "/{workspace_id}/graph/nodes/{node_type}/{node_id:path}",
     response_model=GraphNodeDetails,
 )
 def read_graph_node_details(
     workspace_id: uuid.UUID,
-    node_type: Literal["Author", "PullRequest", "Issue"],
-    node_id: int,
+    node_type: Literal["Author", "PullRequest", "Issue", "Channel", "Message"],
+    node_id: str,
     user: CurrentUser,
     session: DbSession,
     driver: Driver = Depends(get_neo4j),
 ) -> GraphNodeDetails:
     load_workspace_for_user(session, user, workspace_id)
+    if not node_id:
+        raise HTTPException(status_code=404, detail="Graph node not found")
     try:
-        payload = fetch_node_details(driver, workspace_id, node_type, node_id)
+        payload = fetch_node_details(
+            driver, workspace_id, node_type, coerce_node_id(node_id)
+        )
     except (Neo4jError, DriverError):
         raise HTTPException(status_code=503, detail="Graph database unavailable")
     if payload is None:

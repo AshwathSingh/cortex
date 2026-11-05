@@ -86,6 +86,7 @@ function renderExplorer(role: "OWNER" | "EDITOR" | "VIEWER" = "OWNER") {
           name: "Cortex",
           description: null,
           role,
+          // The UI reads permissions, not the role name (US-21 custom roles).
           permissions: role === "VIEWER" ? [] : ["sources.write"],
           created_at: "2026-09-24T00:00:00Z",
         },
@@ -339,7 +340,7 @@ describe("GraphExplorer", () => {
     await waitFor(() => expect(graphCalls(fetchFn)).toHaveLength(1));
     const graphUrl = new URL(String(graphCalls(fetchFn)[0][0]), "http://localhost");
     expect(graphUrl.pathname).toBe(`/api/workspaces/${WORKSPACE_ID}/graph`);
-    expect(graphUrl.searchParams.getAll("types")).toEqual(["Author", "PullRequest", "Issue"]);
+    expect(graphUrl.searchParams.getAll("types")).toEqual(["Author", "PullRequest", "Issue", "Channel", "Message"]);
   });
 
   it("renders the canvas with node and connection counts", async () => {

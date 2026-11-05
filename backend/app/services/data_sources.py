@@ -63,7 +63,12 @@ class SyncedSource:
 
 @dataclass(frozen=True)
 class SourceInventoryItem:
-    """One row of the Sources page: sync state from Postgres, counts from Neo4j."""
+    """One row of the Sources page: sync state from Postgres, counts from Neo4j.
+
+    Which counts are meaningful depends on ``kind``. A repository fills
+    pull_requests/issues and leaves the chat pair at zero; a Slack or Discord
+    connection does the reverse. ``total_items`` is comparable across both.
+    """
 
     repo: str
     kind: str
@@ -76,6 +81,11 @@ class SourceInventoryItem:
     last_error: str | None
     last_synced_by: uuid.UUID | None
     last_synced_by_name: str | None
+    channels: int = 0
+    messages: int = 0
+    #: For a chat source, the team or server name. A Slack team id is not
+    #: something a reader recognises, and the graph does not hold the name.
+    display_name: str | None = None
 
 
 def _now() -> datetime:
@@ -220,6 +230,7 @@ def list_synced_sources(
 def build_source_inventory(
     synced: Iterable[SyncedSource],
     graph_summaries: Iterable[SourceSummaryPayload],
+    display_names: dict[str, str] | None = None,
 ) -> list[SourceInventoryItem]:
     """Merge the relational source list with the graph's indexed counts.
 
@@ -233,6 +244,7 @@ def build_source_inventory(
     migration backfill-free.
     """
     counts = {summary.repo: summary for summary in graph_summaries}
+    names = display_names or {}
     items: list[SourceInventoryItem] = []
 
     for entry in synced:
@@ -246,6 +258,9 @@ def build_source_inventory(
                 pull_requests=summary.pull_requests if summary else 0,
                 issues=summary.issues if summary else 0,
                 total_items=summary.total_items if summary else 0,
+                channels=summary.channels if summary else 0,
+                messages=summary.messages if summary else 0,
+                display_name=names.get(source.external_ref),
                 last_attempted_at=source.last_attempted_at,
                 last_synced_at=source.last_synced_at,
                 last_error=source.last_error,
@@ -255,14 +270,23 @@ def build_source_inventory(
         )
 
     for summary in counts.values():
+        # Graph nodes with no sync row: a repository ingested before
+        # ``data_sources`` existed, or a chat connection that has since been
+        # disconnected. Either way the items are demonstrably indexed, so the
+        # kind is inferred from which counts came back.
         items.append(
             SourceInventoryItem(
                 repo=summary.repo,
-                kind=GITHUB_KIND,
+                # Chat nodes record which provider wrote them; repository nodes
+                # predate the property, so GitHub is the fallback.
+                kind=summary.kind or GITHUB_KIND,
                 status=SyncStatus.SUCCESS,
                 pull_requests=summary.pull_requests,
                 issues=summary.issues,
                 total_items=summary.total_items,
+                channels=summary.channels,
+                messages=summary.messages,
+                display_name=names.get(summary.repo),
                 last_attempted_at=None,
                 last_synced_at=None,
                 last_error=None,

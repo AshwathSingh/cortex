@@ -9,6 +9,10 @@ items use ``(id, workspace_id)`` for uniqueness; repository metadata uses
 ``(repo, workspace_id)``. Two workspaces can therefore connect the same repo
 without sharing nodes.
 
+Adding a label means adding its uniqueness constraint here and re-running
+``scripts.init_graph_schema``; the script is idempotent, so that is safe on a
+database that already holds data.
+
 Neo4j Community has no existence constraints (and ``IS NODE KEY`` is Enterprise
 only), so "every node carries a workspace_id" is enforced in
 ``app.github.mapper``, not by the database.
@@ -35,6 +39,12 @@ CONSTRAINTS = [
     "FOR (p:PullRequest) REQUIRE (p.id, p.workspace_id) IS UNIQUE",
     "CREATE CONSTRAINT issue_workspace_unique IF NOT EXISTS "
     "FOR (i:Issue) REQUIRE (i.id, i.workspace_id) IS UNIQUE",
+    # Chat sources (US-08). Both ids are provider-prefixed strings -- see
+    # ``app.sources.chat_graph`` for why that prefix is load-bearing.
+    "CREATE CONSTRAINT channel_workspace_unique IF NOT EXISTS "
+    "FOR (c:Channel) REQUIRE (c.id, c.workspace_id) IS UNIQUE",
+    "CREATE CONSTRAINT message_workspace_unique IF NOT EXISTS "
+    "FOR (m:Message) REQUIRE (m.id, m.workspace_id) IS UNIQUE",
 ]
 
 
