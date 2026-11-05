@@ -48,7 +48,7 @@ const NO_HIGHLIGHTS: string[] = [];
 
 type State =
   | { kind: "loading" }
-  | { kind: "ready"; graph: WorkspaceGraph }
+  | { kind: "ready"; graph: WorkspaceGraph; requestKey: string; requestError?: string; requestErrorKey?: string }
   | { kind: "error"; message: string };
 
 export function GraphView({
@@ -66,6 +66,7 @@ export function GraphView({
   const [selectedTypes, setSelectedTypes] = useState<GraphNodeType[]>(ALL_NODE_TYPES);
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const requestKey = JSON.stringify([searchTerm, [...selectedTypes].sort()]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearchTerm(searchInput.trim()), 300);
@@ -74,18 +75,19 @@ export function GraphView({
 
   useEffect(() => {
     const controller = new AbortController();
-
     async function load() {
       try {
         const params = new URLSearchParams();
         if (searchTerm) params.set("q", searchTerm);
+        for (const type of selectedTypes) params.append("types", type);
+        if (selectedTypes.length === 0) params.set("types", "");
         const serializedParams = params.toString();
         const query = serializedParams ? `?${serializedParams}` : "";
         const graph = await apiRequest<WorkspaceGraph>(
           `/api/workspaces/${workspaceId}/graph${query}`,
           { signal: controller.signal },
         );
-        setState({ kind: "ready", graph });
+        setState({ kind: "ready", graph, requestKey });
       } catch (requestError) {
         if (controller.signal.aborted) return;
         if (requestError instanceof ApiError && requestError.status === 401) {
@@ -100,15 +102,15 @@ export function GraphView({
         // screen is still the last thing the server successfully sent, and
         // replacing it with an error loses work the user can still read. Only
         // the first load, which has nothing to fall back on, shows the error.
-        setState((previous) =>
-          previous.kind === "ready" ? previous : { kind: "error", message },
-        );
+        setState((previous) => previous.kind === "ready"
+          ? { ...previous, requestError: message, requestErrorKey: requestKey }
+          : { kind: "error", message });
       }
     }
 
     void load();
     return () => controller.abort();
-  }, [reloadToken, router, searchTerm, workspaceId]);
+  }, [reloadToken, requestKey, router, searchTerm, selectedTypes, workspaceId]);
 
   useEffect(() => {
     if (!selection) return;
@@ -158,7 +160,11 @@ export function GraphView({
   }, [router, selection, workspaceId]);
 
   const graph = state.kind === "ready" ? state.graph : null;
-  const isWorkspaceEmpty = graph !== null && graph.nodes.length === 0 && !searchTerm;
+  const graphMatchesRequest = state.kind === "ready" && state.requestKey === requestKey;
+  const isWorkspaceEmpty = graph !== null
+    && graph.nodes.length === 0
+    && !searchTerm
+    && selectedTypes.length === ALL_NODE_TYPES.length;
   const isSearchEmpty = graph !== null && graph.nodes.length === 0 && Boolean(searchTerm);
   const visibleNodes = useMemo(
     () => graph ? graph.nodes.filter((node) => selectedTypes.includes(node.type)) : [],
@@ -172,8 +178,8 @@ export function GraphView({
     [graph, visibleKeys],
   );
   const highlightedNodeKeys = useMemo(
-    () => searchTerm ? visibleNodes.map((node) => node.key) : NO_HIGHLIGHTS,
-    [searchTerm, visibleNodes],
+    () => graphMatchesRequest && searchTerm ? visibleNodes.map((node) => node.key) : NO_HIGHLIGHTS,
+    [graphMatchesRequest, searchTerm, visibleNodes],
   );
 
   function selectTypes(nextTypes: GraphNodeType[]) {
@@ -217,7 +223,7 @@ export function GraphView({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {state.kind === "ready" ? (
+      {graph ? (
         <form
           role="search"
           onSubmit={submitSearch}
@@ -256,6 +262,12 @@ export function GraphView({
             </button>
           ) : null}
         </form>
+      ) : null}
+      {graph && (!graphMatchesRequest || searchInput.trim() !== searchTerm) ? (
+        <p role="status" className="px-6 py-2 text-xs text-muted">Updating graph…</p>
+      ) : null}
+      {state.kind === "ready" && state.requestError && state.requestErrorKey === requestKey ? (
+        <div className="px-6 py-2"><FeedbackAlert message={state.requestError} /></div>
       ) : null}
       {graph && !isWorkspaceEmpty ? (
         <div

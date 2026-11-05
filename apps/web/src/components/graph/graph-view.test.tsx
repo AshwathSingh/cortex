@@ -170,11 +170,12 @@ describe("GraphView artifact filters", () => {
       "Author:1,PullRequest:20",
     );
     expect(screen.getByTestId("visible-edge-count")).toHaveTextContent("1");
+    await waitFor(() => expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain("types=Author&types=PullRequest"));
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Author" }));
     expect(screen.getByTestId("visible-node-keys")).toHaveTextContent("PullRequest:20");
     expect(screen.getByTestId("visible-edge-count")).toHaveTextContent("0");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("shows a clear empty graph state when no artifact types are selected", async () => {
@@ -206,12 +207,36 @@ describe("GraphView artifact filters", () => {
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      `/api/workspaces/${WORKSPACE_ID}/graph?q=graph`,
+      `/api/workspaces/${WORKSPACE_ID}/graph?q=graph&types=Author&types=PullRequest&types=Issue`,
       expect.objectContaining({ credentials: "same-origin" }),
     ));
     await waitFor(() => expect(screen.getByTestId("highlighted-node-keys")).toHaveTextContent(
       "Author:1,PullRequest:20,Issue:30",
     ));
+  });
+
+  it("does not highlight the previous graph when a search request fails", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("?q=missing")) {
+        return Promise.resolve(new Response(JSON.stringify({ detail: "Graph database unavailable" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }));
+      }
+      return Promise.resolve(jsonResponse(graph));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GraphView workspaceId={WORKSPACE_ID} />);
+
+    await screen.findByTestId("visible-node-keys");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search artifacts" }), {
+      target: { value: "missing" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByText("Graph database unavailable")).toBeInTheDocument();
+    expect(screen.getByTestId("visible-node-keys")).toHaveTextContent("Author:1,PullRequest:20");
+    expect(screen.getByTestId("highlighted-node-keys")).toBeEmptyDOMElement();
   });
 
   it("shows an empty graph state when a keyword has no matches", async () => {

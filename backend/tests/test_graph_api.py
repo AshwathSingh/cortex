@@ -148,6 +148,17 @@ def test_unknown_type_filter_is_rejected(api_db):
     assert driver.opened == 0
 
 
+def test_empty_type_filter_returns_no_graph_items(api_db):
+    c, driver = setup(api_db, nodes=[author(1)])
+
+    response = c.get(URL, params={"types": ""})
+
+    assert response.status_code == 200
+    assert response.json()["nodes"] == []
+    assert response.json()["edges"] == []
+    assert all(call[1]["node_types"] == [] for call in driver.tx.calls)
+
+
 def test_node_types_are_exposed_for_colouring(api_db):
     """The canvas colours by type; only the three ingested labels exist today."""
     c, _ = setup(api_db, nodes=[author(1), pull_request(100), issue(200)])

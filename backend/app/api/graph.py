@@ -25,6 +25,7 @@ from app.db.neo4j_driver import get_driver
 from app.graph.queries import (
     DEFAULT_EDGE_LIMIT,
     DEFAULT_NODE_LIMIT,
+    GRAPH_LABELS,
     fetch_edge_details,
     fetch_graph,
     fetch_node_details,
@@ -171,11 +172,15 @@ def read_workspace_graph(
     session: DbSession,
     node_limit: int = Query(DEFAULT_NODE_LIMIT, ge=1, le=10_000),
     edge_limit: int = Query(DEFAULT_EDGE_LIMIT, ge=1, le=30_000),
-    types: list[Literal["Author", "PullRequest", "Issue"]] | None = Query(default=None),
+    types: list[str] | None = Query(default=None),
     q: str | None = Query(default=None, max_length=200),
     driver: Driver = Depends(get_neo4j),
 ) -> GraphResponse:
     load_workspace_for_user(session, user, workspace_id)
+
+    selected_types = [node_type for node_type in (types or []) if node_type]
+    if types is not None and any(node_type not in GRAPH_LABELS for node_type in selected_types):
+        raise HTTPException(status_code=422, detail="Invalid graph node type")
 
     try:
         payload = fetch_graph(
@@ -183,7 +188,7 @@ def read_workspace_graph(
             workspace_id,
             node_limit=node_limit,
             edge_limit=edge_limit,
-            node_types=types,
+            node_types=selected_types if types is not None else None,
             search_query=q,
         )
     except (Neo4jError, DriverError):

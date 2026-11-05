@@ -161,6 +161,12 @@ def test_search_queries_match_text_properties_on_nodes_and_both_edge_endpoints()
     assert "$search_term IS NULL" in EDGES_QUERY
 
 
+def test_type_filters_run_before_node_and_edge_limits():
+    for query in (NODES_QUERY, EDGES_QUERY):
+        assert "$node_types IS NULL" in query
+        assert query.index("$node_types IS NULL") < query.index("LIMIT $limit")
+
+
 def test_edges_require_both_endpoints_in_the_workspace():
     """Guards against an edge dragging in a node from another workspace."""
     where = EDGES_QUERY.split("WHERE", 1)[1]
