@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 
+import { CreateRelationshipDialog } from "@/components/graph/create-relationship-dialog";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
 import { GraphInspector, type InspectorState } from "@/components/graph/graph-inspector";
 import { buttonClassName } from "@/components/ui/button";
@@ -11,6 +12,7 @@ import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type {
   GraphEdgeDetails,
+  GraphNode,
   GraphNodeDetails,
   GraphNodeType,
   GraphSelection,
@@ -65,13 +67,20 @@ type State =
   | { kind: "ready"; graph: WorkspaceGraph; requestKey: string; requestError?: string; requestErrorKey?: string }
   | { kind: "error"; message: string };
 
+type PendingRelationship = {
+  source: GraphNode;
+  target: GraphNode;
+};
+
 export function GraphView({
   workspaceId,
   reloadToken = 0,
+  canEdit = false,
 }: {
   workspaceId: string;
   /** Change it to refetch the graph; the header bumps it after an ingestion. */
   reloadToken?: number;
+  canEdit?: boolean;
 }) {
   const router = useRouter();
   const [state, setState] = useState<State>({ kind: "loading" });
@@ -80,6 +89,12 @@ export function GraphView({
   const [selectedTypes, setSelectedTypes] = useState<GraphNodeType[]>(ALL_NODE_TYPES);
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [relationshipNotice, setRelationshipNotice] = useState("");
+  const [linkSource, setLinkSource] = useState<string | null>(null);
+  const [linkMode, setLinkMode] = useState(false);
+  const [pendingRelationship, setPendingRelationship] = useState<PendingRelationship | null>(null);
+  const [relationshipError, setRelationshipError] = useState<string | null>(null);
+  const [isCreatingRelationship, setIsCreatingRelationship] = useState(false);
   const requestKey = JSON.stringify([searchTerm, [...selectedTypes].sort()]);
 
   useEffect(() => {
@@ -235,6 +250,96 @@ export function GraphView({
     setSelection(null);
   }
 
+
+  async function removeSelectedEdge() {
+    if (!canEdit || selection?.kind !== "edge" || state.kind !== "ready") return;
+    const edge = selection.edge;
+    if (!window.confirm("Remove this relationship from the workspace graph?")) return;
+    const previous = state.graph;
+    setState({ ...state, graph: { ...previous, edges: previous.edges.filter((item) =>
+      !(item.source === edge.source && item.target === edge.target && item.type === edge.type)) } });
+    setSelection(null);
+    setRelationshipNotice("");
+    try {
+      await apiRequest(`/api/workspaces/${workspaceId}/graph/edges`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_key: edge.source, target_key: edge.target, edge_type: edge.type }),
+      });
+      setRelationshipNotice("Relationship removed.");
+    } catch {
+      setState((current) => current.kind === "ready" ? { ...current, graph: previous } : current);
+      setRelationshipNotice("Failed to remove relationship. Please try again.");
+    }
+  }
+
+  async function handleCanvasSelection(nextSelection: GraphSelection) {
+    if (linkSource && nextSelection?.kind === "node") {
+      if (linkSource === nextSelection.key) {
+        setRelationshipNotice("Choose two different nodes.");
+        return;
+      }
+      const currentGraph = state.kind === "ready" ? state.graph : null;
+      if (currentGraph?.edges.some((edge) =>
+        (edge.source === linkSource && edge.target === nextSelection.key)
+        || (edge.source === nextSelection.key && edge.target === linkSource))) {
+        setRelationshipNotice("That relationship already exists.");
+        setLinkSource(null);
+        return;
+      }
+      const source = currentGraph?.nodes.find((node) => node.key === linkSource);
+      const target = currentGraph?.nodes.find((node) => node.key === nextSelection.key);
+      if (!source || !target) {
+        setLinkSource(null);
+        setRelationshipNotice("Unable to find both selected nodes. Try again.");
+        return;
+      }
+      setLinkSource(null);
+      setRelationshipError(null);
+      setPendingRelationship({ source, target });
+      return;
+    }
+    setSelection(nextSelection);
+    if (nextSelection) setInspectorState({ kind: "loading" });
+  }
+
+  async function createRelationship(rationale: string) {
+    if (!pendingRelationship || isCreatingRelationship) return;
+    setIsCreatingRelationship(true);
+    setRelationshipError(null);
+    try {
+      const edge = await apiRequest<{ source: string; target: string; type: string }>(
+        `/api/workspaces/${workspaceId}/graph/edges`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source_key: pendingRelationship.source.key,
+            target_key: pendingRelationship.target.key,
+            relationship_type: "RELATED_TO",
+            rationale,
+          }),
+        },
+      );
+      setState((current) => current.kind === "ready" ? {
+        ...current,
+        graph: { ...current.graph, edges: [...current.graph.edges, edge] },
+      } : current);
+      setPendingRelationship(null);
+      setRelationshipNotice("Relationship added.");
+    } catch {
+      setRelationshipError("Unable to add relationship. Check your permissions and try again.");
+    } finally {
+      setIsCreatingRelationship(false);
+    }
+  }
+
+  function cancelRelationshipDialog() {
+    if (isCreatingRelationship) return;
+    setPendingRelationship(null);
+    setRelationshipError(null);
+    setRelationshipNotice("Relationship creation cancelled.");
+  }
+
   function clearSearch() {
     setSearchInput("");
     setSearchTerm("");
@@ -382,6 +487,8 @@ export function GraphView({
       {state.kind === "ready" && state.requestError && state.requestErrorKey === requestKey ? (
         <div className="px-6 py-2"><FeedbackAlert message={state.requestError} /></div>
       ) : null}
+      {relationshipNotice ? <p role="status" className="px-6 py-2 text-sm text-muted">{relationshipNotice}</p> : null}
+
       <div className="relative flex min-h-0 flex-1">
         <div className="graph-scene relative min-w-0 flex-1 overflow-hidden" aria-live="polite">
           {state.kind === "loading" ? (
@@ -448,15 +555,72 @@ export function GraphView({
           ) : null}
 
           {graph && !isWorkspaceEmpty && visibleNodes.length > 0 ? (
-            <GraphCanvas
-              nodes={visibleNodes}
-              edges={visibleEdges}
-              highlightedNodeKeys={highlightedNodeKeys}
-              onSelectionChange={(nextSelection) => {
-                setSelection(nextSelection);
-                if (nextSelection) setInspectorState({ kind: "loading" });
-              }}
-            />
+            <>
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (linkMode) {
+                      setLinkMode(false);
+                      setLinkSource(null);
+                      setRelationshipNotice("");
+                      return;
+                    }
+                    setLinkSource(null);
+                    setLinkMode(true);
+                    setRelationshipNotice("");
+                  }}
+                  className={`absolute right-4 top-4 z-10 rounded-lg border px-3 py-2 text-xs font-medium shadow-[0_10px_28px_rgb(0_0_0/0.26)] backdrop-blur-sm transition-colors ${
+                    linkMode
+                      ? "border-border/45 bg-background/90 text-muted hover:bg-surface"
+                      : "border-accent-bright/25 bg-accent/10 text-accent-bright hover:border-accent-bright/40 hover:bg-accent/15"
+                  }`}
+                >
+                  {linkMode ? "Cancel relationship" : "Create relationship"}
+                </button>
+              ) : null}
+              {linkMode ? (
+                <div
+                  role="status"
+                  className="absolute left-4 top-4 z-10 flex items-center gap-3 rounded-xl border border-[var(--cortex-graph-divider)] bg-background/90 px-3.5 py-2.5 text-xs shadow-[0_10px_28px_rgb(0_0_0/0.26)] backdrop-blur-sm"
+                >
+                  <span className="flex items-center gap-1.5" aria-hidden="true">
+                    <span className="grid size-5 place-items-center rounded-full border border-accent-bright/40 bg-accent/15 text-[0.65rem] font-semibold text-accent-bright">
+                      1
+                    </span>
+                    <span className="h-px w-4 bg-border/40" />
+                    <span className={`grid size-5 place-items-center rounded-full border text-[0.65rem] font-semibold ${
+                      linkSource
+                        ? "border-accent-bright/40 bg-accent/15 text-accent-bright"
+                        : "border-border/35 bg-surface/70 text-subtle"
+                    }`}>
+                      2
+                    </span>
+                  </span>
+                  <span className="text-muted">
+                    {linkSource ? "Now choose the second node" : "Choose the first node"}
+                  </span>
+                </div>
+              ) : null}
+              <GraphCanvas
+                nodes={visibleNodes}
+                edges={visibleEdges}
+                highlightedNodeKeys={linkSource ? [linkSource] : highlightedNodeKeys}
+                onSelectionChange={(nextSelection) => {
+                  if (linkMode) {
+                    if (nextSelection?.kind === "node") {
+                      if (!linkSource) setLinkSource(nextSelection.key);
+                      else {
+                        setLinkMode(false);
+                        void handleCanvasSelection(nextSelection);
+                      }
+                    }
+                    return;
+                  }
+                  void handleCanvasSelection(nextSelection);
+                }}
+              />
+            </>
           ) : null}
 
           <span id="graph-interaction-help" className="sr-only">
@@ -480,10 +644,22 @@ export function GraphView({
               selection={selection}
               state={inspectorState}
               onClose={() => setSelection(null)}
+              onDelete={() => void removeSelectedEdge()}
+              canEdit={canEdit}
             />
           </div>
         ) : null}
       </div>
+      {pendingRelationship ? (
+        <CreateRelationshipDialog
+          source={pendingRelationship.source}
+          target={pendingRelationship.target}
+          error={relationshipError}
+          isSubmitting={isCreatingRelationship}
+          onCancel={cancelRelationshipDialog}
+          onSubmit={(rationale) => void createRelationship(rationale)}
+        />
+      ) : null}
     </div>
   );
 }

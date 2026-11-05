@@ -116,6 +116,32 @@ ORDER BY type(r)
 LIMIT 1
 """
 
+DELETE_EDGE_QUERY = f"""
+MATCH (source)-[r]->(target)
+WHERE ({_label_predicate("source")}) AND ({_label_predicate("target")})
+  AND $source_type IN labels(source) AND source.id = $source_id
+  AND $target_type IN labels(target) AND target.id = $target_id
+  AND source.workspace_id = $workspace_id AND target.workspace_id = $workspace_id
+  AND type(r) = $edge_type
+WITH collect(r) AS relationships
+WITH relationships, size(relationships) AS deleted
+FOREACH (relationship IN relationships | DELETE relationship)
+RETURN deleted
+"""
+
+CREATE_MANUAL_EDGE_QUERY = f"""
+MATCH (source), (target)
+WHERE ({_label_predicate("source")}) AND ({_label_predicate("target")})
+  AND $source_type IN labels(source) AND source.id = $source_id
+  AND $target_type IN labels(target) AND target.id = $target_id
+  AND source.workspace_id = $workspace_id AND target.workspace_id = $workspace_id
+WITH source, target
+WHERE NOT EXISTS {{ MATCH (source)-[]-(target) }}
+CREATE (source)-[r:MANUAL_RELATIONSHIP {{relationship_type: $relationship_type,
+  rationale: $rationale, workspace_id: $workspace_id, created_by: $created_by}}]->(target)
+RETURN type(r) AS type
+"""
+
 SOURCES_QUERY = """
 MATCH (source)
 WHERE (source:Repository OR source:PullRequest OR source:Issue)
@@ -470,7 +496,7 @@ def fetch_edge_details(
     source = _details_payload(record["source_labels"], record["source_props"])
     target = _details_payload(record["target_labels"], record["target_props"])
     relation_props = record["props"]
-    content = relation_props.get("evidence") or relation_props.get("content") or (
+    content = relation_props.get("evidence") or relation_props.get("content") or relation_props.get("rationale") or (
         f"{source['title']} is connected to {target['title']} by {record['type']}."
     )
     return {
@@ -483,6 +509,28 @@ def fetch_edge_details(
         "attributes": relation_props,
         "origins": source["origins"] + target["origins"],
     }
+
+
+def mutate_graph_edge(driver: Driver, workspace_id, source_key: str, target_key: str,
+                      edge_type: str, *, delete: bool, relationship_type: str = "RELATED_TO",
+                      rationale: str = "", created_by: str = "") -> bool:
+    """Delete a relationship or create a workspace-scoped manual relationship."""
+    workspace = normalise_workspace_id(workspace_id)
+    source_type, source_id = _parse_node_key(source_key)
+    target_type, target_id = _parse_node_key(target_key)
+    params = dict(workspace_id=workspace, source_type=source_type, source_id=source_id,
+                  target_type=target_type, target_id=target_id)
+    with driver.session() as session:
+        if delete:
+            record = session.execute_write(lambda tx: tx.run(
+                DELETE_EDGE_QUERY, **params, edge_type=edge_type
+            ).single())
+            return bool(record and record["deleted"])
+        record = session.execute_write(lambda tx: tx.run(
+            CREATE_MANUAL_EDGE_QUERY, **params, relationship_type=relationship_type,
+            rationale=rationale, created_by=created_by,
+        ).single())
+    return record is not None
 
 
 # ---------------------------------------------------------------------------
