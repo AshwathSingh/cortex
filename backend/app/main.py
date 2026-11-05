@@ -12,6 +12,7 @@ from app.api import (
     invites,
     members,
     roles,
+    uploads,
     workspaces,
 )
 from app.db.neo4j_driver import close_driver
@@ -42,6 +43,7 @@ app.include_router(members.router)
 # /{workspace_id}/graph must not be shadowed by /{workspace_id}.
 app.include_router(graph.router)
 app.include_router(flags.router)
+app.include_router(uploads.router)
 
 
 @app.get("/health")

@@ -63,7 +63,12 @@ class SyncedSource:
 
 @dataclass(frozen=True)
 class SourceInventoryItem:
-    """One row of the Sources page: sync state from Postgres, counts from Neo4j."""
+    """One row of the Sources page: sync state from Postgres, counts from Neo4j.
+
+    Which counts are meaningful depends on ``kind``. A repository fills
+    pull_requests/issues; an uploaded document fills ``sections``.
+    ``total_items`` is comparable across both.
+    """
 
     repo: str
     kind: str
@@ -76,6 +81,9 @@ class SourceInventoryItem:
     last_error: str | None
     last_synced_by: uuid.UUID | None
     last_synced_by_name: str | None
+    sections: int = 0
+    #: What to call the source on screen when its reference is not its name.
+    display_name: str | None = None
 
 
 def _now() -> datetime:
@@ -146,6 +154,7 @@ def record_sync_attempt(
     workspace_id: uuid.UUID,
     external_ref: str,
     kind: str = GITHUB_KIND,
+    display_name: str | None = None,
 ) -> DataSource:
     """Take the lease on this source and mark it PENDING.
 
@@ -160,6 +169,8 @@ def record_sync_attempt(
         raise SyncInProgress(external_ref, source.last_attempted_at)
     source.status = SyncStatus.PENDING
     source.last_attempted_at = now
+    if display_name is not None:
+        source.display_name = display_name
     return source
 
 
@@ -246,6 +257,8 @@ def build_source_inventory(
                 pull_requests=summary.pull_requests if summary else 0,
                 issues=summary.issues if summary else 0,
                 total_items=summary.total_items if summary else 0,
+                sections=summary.sections if summary else 0,
+                display_name=source.display_name,
                 last_attempted_at=source.last_attempted_at,
                 last_synced_at=source.last_synced_at,
                 last_error=source.last_error,
@@ -255,14 +268,19 @@ def build_source_inventory(
         )
 
     for summary in counts.values():
+        # Graph nodes with no sync row: a repository ingested before
+        # ``data_sources`` existed. The items are demonstrably indexed, so the
+        # kind comes from whichever query reported them.
         items.append(
             SourceInventoryItem(
                 repo=summary.repo,
-                kind=GITHUB_KIND,
+                kind=summary.kind or GITHUB_KIND,
                 status=SyncStatus.SUCCESS,
                 pull_requests=summary.pull_requests,
                 issues=summary.issues,
                 total_items=summary.total_items,
+                sections=summary.sections,
+                display_name=None,
                 last_attempted_at=None,
                 last_synced_at=None,
                 last_error=None,

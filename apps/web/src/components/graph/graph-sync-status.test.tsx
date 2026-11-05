@@ -29,6 +29,8 @@ function source(over: Partial<WorkspaceSource> = {}): WorkspaceSource {
     pull_requests: 8,
     issues: 3,
     total_items: 11,
+    sections: 0,
+    display_name: null,
     last_attempted_at: minutesAgo(5),
     last_synced_at: minutesAgo(5),
     last_error: null,

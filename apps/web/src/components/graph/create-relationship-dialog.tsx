@@ -19,12 +19,21 @@ const NODE_TYPE_LABELS: Record<GraphNode["type"], string> = {
   Author: "Author",
   PullRequest: "Pull request",
   Issue: "Issue",
+  Document: "Document",
+  DocumentSection: "Section",
 };
 
 const NODE_TYPE_STYLES: Record<GraphNode["type"], { colour: string; shape: string }> = {
   Author: { colour: "var(--cortex-graph-author)", shape: "rounded-full" },
   PullRequest: { colour: "var(--cortex-graph-pull-request)", shape: "rounded-[2px]" },
   Issue: { colour: "var(--cortex-graph-issue)", shape: "rotate-45 rounded-[1px]" },
+  // The same swatches the graph legend uses: the canvas draws a hexagon for a
+  // document, which reads as a blob at this size, so it is a squat rounded box.
+  Document: { colour: "var(--cortex-graph-document)", shape: "rounded-[3px]" },
+  DocumentSection: {
+    colour: "var(--cortex-graph-document-section)",
+    shape: "[clip-path:polygon(50%_0%,100%_100%,0%_100%)]",
+  },
 };
 
 function Endpoint({
