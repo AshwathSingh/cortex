@@ -76,6 +76,7 @@ const KEEP_VISIBLE = 96;
 /** Clickable halo beyond a node's rim / an edge's line, in screen pixels. */
 const NODE_HIT_SLACK = 7;
 const EDGE_HIT_SLACK = 8;
+const NO_HIGHLIGHTS: string[] = [];
 
 type Box = { x1: number; y1: number; x2: number; y2: number };
 type Point = { x: number; y: number };
@@ -87,6 +88,7 @@ export type GraphViewport = {
 type GraphCanvasProps = {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  highlightedNodeKeys?: string[];
   height?: number;
   onSelectionChange?: (selection: GraphSelection) => void;
 };
@@ -309,6 +311,7 @@ function truncate(text: string, max: number): string {
 export function GraphCanvas({
   nodes,
   edges,
+  highlightedNodeKeys = NO_HIGHLIGHTS,
   height = 560,
   onSelectionChange,
 }: GraphCanvasProps) {
@@ -321,7 +324,9 @@ export function GraphCanvas({
   const redrawRef = useRef<(() => void) | null>(null);
   const panRef = useRef<PanGesture | null>(null);
   const didDragRef = useRef(false);
+  const hoveredSelectionRef = useRef<GraphSelection>(null);
   const [zoomPercent, setZoomPercent] = useState(100);
+  const [isHoveringInteractive, setIsHoveringInteractive] = useState(false);
 
   useEffect(() => {
     selectionHandlerRef.current = onSelectionChange;
@@ -405,7 +410,13 @@ export function GraphCanvas({
         "--cortex-graph-label-dim",
         "#8b94a6",
       );
+      const hoverColour = cssValue(
+        styles,
+        "--cortex-accent-bright",
+        "#78a0ff",
+      );
       const byKey = new Map(nodes.map((node) => [node.key, node]));
+      const highlightedKeys = new Set(highlightedNodeKeys);
 
       const degree = new Map<string, number>();
       for (const edge of edges) {
@@ -438,6 +449,7 @@ export function GraphCanvas({
         ctx.clearRect(0, 0, width, measuredHeight);
         ctx.save();
         const viewport = viewportRef.current;
+        const hoveredSelection = hoveredSelectionRef.current;
         ctx.translate(viewport.offsetX, viewport.offsetY);
         ctx.scale(viewport.scale, viewport.scale);
 
@@ -457,8 +469,16 @@ export function GraphCanvas({
           const target = simulation.nodeAt(edge.target);
           if (!source || !target) continue;
           const hub = Math.max(source.radius, target.radius) > LEAF_RADIUS;
-          ctx.strokeStyle = hub ? hubEdgeColour : edgeColour;
-          ctx.lineWidth = hub ? 1.4 : 1;
+          const hoveredEdge = hoveredSelection?.kind === "edge"
+            && hoveredSelection.edge.source === edge.source
+            && hoveredSelection.edge.target === edge.target
+            && hoveredSelection.edge.type === edge.type;
+          ctx.strokeStyle = hoveredEdge
+            ? withAlpha(hoverColour, 0.7)
+            : hub
+              ? hubEdgeColour
+              : edgeColour;
+          ctx.lineWidth = hoveredEdge ? 2 : hub ? 1.4 : 1;
           ctx.beginPath();
           ctx.moveTo(source.x, source.y);
           ctx.lineTo(target.x, target.y);
@@ -470,15 +490,31 @@ export function GraphCanvas({
           const node = byKey.get(placed.key);
           const colour = node ? colours[node.type] : FALLBACK_COLOUR;
           const shape = nodeShape(node?.type ?? "");
+          const highlighted = highlightedKeys.has(placed.key);
+          const hovered = hoveredSelection?.kind === "node"
+            && hoveredSelection.key === placed.key;
 
           tracePath(ctx, shape, placed.x, placed.y, placed.radius);
-          ctx.fillStyle = withAlpha(colour, HALO_ALPHA);
+          ctx.fillStyle = withAlpha(colour, hovered ? 0.2 : HALO_ALPHA);
           ctx.fill();
 
           tracePath(ctx, shape, placed.x, placed.y, placed.radius);
-          ctx.lineWidth = RING_WIDTH;
           ctx.strokeStyle = colour;
+          ctx.lineWidth = hovered ? RING_WIDTH + 0.75 : RING_WIDTH;
           ctx.stroke();
+
+          if (highlighted || hovered) {
+            tracePath(
+              ctx,
+              shape,
+              placed.x,
+              placed.y,
+              placed.radius + (hovered ? 5 : 4),
+            );
+            ctx.lineWidth = hovered ? 1.75 : 1.25;
+            ctx.strokeStyle = withAlpha(colour, hovered ? 0.72 : 0.48);
+            ctx.stroke();
+          }
 
           tracePath(
             ctx,
@@ -512,7 +548,10 @@ export function GraphCanvas({
           };
           if (claimed.some((other) => overlaps(box, other))) continue;
           claimed.push(box);
-          ctx.fillStyle = isHub ? labelColour : dimLabelColour;
+          const emphasised = highlightedKeys.has(placed.key)
+            || (hoveredSelection?.kind === "node"
+              && hoveredSelection.key === placed.key);
+          ctx.fillStyle = isHub || emphasised ? labelColour : dimLabelColour;
           ctx.fillText(text, cx, top);
         }
         ctx.restore();
@@ -552,7 +591,7 @@ export function GraphCanvas({
       cancelFrame();
       redrawRef.current = null;
     };
-  }, [edges, height, nodes]);
+  }, [edges, height, highlightedNodeKeys, nodes]);
 
   const updateViewport = useCallback((viewport: GraphViewport) => {
     const canvas = canvasRef.current;
@@ -614,9 +653,49 @@ export function GraphCanvas({
     didDragRef.current = false;
   }
 
+  function updateHover(event: PointerEvent<HTMLCanvasElement>) {
+    const point = graphPointFromCanvas(
+      canvasPoint(event.currentTarget, event.clientX, event.clientY),
+      viewportRef.current,
+    );
+    const next = hitTestGraph(
+      point.x,
+      point.y,
+      hitNodesRef.current,
+      hitEdgesRef.current,
+      viewportRef.current.scale,
+    );
+    const previous = hoveredSelectionRef.current;
+    const previousKey = previous?.kind === "node"
+      ? `node:${previous.key}`
+      : previous
+        ? `edge:${previous.edge.source}:${previous.edge.target}:${previous.edge.type}`
+        : "";
+    const nextKey = next?.kind === "node"
+      ? `node:${next.key}`
+      : next
+        ? `edge:${next.edge.source}:${next.edge.target}:${next.edge.type}`
+        : "";
+    if (previousKey === nextKey) return;
+    hoveredSelectionRef.current = next;
+    setIsHoveringInteractive(Boolean(next));
+    redrawRef.current?.();
+  }
+
+  function clearHover() {
+    if (!hoveredSelectionRef.current) return;
+    hoveredSelectionRef.current = null;
+    setIsHoveringInteractive(false);
+    redrawRef.current?.();
+  }
+
   function continuePan(event: PointerEvent<HTMLCanvasElement>) {
     const pan = panRef.current;
-    if (!pan || pan.pointerId !== event.pointerId) return;
+    if (!pan) {
+      updateHover(event);
+      return;
+    }
+    if (pan.pointerId !== event.pointerId) return;
     const point = canvasPoint(event.currentTarget, event.clientX, event.clientY);
     const deltaX = point.x - pan.start.x;
     const deltaY = point.y - pan.start.y;
@@ -664,12 +743,19 @@ export function GraphCanvas({
         role="img"
         aria-label={`Knowledge graph: ${nodes.length} nodes, ${edges.length} connections`}
         aria-describedby="graph-interaction-help"
-        className="absolute inset-0 block size-full touch-none cursor-grab active:cursor-grabbing"
+        className={`absolute inset-0 block size-full touch-none ${
+          isHoveringInteractive
+            ? "cursor-pointer"
+            : "cursor-grab active:cursor-grabbing"
+        }`}
         onClick={selectAt}
         onPointerDown={startPan}
         onPointerMove={continuePan}
         onPointerUp={finishPan}
         onPointerCancel={finishPan}
+        onPointerLeave={() => {
+          if (!panRef.current) clearHover();
+        }}
         onKeyDown={(event) => {
           if (event.key === "Escape") selectionHandlerRef.current?.(null);
           if (event.key === "+" || event.key === "=") {

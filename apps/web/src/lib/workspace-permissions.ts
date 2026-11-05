@@ -1,4 +1,4 @@
-import type { WorkspaceSummary } from "@/lib/api-types";
+import type { WorkspacePermission } from "@/lib/api-types";
 
 /**
  * What the signed-in member may do in a workspace.
@@ -10,17 +10,14 @@ import type { WorkspaceSummary } from "@/lib/api-types";
  *
  * The server re-checks every one of these; this only decides what to render.
  */
-export const SOURCES_WRITE = "sources.write";
-
-type MaybeWorkspace = Pick<WorkspaceSummary, "permissions"> | null | undefined;
-
-export function hasPermission(
-  workspace: MaybeWorkspace,
-  permission: string,
-): boolean {
-  return workspace?.permissions?.includes(permission) ?? false;
+export function canManageSources(
+  permissions: WorkspacePermission[] | null | undefined,
+) {
+  return permissions?.includes("sources.write") ?? false;
 }
 
-export function canManageSources(workspace: MaybeWorkspace): boolean {
-  return hasPermission(workspace, SOURCES_WRITE);
+export function canManageMembers(
+  permissions: WorkspacePermission[] | null | undefined,
+) {
+  return permissions?.includes("members.manage") ?? false;
 }

@@ -6,15 +6,55 @@ export type AuthenticatedUser = {
 
 export type WorkspaceRole = "OWNER" | "EDITOR" | "VIEWER";
 
+export type WorkspacePermission =
+  | "sources.write"
+  | "members.manage"
+  | "roles.manage"
+  | "workspace.update"
+  | "workspace.delete";
+
 export type WorkspaceSummary = {
   id: string;
   name: string;
   description: string | null;
-  role: WorkspaceRole;
+  role: string;
   /** What the caller's role lets them do. Mirrors `app.permissions.Permission`.
    *  Authoritative: a custom role (US-21) has a name of its own, so `role`
    *  cannot be compared against to decide what to show. */
-  permissions: string[];
+  permissions: WorkspacePermission[];
+  created_at: string;
+};
+
+export type WorkspaceRoleDefinition = {
+  id: string | null;
+  name: string;
+  description: string | null;
+  permissions: WorkspacePermission[];
+  built_in: boolean;
+  member_count: number;
+};
+
+export type WorkspaceInvite = {
+  id: string;
+  email: string;
+  role: string;
+  role_id: string | null;
+  expires_at: string;
+  token: string;
+};
+
+export type WorkspaceInviteAcceptance = {
+  workspace_id: string;
+  role: string;
+};
+
+export type WorkspaceMember = {
+  user_id: string;
+  name: string | null;
+  email: string | null;
+  role: string;
+  role_id: string | null;
+  permissions: WorkspacePermission[];
   created_at: string;
 };
 

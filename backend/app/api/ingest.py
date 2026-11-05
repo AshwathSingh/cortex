@@ -50,7 +50,12 @@ from app.sources.base import (
 )
 from app.sources.discord import DiscordAdapter
 from app.sources.github import GitHubAdapter
-from app.sources.pipeline import GraphUnavailable, IngestionOutcome, run_ingestion
+from app.sources.pipeline import (
+    GraphUnavailable,
+    IngestionOutcome,
+    WorkspaceGone,
+    run_ingestion,
+)
 from app.sources.slack import SlackAdapter
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
@@ -156,10 +161,20 @@ def _ingest(
             status_code=409,
             detail=f"An ingestion of {external_ref} is already running",
         )
+    except WorkspaceGone:
+        # US-05: deleted mid-ingestion. Nothing was written and nothing was
+        # recorded, because the source row went with the workspace.
+        raise _workspace_gone()
     except SourceError as error:
         raise _http_error(adapter, error)
     finally:
         adapter.close()
+
+
+def _workspace_gone() -> HTTPException:
+    return HTTPException(
+        status_code=409, detail="This workspace is being deleted; nothing was written"
+    )
 
 
 @router.post("/github", response_model=IngestResponse)

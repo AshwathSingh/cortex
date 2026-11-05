@@ -4,7 +4,7 @@ from contextlib import contextmanager
 import pytest
 from fastapi.testclient import TestClient
 from neo4j.exceptions import DriverError, Neo4jError
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -107,6 +107,12 @@ def _relational_database() -> Iterator[sessionmaker[Session]]:
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    # SQLite ignores foreign keys unless asked; without this ON DELETE CASCADE (what
+    # workspace deletion relies on) would silently do nothing in these tests.
+    @event.listens_for(engine, "connect")
+    def _enforce_foreign_keys(dbapi_connection, _record):
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
     Base.metadata.create_all(engine)
     try:
         yield sessionmaker(bind=engine, expire_on_commit=False)

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repo-root .env, so settings load the same regardless of the working directory.
@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     # Per client IP, per endpoint, on the public /api/auth/github/* routes.
     oauth_rate_limit_per_minute: int = 20
 
+    # Assistant requests can invoke a paid, remote model once a provider is
+    # configured. Bound both request frequency and provider latency at the API.
+    assistant_rate_limit_per_minute: int = Field(default=20, gt=0, le=600)
+    assistant_timeout_seconds: float = Field(default=30, gt=0, le=120)
+
     # Slack app (US-08, T-8.2). A workspace member with sources.write installs
     # Cortex into their Slack team; the exchange returns a bot token scoped to
     # that team, which is stored encrypted per workspace. The registered
@@ -69,6 +74,8 @@ class Settings(BaseSettings):
     session_cookie_name: str = "cortex_session"
     session_ttl_days: int = 30
     secure_cookies: bool = False
+    # How long a workspace invite stays redeemable (US-03).
+    invite_ttl_days: int = Field(default=7, ge=1)
 
     @field_validator(
         "github_client_secret",

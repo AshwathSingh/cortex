@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -135,7 +135,7 @@ function json(body: unknown, status = 200) {
 }
 
 function graphCalls(fetchFn: ReturnType<typeof mockFetch>) {
-  return fetchFn.mock.calls.filter(([url]) => String(url).endsWith("/graph"));
+  return fetchFn.mock.calls.filter(([url]) => new URL(String(url), "http://localhost").pathname.endsWith("/graph"));
 }
 
 beforeEach(() => {
@@ -161,6 +161,21 @@ describe("GraphCanvas", () => {
     expect(ctx.beginPath).toHaveBeenCalledTimes(NODES.length * PATHS_PER_NODE);
     expect(ctx.fill).toHaveBeenCalled();
     expect(ctx.stroke).toHaveBeenCalled();
+  });
+
+  it("uses a restrained type-colour ring for search matches", () => {
+    const ctx = stubCanvas();
+    render(
+      <GraphCanvas
+        nodes={[NODES[0]]}
+        edges={[]}
+        highlightedNodeKeys={[NODES[0].key]}
+      />,
+    );
+
+    expect((ctx as unknown as { strokeStyle: string }).strokeStyle).not.toBe(
+      "#ffffff",
+    );
   });
 
   it("distinguishes node types by shape, not only by colour", () => {
@@ -323,9 +338,9 @@ describe("GraphExplorer", () => {
     renderExplorer();
 
     await waitFor(() => expect(graphCalls(fetchFn)).toHaveLength(1));
-    expect(graphCalls(fetchFn)[0][0]).toBe(
-      `/api/workspaces/${WORKSPACE_ID}/graph`,
-    );
+    const graphUrl = new URL(String(graphCalls(fetchFn)[0][0]), "http://localhost");
+    expect(graphUrl.pathname).toBe(`/api/workspaces/${WORKSPACE_ID}/graph`);
+    expect(graphUrl.searchParams.getAll("types")).toEqual(["Author", "PullRequest", "Issue", "Channel", "Message"]);
   });
 
   it("renders the canvas with node and connection counts", async () => {
@@ -337,15 +352,19 @@ describe("GraphExplorer", () => {
     expect(screen.getByText("3 nodes · 2 connections")).toBeInTheDocument();
   });
 
-  it("legends only the node types that exist today", async () => {
+  it("offers filters for the node types that exist today", async () => {
     stubCanvas();
     mockFetch(200, graph());
     renderExplorer();
 
-    const legend = await screen.findByRole("list", { name: /node types/i });
-    expect(legend).toHaveTextContent("Author");
-    expect(legend).toHaveTextContent("Pull request");
-    expect(legend).toHaveTextContent("Issue");
+    const filters = await screen.findByRole("group", {
+      name: /filter graph by artifact type/i,
+    });
+    expect(within(filters).getByRole("button", { name: "Author" })).toBePressed();
+    expect(
+      within(filters).getByRole("button", { name: "Pull request" }),
+    ).toBePressed();
+    expect(within(filters).getByRole("button", { name: "Issue" })).toBePressed();
   });
 
   it("offers ingestion when the workspace is empty", async () => {
@@ -366,7 +385,7 @@ describe("GraphExplorer", () => {
     mockFetch(200, graph({ truncated: true }));
     renderExplorer();
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await screen.findByText(/display limit reached/i)).toHaveTextContent(
       /display limit reached/i,
     );
   });

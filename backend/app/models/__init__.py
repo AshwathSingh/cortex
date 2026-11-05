@@ -4,12 +4,21 @@ from app.models.oauth_transaction import OAuthTransaction
 from app.models.session import UserSession
 from app.models.source_credential import SourceCredential, SourceInstallTransaction
 from app.models.user import User
-from app.models.workspace import Role, Workspace, WorkspaceMembership, WorkspaceRole
+from app.models.workspace_invite import InviteStatus, WorkspaceInvite
+from app.models.workspace import (
+    WORKSPACE_ACTIVE,
+    WORKSPACE_DELETING,
+    Role,
+    Workspace,
+    WorkspaceMembership,
+    WorkspaceRole,
+)
 
 __all__ = [
     "GITHUB_KIND",
     "DataSource",
     "GitHubCredential",
+    "InviteStatus",
     "OAuthTransaction",
     "Role",
     "SourceCredential",
@@ -17,7 +26,10 @@ __all__ = [
     "SyncStatus",
     "User",
     "UserSession",
+    "WORKSPACE_ACTIVE",
+    "WORKSPACE_DELETING",
     "Workspace",
+    "WorkspaceInvite",
     "WorkspaceMembership",
     "WorkspaceRole",
 ]

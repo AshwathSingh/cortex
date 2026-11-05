@@ -1,13 +1,16 @@
 """Workspace-scoped chat provider credentials and in-flight installs (T-8.2).
 
 Revision ID: 20261031_11
-Revises: 20261026_10
+Revises: 20261103_13
 Create Date: 2026-10-31
 
 Additive: two new tables, nothing existing is touched, so there is no backfill.
 ``access_token`` is nullable because Discord's bot token is one application-wide
 secret in config rather than a per-workspace one -- see the column comment in
 ``app.models.source_credential``.
+
+Numbered 11 against 20261026_10, which main has since moved past; it revises
+20261103_13 instead so the two lineages are one and Alembic keeps a single head.
 """
 
 from collections.abc import Sequence
@@ -17,7 +20,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "20261031_11"
-down_revision: str | None = "20261026_10"
+down_revision: str | None = "20261103_13"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

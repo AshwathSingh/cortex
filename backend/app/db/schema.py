@@ -48,13 +48,23 @@ CONSTRAINTS = [
 ]
 
 
+# The composite constraints above lead with ``id``, so they cannot serve a lookup
+# by workspace alone. These do: they make "everything in workspace X" (the delete
+# cascade, US-05) a cheap seek instead of a scan of the whole graph.
+INDEXES = [
+    f"CREATE INDEX {label.lower()}_workspace_idx IF NOT EXISTS "
+    f"FOR (n:{label}) ON (n.workspace_id)"
+    for label in ("Repository", "Author", "PullRequest", "Issue")
+]
+
+
 def apply_constraints(driver: Driver) -> None:
-    """Drop the pre-workspace constraints, then apply the composite ones.
+    """Drop the pre-workspace constraints, then apply the composite ones and indexes.
 
     Idempotent: every statement is ``IF EXISTS`` / ``IF NOT EXISTS``. The drops
     run first because the old single-property constraints would otherwise keep
     enforcing global id uniqueness alongside the new ones.
     """
     with driver.session() as session:
-        for statement in (*LEGACY_CONSTRAINTS, *CONSTRAINTS):
+        for statement in (*LEGACY_CONSTRAINTS, *CONSTRAINTS, *INDEXES):
             session.run(statement)

@@ -99,6 +99,15 @@ export function WorkspaceIcon({ className }: { className?: string }) {
   );
 }
 
+export function ComposeIcon({ className }: { className?: string }) {
+  return (
+    <IconFrame className={className}>
+      <path d="M13.5 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7.5" />
+      <path d="M9 15h2.5L20 6.5a1.77 1.77 0 0 0-2.5-2.5L9 12.5V15Z" />
+    </IconFrame>
+  );
+}
+
 export function ChevronLeftIcon({ className }: { className?: string }) {
   return (
     <IconFrame className={className}>

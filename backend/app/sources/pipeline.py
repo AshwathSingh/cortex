@@ -35,6 +35,18 @@ from app.services.data_sources import (
     record_sync_failure,
     record_sync_success,
 )
+from app.services.workspaces import lock_active_workspace
+
+
+class WorkspaceGone(Exception):
+    """The workspace was deleted, or marked for deletion, while this ingestion
+    was running (US-05).
+
+    Not a ``SourceError``: the provider was fine and there is nothing to record
+    against the source, because the source row went with the workspace. Deleting
+    clears the graph, so a write landing after it would resurrect nodes no page
+    can reach.
+    """
 
 
 class GraphUnavailable(SourceError):
@@ -58,6 +70,10 @@ def _fail(
     kind: str,
     detail: str,
 ) -> None:
+    if not lock_active_workspace(session, workspace_id):
+        # Deleted while we were fetching; there is no source row left to mark.
+        session.rollback()
+        raise WorkspaceGone()
     record_sync_failure(
         session,
         workspace_id=workspace_id,
@@ -86,11 +102,18 @@ def run_ingestion(
     -- in which case the sync row for the ref we leased is the one that gets the
     outcome, and the caller sees the resolved ref in the response.
 
-    Raises ``SyncInProgress`` (the lease is held), ``GraphUnavailable``, or
-    whatever ``Source*`` error the adapter raised. Every one of those paths has
-    already recorded and committed the failure, except ``SyncInProgress``, which
-    is not this request's failure to record.
+    Raises ``SyncInProgress`` (the lease is held), ``WorkspaceGone``,
+    ``GraphUnavailable``, or whatever ``Source*`` error the adapter raised. Every
+    one of those paths has already recorded and committed the failure, except
+    ``SyncInProgress``, which is not this request's failure to record, and
+    ``WorkspaceGone``, which has no row left to record against.
     """
+    # A source row for a workspace deleted a moment ago would fail its foreign
+    # key. The lock is released by the commit that records the attempt, so it is
+    # not held across the (slow) fetch.
+    if not lock_active_workspace(session, workspace_id):
+        session.rollback()
+        raise WorkspaceGone()
     record_sync_attempt(
         session,
         workspace_id=workspace_id,
@@ -110,6 +133,13 @@ def run_ingestion(
             detail=adapter.describe(error),
         )
         raise
+
+    # The fetch above can take minutes. Re-check, and hold a shared lock on the
+    # workspace until the commit below, so a delete can neither clear the graph
+    # under this write nor be followed by it recreating nodes (US-05).
+    if not lock_active_workspace(session, workspace_id):
+        session.rollback()
+        raise WorkspaceGone()
 
     try:
         adapter.write(driver, fetched, workspace_id=workspace_id)
