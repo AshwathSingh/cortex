@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from app.api import (
     assistant,
     auth,
+    flags,
     graph,
     health,
     ingest,
@@ -40,6 +41,7 @@ app.include_router(members.router)
 # After workspaces.router: both own /api/workspaces, and the more specific
 # /{workspace_id}/graph must not be shadowed by /{workspace_id}.
 app.include_router(graph.router)
+app.include_router(flags.router)
 
 
 @app.get("/health")
