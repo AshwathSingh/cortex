@@ -21,6 +21,8 @@ const NODE_TYPE_LABELS: Record<GraphNode["type"], string> = {
   Issue: "Issue",
   Document: "Document",
   DocumentSection: "Section",
+  Channel: "Channel",
+  Message: "Message",
 };
 
 const NODE_TYPE_STYLES: Record<GraphNode["type"], { colour: string; shape: string }> = {
@@ -28,11 +30,17 @@ const NODE_TYPE_STYLES: Record<GraphNode["type"], { colour: string; shape: strin
   PullRequest: { colour: "var(--cortex-graph-pull-request)", shape: "rounded-[2px]" },
   Issue: { colour: "var(--cortex-graph-issue)", shape: "rotate-45 rounded-[1px]" },
   // The same swatches the graph legend uses: the canvas draws a hexagon for a
-  // document, which reads as a blob at this size, so it is a squat rounded box.
+  // document and a pentagon for a channel, both of which read as a blob at this
+  // size, so each is approximated by a squat rounded box.
   Document: { colour: "var(--cortex-graph-document)", shape: "rounded-[3px]" },
   DocumentSection: {
     colour: "var(--cortex-graph-document-section)",
     shape: "[clip-path:polygon(50%_0%,100%_100%,0%_100%)]",
+  },
+  Channel: { colour: "var(--cortex-graph-channel)", shape: "rounded-[3px]" },
+  Message: {
+    colour: "var(--cortex-graph-message)",
+    shape: "[clip-path:polygon(0%_0%,100%_0%,50%_100%)]",
   },
 };
 

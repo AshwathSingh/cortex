@@ -1,16 +1,19 @@
-import type { WorkspaceSource } from "@/lib/api-types";
+import type { ChatKind, WorkspaceSource } from "@/lib/api-types";
 
 /**
- * T-9.1: how each kind of source is presented on the Sources page.
+ * T-8.5 / T-9.1: how each kind of source is presented on the Sources page.
  *
  * One table rather than conditionals scattered through the component, because
  * the kinds differ in more than a label: a repository is addressed by
- * `owner/name` and links to GitHub, while an uploaded document has a filename
- * and no URL at all — the file lives nowhere a browser can open.
+ * `owner/name` and links to GitHub; a chat source's `repo` field holds an
+ * opaque team or guild id that must never be shown to a reader and cannot be
+ * turned into a URL without the provider's own deep-link format; an uploaded
+ * document has a filename and no URL at all, because the file lives nowhere a
+ * browser can open.
  *
- * `countColumns` is what makes one row template serve both: the backend reports
- * every count on every row and leaves the irrelevant ones at zero, so each kind
- * names the ones that mean something plus the shared total.
+ * `countColumns` is what makes one row template serve all of them: the backend
+ * reports every count on every row and leaves the irrelevant ones at zero, so
+ * each kind names the ones that mean something plus the shared total.
  */
 
 export type CountColumn = {
@@ -23,7 +26,7 @@ export type SourceKindMeta = {
   noun: string;
   /** How to name one instance on screen. */
   title: (source: WorkspaceSource) => string;
-  /** An external link to the source, when there is one to give. */
+  /** An external link to the source, when the provider has an addressable one. */
   href: (source: WorkspaceSource) => string | null;
   /** Where that link goes, for the screen-reader suffix. */
   destination: string | null;
@@ -65,9 +68,37 @@ const UPLOAD: SourceKindMeta = {
   ],
 };
 
+const CHAT_COLUMNS: CountColumn[] = [
+  { label: "Channels", value: (source) => source.channels },
+  { label: "Messages", value: (source) => source.messages },
+  INDEXED,
+];
+
+const SLACK: SourceKindMeta = {
+  noun: "Slack workspace",
+  // Falls back to the team id only if the name is somehow missing; a bare
+  // "T0ACME" is still better than an empty row.
+  title: (source) => source.display_name ?? source.repo,
+  // Slack has no stable web URL for a team that does not depend on its own
+  // subdomain, which the OAuth exchange never returns.
+  href: () => null,
+  destination: null,
+  countColumns: CHAT_COLUMNS,
+};
+
+const DISCORD: SourceKindMeta = {
+  noun: "Discord server",
+  title: (source) => source.display_name ?? source.repo,
+  href: (source) => `https://discord.com/channels/${encodeURIComponent(source.repo)}`,
+  destination: "Discord",
+  countColumns: CHAT_COLUMNS,
+};
+
 const KINDS: Record<string, SourceKindMeta> = {
   github: GITHUB,
   upload: UPLOAD,
+  slack: SLACK,
+  discord: DISCORD,
 };
 
 /** An unknown kind still renders: the server may add one before the UI knows it. */
@@ -81,4 +112,21 @@ const UNKNOWN: SourceKindMeta = {
 
 export function sourceKindMeta(kind: string): SourceKindMeta {
   return KINDS[kind] ?? UNKNOWN;
+}
+
+export const CHAT_KINDS: readonly ChatKind[] = ["slack", "discord"] as const;
+
+export const CHAT_KIND_LABELS: Record<ChatKind, string> = {
+  slack: "Slack",
+  discord: "Discord",
+};
+
+/** What a member is choosing between when they pick channels, per provider. */
+export const CHAT_CHANNEL_NOUN: Record<ChatKind, string> = {
+  slack: "channel",
+  discord: "channel",
+};
+
+export function isChatKind(kind: string): kind is ChatKind {
+  return kind === "slack" || kind === "discord";
 }

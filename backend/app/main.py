@@ -12,6 +12,7 @@ from app.api import (
     invites,
     members,
     roles,
+    sources,
     uploads,
     workspaces,
 )
@@ -40,9 +41,11 @@ app.include_router(invites.router)
 app.include_router(invites.accept_router)
 app.include_router(members.router)
 # After workspaces.router: both own /api/workspaces, and the more specific
-# /{workspace_id}/graph must not be shadowed by /{workspace_id}.
+# /{workspace_id}/graph and /{workspace_id}/connections must not be shadowed by
+# /{workspace_id}.
 app.include_router(graph.router)
 app.include_router(flags.router)
+app.include_router(sources.router)
 app.include_router(uploads.router)
 
 

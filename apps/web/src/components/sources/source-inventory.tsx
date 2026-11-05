@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { ChatConnections } from "@/components/sources/chat-connections";
 import { SourceStatus } from "@/components/sources/source-status";
 import { DocumentUpload } from "@/components/uploads/document-upload";
 import { Button, buttonClassName } from "@/components/ui/button";
@@ -58,8 +59,18 @@ function DocumentIcon() {
   );
 }
 
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="size-5">
+      <path d="M20 14.5A2.5 2.5 0 0 1 17.5 17H9l-4 3v-3.5A2.5 2.5 0 0 1 4 14V6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8Z" />
+    </svg>
+  );
+}
+
 function sourceIcon(kind: string) {
-  return kind === "upload" ? <DocumentIcon /> : <RepositoryIcon />;
+  if (kind === "upload") return <DocumentIcon />;
+  if (kind === "github") return <RepositoryIcon />;
+  return <ChatIcon />;
 }
 
 function itemLabel(count: number, singular: string) {
@@ -183,7 +194,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
         headingId="sources-title"
         eyebrow="Knowledge inputs"
         title="Sources"
-        description="Repositories and documents Cortex uses to build this workspace's project memory."
+        description="Repositories, documents and chat channels Cortex uses to build this workspace's project memory."
         action={canAddSources ? (
           <Link
             href={routes.workspace.ingest(workspaceId)}
@@ -287,8 +298,9 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
                           ) : null}
                         </a>
                       ) : (
-                        // An uploaded file was read and discarded, so there is
-                        // nothing a browser could open.
+                        // An uploaded file was read and discarded, and Slack
+                        // has no addressable URL for a team that does not depend
+                        // on its own subdomain, so there is nothing to open.
                         <p className="truncate font-medium text-foreground">{title}</p>
                       )}
                       <SourceStatus
@@ -329,12 +341,19 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
         </section>
       ) : null}
 
-      {/* Shown even with nothing indexed yet: uploading a PRD is how an empty
-          workspace gets its first source, and it is not a repository. */}
+      {/* Both shown even with nothing indexed yet: uploading a PRD or
+          connecting Slack is how an empty workspace gets its first source, and
+          neither is a repository. */}
       {state.kind !== "loading" && !isWorkspaceLoading && canAddSources ? (
         <DocumentUpload
           workspaceId={workspaceId}
           onUploaded={() => setRequestVersion((version) => version + 1)}
+        />
+      ) : null}
+      {state.kind !== "loading" && !isWorkspaceLoading && canAddSources ? (
+        <ChatConnections
+          workspaceId={workspaceId}
+          onIngested={() => setRequestVersion((version) => version + 1)}
         />
       ) : null}
     </PageShell>

@@ -15,6 +15,8 @@ const TYPES: GraphNodeType[] = [
   "Issue",
   "Document",
   "DocumentSection",
+  "Channel",
+  "Message",
 ];
 
 describe("node types on the canvas", () => {
@@ -27,7 +29,8 @@ describe("node types on the canvas", () => {
 
   it("gives each type a distinct colour and shape", () => {
     // US-09 AC5: document items have to be tellable apart from the rest, and
-    // colour alone never carries a type, so both have to be unique.
+    // colour alone never carries a type, so both have to be unique. Seven types
+    // is why the canvas grew a pentagon and an inverted triangle.
     expect(new Set(TYPES.map((type) => NODE_COLOURS[type])).size).toBe(
       TYPES.length,
     );
@@ -41,12 +44,15 @@ describe("node types on the canvas", () => {
     expect(nodeShape("Requirement")).toBe("circle");
   });
 
-  it("treats authors and documents as hubs", () => {
-    // Every section of a document attaches to the one node, so leaf-sized it
-    // would disappear under its own edges -- as an author would.
+  it("treats authors, documents and channels as hubs", () => {
+    // Every section of a document and every message in a channel attaches to
+    // the one node, so leaf-sized they would disappear under their own edges --
+    // the same reason an author is a hub.
     expect(isHubType("Author")).toBe(true);
     expect(isHubType("Document")).toBe(true);
+    expect(isHubType("Channel")).toBe(true);
     expect(isHubType("DocumentSection")).toBe(false);
+    expect(isHubType("Message")).toBe(false);
     expect(isHubType("PullRequest")).toBe(false);
   });
 });

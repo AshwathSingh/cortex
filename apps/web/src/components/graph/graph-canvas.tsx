@@ -17,13 +17,24 @@ export const NODE_COLOURS: Record<GraphNodeType, string> = {
   Author: "#78a0ff",
   PullRequest: "#7ddfa0",
   Issue: "#e0a86a",
-  // US-09 AC5. Deliberately away from the blue/green/amber above so an
-  // uploaded document is not mistaken for a GitHub item at a glance.
+  // US-09 AC5 and US-08. Deliberately away from the blue/green/amber above so
+  // an uploaded document or a chat node is not mistaken for a GitHub item at a
+  // glance. US-08 picked #c48fe8 for a channel independently of US-09 picking
+  // it for a document; the channel moved to teal when the two came together.
   Document: "#c48fe8",
   DocumentSection: "#9fb0c9",
+  Channel: "#5fd4c4",
+  Message: "#e894b8",
 };
 
-export type NodeShape = "circle" | "square" | "diamond" | "hexagon" | "triangle";
+export type NodeShape =
+  | "circle"
+  | "square"
+  | "diamond"
+  | "hexagon"
+  | "triangle"
+  | "triangle-down"
+  | "pentagon";
 
 /**
  * Shape carries the type as well as colour, so the canvas stays readable
@@ -35,15 +46,19 @@ export const NODE_SHAPES: Record<GraphNodeType, NodeShape> = {
   Issue: "diamond",
   Document: "hexagon",
   DocumentSection: "triangle",
+  // US-08 chose hexagon and triangle too, for the same hub-and-leaf reason.
+  // Seven types need seven silhouettes, so chat took the two new ones.
+  Channel: "pentagon",
+  Message: "triangle-down",
 };
 
 /**
  * Types that many other nodes hang off, drawn larger and pushed harder apart.
- * A document is a hub for the same reason an author is: every one of its
- * sections attaches to the one node, so leaf-sized it would disappear under its
- * own edges.
+ * A document and a channel are hubs for the same reason an author is: every one
+ * of their sections or messages attaches to the one node, so leaf-sized they
+ * would disappear under their own edges.
  */
-const HUB_TYPES = new Set<string>(["Author", "Document"]);
+const HUB_TYPES = new Set<string>(["Author", "Document", "Channel"]);
 
 export function isHubType(type: string): boolean {
   return HUB_TYPES.has(type);
@@ -282,13 +297,29 @@ function tracePath(
     ctx.closePath();
     return;
   }
-  if (shape === "triangle") {
+  if (shape === "triangle" || shape === "triangle-down") {
     // Slightly oversized: a triangle of equal radius looks smaller than a
     // circle because so much of its bounding box is empty.
     const triExtent = radius * 1.3;
-    ctx.moveTo(x, y - triExtent);
-    ctx.lineTo(x + triExtent * 0.92, y + triExtent * 0.62);
-    ctx.lineTo(x - triExtent * 0.92, y + triExtent * 0.62);
+    // Pointing down rather than up is a silhouette of its own at this size,
+    // which is what keeps a message apart from a document section.
+    const flip = shape === "triangle-down" ? -1 : 1;
+    ctx.moveTo(x, y - triExtent * flip);
+    ctx.lineTo(x + triExtent * 0.92, y + triExtent * 0.62 * flip);
+    ctx.lineTo(x - triExtent * 0.92, y + triExtent * 0.62 * flip);
+    ctx.closePath();
+    return;
+  }
+  if (shape === "pentagon") {
+    const pentExtent = radius * 1.14;
+    for (let corner = 0; corner < 5; corner += 1) {
+      // Point-up, so it is not read as the flat-sided hexagon beside it.
+      const angle = ((Math.PI * 2) / 5) * corner - Math.PI / 2;
+      const px = x + Math.cos(angle) * pentExtent;
+      const py = y + Math.sin(angle) * pentExtent;
+      if (corner === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
     ctx.closePath();
     return;
   }
@@ -401,6 +432,8 @@ export function GraphCanvas({
           "--cortex-graph-document-section",
           NODE_COLOURS.DocumentSection,
         ),
+        Channel: cssValue(styles, "--cortex-graph-channel", NODE_COLOURS.Channel),
+        Message: cssValue(styles, "--cortex-graph-message", NODE_COLOURS.Message),
       };
       const edgeColour = cssValue(
         styles,

@@ -97,6 +97,8 @@ def test_returns_source_counts(api_db):
             "issues": 3,
             "total_items": 11,
             "sections": 0,
+            "channels": 0,
+            "messages": 0,
             "display_name": None,
             "last_attempted_at": None,
             "last_synced_at": None,

@@ -45,6 +45,12 @@ CONSTRAINTS = [
     "FOR (d:Document) REQUIRE (d.id, d.workspace_id) IS UNIQUE",
     "CREATE CONSTRAINT document_section_workspace_unique IF NOT EXISTS "
     "FOR (s:DocumentSection) REQUIRE (s.id, s.workspace_id) IS UNIQUE",
+    # Chat sources (US-08). Both ids are provider-prefixed strings -- see
+    # ``app.sources.chat_graph`` for why that prefix is load-bearing.
+    "CREATE CONSTRAINT channel_workspace_unique IF NOT EXISTS "
+    "FOR (c:Channel) REQUIRE (c.id, c.workspace_id) IS UNIQUE",
+    "CREATE CONSTRAINT message_workspace_unique IF NOT EXISTS "
+    "FOR (m:Message) REQUIRE (m.id, m.workspace_id) IS UNIQUE",
 ]
 
 

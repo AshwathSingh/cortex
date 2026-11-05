@@ -57,6 +57,19 @@ const NODE_TYPES: {
     colour: "var(--cortex-graph-document-section)",
     shapeClass: "[clip-path:polygon(50%_0%,100%_100%,0%_100%)]",
   },
+  {
+    type: "Channel",
+    label: "Channel",
+    colour: "var(--cortex-graph-channel)",
+    // A pentagon on the canvas, approximated the same way.
+    shapeClass: "rounded-[3px]",
+  },
+  {
+    type: "Message",
+    label: "Message",
+    colour: "var(--cortex-graph-message)",
+    shapeClass: "[clip-path:polygon(0%_0%,100%_0%,50%_100%)]",
+  },
 ];
 
 const ALL_NODE_TYPES = NODE_TYPES.map(({ type }) => type);

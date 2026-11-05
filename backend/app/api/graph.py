@@ -35,6 +35,7 @@ from app.graph.queries import (
 )
 from app.models import SyncStatus
 from app.permissions import Permission
+from app.services.chat_credentials import list_chat_connections
 from app.services.data_sources import build_source_inventory, list_synced_sources
 
 router = APIRouter(prefix="/api/workspaces", tags=["graph"])
@@ -68,10 +69,10 @@ class SourceSummary(BaseModel):
     """One connected source: sync state from Postgres, counts from Neo4j.
 
     ``repo`` is the source's ``external_ref`` -- ``owner/name`` for GitHub, the
-    filename for an uploaded document. The field name predates US-09 and the
-    Sources page builds on it, so it stays. Which counts are meaningful depends
-    on ``kind``: a repository leaves ``sections`` at zero and an upload leaves
-    pull_requests/issues at zero.
+    filename for an uploaded document, the Slack team id or Discord guild id for
+    a chat source. The field name predates all three and the Sources page builds
+    on it, so it stays. Which counts are meaningful depends on ``kind``: every
+    other count is zero.
     """
 
     repo: str
@@ -81,7 +82,10 @@ class SourceSummary(BaseModel):
     issues: int
     total_items: int
     sections: int = 0
-    #: What to call the source on screen when its reference is not its name.
+    channels: int = 0
+    messages: int = 0
+    #: What to call the source on screen when its reference is not its name:
+    #: the filename for an upload, the team or server name for a chat source.
     display_name: str | None = None
     last_attempted_at: datetime | None = None
     last_synced_at: datetime | None = None
@@ -153,6 +157,10 @@ def read_workspace_sources(
     A Neo4j outage is still a 503 rather than a degraded list: the counts would
     read as zero, which is exactly how a failed ingestion looks, and quietly
     showing that is worse than an error the page already offers a retry for.
+
+    Chat sources carry a display name (US-08 AC3): their ``external_ref`` is a
+    Slack team id or Discord guild id, and the graph does not hold the team's
+    name, so it is read from the connection that was authorised.
     """
     load_workspace_for_user(session, user, workspace_id)
 
@@ -160,6 +168,11 @@ def read_workspace_sources(
         summaries = fetch_source_summaries(driver, workspace_id)
     except (Neo4jError, DriverError):
         raise HTTPException(status_code=503, detail="Graph database unavailable")
+
+    display_names = {
+        row.external_ref: row.display_name
+        for row in list_chat_connections(session, workspace_id).values()
+    }
 
     return [
         SourceSummary(
@@ -170,6 +183,8 @@ def read_workspace_sources(
             issues=item.issues,
             total_items=item.total_items,
             sections=item.sections,
+            channels=item.channels,
+            messages=item.messages,
             display_name=item.display_name,
             last_attempted_at=item.last_attempted_at,
             last_synced_at=item.last_synced_at,
@@ -178,7 +193,7 @@ def read_workspace_sources(
             last_synced_by_name=item.last_synced_by_name,
         )
         for item in build_source_inventory(
-            list_synced_sources(session, workspace_id), summaries
+            list_synced_sources(session, workspace_id), summaries, display_names
         )
     ]
 
@@ -221,16 +236,22 @@ def read_workspace_graph(
 
 
 @router.get(
-    # ``:path`` because an uploaded-document node id contains slashes
-    # (``upload/4f1c…/3``); without it the id would be split across path
-    # segments and never match a route.
+    # ``:path`` because an uploaded-document or chat node id contains slashes
+    # (``upload/4f1c…/3``, ``slack/C0ABC/1730000000.123456``); without it the id
+    # would be split across path segments and never match a route.
     "/{workspace_id}/graph/nodes/{node_type}/{node_id:path}",
     response_model=GraphNodeDetails,
 )
 def read_graph_node_details(
     workspace_id: uuid.UUID,
     node_type: Literal[
-        "Author", "PullRequest", "Issue", "Document", "DocumentSection"
+        "Author",
+        "PullRequest",
+        "Issue",
+        "Document",
+        "DocumentSection",
+        "Channel",
+        "Message",
     ],
     node_id: str,
     user: CurrentUser,

@@ -18,6 +18,9 @@ export type WorkspaceSummary = {
   name: string;
   description: string | null;
   role: string;
+  /** What the caller's role lets them do. Mirrors `app.permissions.Permission`.
+   *  Authoritative: a custom role (US-21) has a name of its own, so `role`
+   *  cannot be compared against to decide what to show. */
   permissions: WorkspacePermission[];
   created_at: string;
 };
@@ -64,17 +67,25 @@ export type IngestResult = {
 /** Mirrors `app.models.data_source.SyncStatus`. */
 export type SourceSyncStatus = "PENDING" | "SUCCESS" | "FAILED";
 
-/** Mirrors the `kind` values `data_sources` holds today. */
-export type SourceKind = "github" | "upload";
+/** Mirrors the `KIND_*` constants in `app.sources.base` and the `kind` values
+ *  `data_sources` holds. */
+export type SourceKind = "github" | "upload" | "slack" | "discord";
+
+/** The providers connected through an authorisation flow rather than a URL. */
+export type ChatKind = "slack" | "discord";
 
 export type WorkspaceSource = IngestResult & {
   total_items: number;
   kind: string;
-  /** Sections, for an uploaded document. Zero for a repository — which counts
-   *  are meaningful depends on `kind`. */
+  /** Sections, for an uploaded document. Which counts are meaningful depends
+   *  on `kind`; the rest are zero. */
   sections: number;
+  /** Channels and messages, for a chat source. */
+  channels: number;
+  messages: number;
   /** What to call the source on screen when its reference is not already its
-   *  name. The filename for an upload, null for a repository. */
+   *  name: the filename for an upload, the team or server name for a chat
+   *  source whose `repo` holds a Slack team id. Null for a repository. */
   display_name: string | null;
   status: SourceSyncStatus;
   /** ISO-8601. When ingestion last *started*, null for a repo ingested before
@@ -95,7 +106,9 @@ export type GraphNodeType =
   | "PullRequest"
   | "Issue"
   | "Document"
-  | "DocumentSection";
+  | "DocumentSection"
+  | "Channel"
+  | "Message";
 
 /** What `POST /api/workspaces/{id}/uploads` answers (US-09). */
 export type UploadResult = {
@@ -108,9 +121,31 @@ export type UploadResult = {
   replaced: boolean;
 };
 
+/** A chat provider this workspace has authorised (US-08). Never carries a token. */
+export type ChatConnection = {
+  kind: string;
+  /** The Slack team id or Discord guild id. */
+  external_ref: string;
+  display_name: string;
+  installed_by_name: string | null;
+};
+
+/** One channel offered in the picker before ingestion. */
+export type ChannelOption = {
+  id: string;
+  name: string;
+};
+
+export type ChatIngestResult = {
+  source: string;
+  channels: number;
+  messages: number;
+};
+
 export type GraphNode = {
-  /** "PullRequest:42" — a GitHub id alone is not unique across labels. An
-   *  uploaded document's id is a prefixed string: "DocumentSection:upload/4f1c/0". */
+  /** "PullRequest:42" — a GitHub id alone is not unique across labels. Uploaded
+   *  and chat ids are prefixed strings containing slashes:
+   *  "DocumentSection:upload/4f1c/0", "Message:slack/C1/1.2". */
   key: string;
   id: number | string | null;
   type: GraphNodeType;

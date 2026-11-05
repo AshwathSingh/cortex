@@ -29,10 +29,13 @@ GRAPH_LABELS: tuple[str, ...] = (
     "Author",
     "PullRequest",
     "Issue",
-    # US-09. Document ids are prefixed strings rather than integers; see
-    # ``coerce_node_id`` and ``app.uploads.graph``.
+    # US-09 and US-08. These four carry prefixed string ids rather than
+    # integers; see ``coerce_node_id``, ``app.uploads.graph`` and
+    # ``app.sources.chat_graph``.
     "Document",
     "DocumentSection",
+    "Channel",
+    "Message",
 )
 
 # Ceilings so one enormous workspace cannot stall the browser or the API. The
@@ -94,7 +97,8 @@ WITH n, collect(CASE WHEN r IS NULL THEN null ELSE {{
   props: {{id: related.id, login: related.login, number: related.number,
           title: related.title, html_url: related.html_url,
           filename: related.filename, heading: related.heading,
-          position: related.position, body: related.body}},
+          position: related.position, name: related.name,
+          body: related.body}},
   relationship: type(r),
   direction: CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END
 }} END) AS connected
@@ -170,6 +174,24 @@ WITH DISTINCT d.source_ref AS source_ref
 OPTIONAL MATCH (s:DocumentSection)
 WHERE s.workspace_id = $workspace_id AND s.source_ref = source_ref
 RETURN source_ref, count(DISTINCT s) AS sections
+"""
+
+# Chat sources, likewise: they group on ``source_ref`` (the Slack team or
+# Discord guild that ``data_sources`` keys on) rather than on ``repo``, and a
+# channel is itself an indexed item.
+CHAT_SOURCES_QUERY = """
+MATCH (c:Channel)
+WHERE c.workspace_id = $workspace_id AND c.source_ref IS NOT NULL
+WITH DISTINCT c.source_ref AS source_ref
+OPTIONAL MATCH (channel:Channel)
+WHERE channel.workspace_id = $workspace_id
+  AND channel.source_ref = source_ref
+WITH source_ref, count(DISTINCT channel) AS channels,
+     head(collect(channel.kind)) AS kind
+OPTIONAL MATCH (message:Message)
+WHERE message.workspace_id = $workspace_id
+  AND message.source_ref = source_ref
+RETURN source_ref, channels, kind, count(DISTINCT message) AS messages
 ORDER BY source_ref
 """
 
@@ -189,8 +211,9 @@ class SourceSummaryPayload:
     """Indexed graph items for one connected source.
 
     ``repo`` is the source's reference -- ``owner/name`` for GitHub, the
-    filename for an uploaded document. The field name predates US-09 and the
-    Sources page builds on it, so it stays.
+    filename for an uploaded document, the Slack team id or Discord guild id for
+    a chat source. The field name predates all three and the Sources page builds
+    on it, so it stays.
     """
 
     repo: str
@@ -198,6 +221,8 @@ class SourceSummaryPayload:
     issues: int = 0
     total_items: int = 0
     sections: int = 0
+    channels: int = 0
+    messages: int = 0
     #: The provider the nodes were written by, where they record one. None for
     #: a repository, whose nodes predate the property.
     kind: str | None = None
@@ -224,6 +249,8 @@ def _primary_label(labels: list[str] | tuple[str, ...]) -> str:
 
 #: A section with no heading is labelled by its opening words.
 SECTION_TITLE_LENGTH = 80
+#: A message has no title of its own, so the canvas label is its opening words.
+MESSAGE_TITLE_LENGTH = 80
 
 
 def _display_title(label: str, props: dict[str, Any]) -> str:
@@ -242,6 +269,16 @@ def _display_title(label: str, props: dict[str, Any]) -> str:
         if len(body) <= SECTION_TITLE_LENGTH:
             return body
         return body[: SECTION_TITLE_LENGTH - 1].rstrip() + "\u2026"
+    if label == "Channel":
+        name = props.get("name")
+        return f"#{name}" if name else str(props.get("id"))
+    if label == "Message":
+        body = " ".join((props.get("body") or "").split())
+        if not body:
+            return "(no text)"
+        if len(body) <= MESSAGE_TITLE_LENGTH:
+            return body
+        return body[: MESSAGE_TITLE_LENGTH - 1].rstrip() + "\u2026"
     number = props.get("number")
     title = props.get("title") or ""
     return f"#{number} {title}".strip() if number is not None else title
@@ -331,20 +368,22 @@ def fetch_source_summaries(
 ) -> list[SourceSummaryPayload]:
     """Summarise every connected source and its indexed graph items.
 
-    Two reads in one transaction rather than one union query: repositories group
-    on ``repo`` and count pull requests and issues, uploads group on
-    ``source_ref`` and count sections. Forcing them into a single aggregation
-    would make both halves harder to read than the merge below.
+    Three reads in one transaction rather than one union query: repositories
+    group on ``repo`` and count pull requests and issues, while uploads and chat
+    connections group on ``source_ref`` and count sections, or channels and
+    messages. Forcing them into a single aggregation would make every part
+    harder to read than the merge below.
     """
     workspace = normalise_workspace_id(workspace_id)
 
-    def work(tx) -> tuple[list, list]:
+    def work(tx) -> tuple[list, list, list]:
         repos = list(tx.run(SOURCES_QUERY, workspace_id=workspace))
         uploads = list(tx.run(UPLOAD_SOURCES_QUERY, workspace_id=workspace))
-        return repos, uploads
+        chats = list(tx.run(CHAT_SOURCES_QUERY, workspace_id=workspace))
+        return repos, uploads, chats
 
     with driver.session() as session:
-        repo_records, upload_records = session.execute_read(work)
+        repo_records, upload_records, chat_records = session.execute_read(work)
 
     summaries = [
         SourceSummaryPayload(
@@ -364,6 +403,17 @@ def fetch_source_summaries(
             kind="upload",
         )
         for record in upload_records
+    )
+    summaries.extend(
+        SourceSummaryPayload(
+            repo=str(record["source_ref"]),
+            channels=int(record["channels"]),
+            messages=int(record["messages"]),
+            kind=record["kind"],
+            # A channel is an item the connection contributed, same as a message.
+            total_items=int(record["channels"]) + int(record["messages"]),
+        )
+        for record in chat_records
     )
     summaries.sort(key=lambda summary: (summary.repo.lower(), summary.repo))
     return summaries
@@ -446,11 +496,11 @@ def fetch_node_details(
 def coerce_node_id(raw: str) -> int | str:
     """Recover a node id's type from its text form.
 
-    GitHub ids are integers in the graph and uploaded-document ids are prefixed
-    strings, but a node key is text either way -- and Neo4j will not match 42
-    against "42". Every prefixed id contains a ``/`` (see
-    ``app.uploads.graph``), so this attempt fails for all of them and succeeds
-    for every GitHub id.
+    GitHub ids are integers in the graph; uploaded-document and chat ids are
+    prefixed strings, but a node key is text either way -- and Neo4j will not
+    match 42 against "42". Every prefixed id contains a ``/`` (see
+    ``app.uploads.graph`` and ``app.sources.chat_graph``), so this attempt fails
+    for all of them and succeeds for every GitHub id.
     """
     try:
         return int(raw)

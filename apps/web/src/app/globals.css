@@ -50,6 +50,8 @@
   --cortex-graph-issue: #e0a86a;
   --cortex-graph-document: #c48fe8;
   --cortex-graph-document-section: #9fb0c9;
+  --cortex-graph-channel: #5fd4c4;
+  --cortex-graph-message: #e894b8;
   --cortex-graph-node-unknown: #a4adbd;
   --cortex-graph-edge: rgb(120 160 255 / 22%);
   --cortex-graph-edge-hub: rgb(120 160 255 / 38%);
