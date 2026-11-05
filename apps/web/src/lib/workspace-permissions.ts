@@ -1,5 +1,13 @@
-import type { WorkspaceRole } from "@/lib/api-types";
+import type { WorkspacePermission } from "@/lib/api-types";
 
-export function canManageSources(role: WorkspaceRole | null | undefined) {
-  return role === "OWNER" || role === "EDITOR";
+export function canManageSources(
+  permissions: WorkspacePermission[] | null | undefined,
+) {
+  return permissions?.includes("sources.write") ?? false;
+}
+
+export function canManageMembers(
+  permissions: WorkspacePermission[] | null | undefined,
+) {
+  return permissions?.includes("members.manage") ?? false;
 }

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GraphCanvas } from "@/components/graph/graph-canvas";
 import type { GraphNode } from "@/lib/api-types";
+import { seedNodes } from "@/lib/graph-layout";
 
 /**
  * The gestures #18 left open: the wheel must cancel the page scroll, panning
@@ -163,5 +164,26 @@ describe("pan clamping", () => {
     fireEvent.click(canvas, { clientX: 240, clientY: 160 });
 
     expect(onSelectionChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("hover feedback", () => {
+  it("uses a pointer cursor only over an interactive graph item", () => {
+    stubCanvas();
+    const onlyNode = NODES[0];
+    render(<GraphCanvas nodes={[onlyNode]} edges={[]} />);
+    const canvas = screen.getByRole("img");
+    const [position] = seedNodes(
+      [{ key: onlyNode.key, radius: 19, charge: 2.4 }],
+      SCENE_WIDTH,
+      SCENE_HEIGHT,
+    );
+
+    expect(canvas).toHaveClass("cursor-grab");
+    fireEvent.pointerMove(canvas, { clientX: position.x, clientY: position.y });
+    expect(canvas).toHaveClass("cursor-pointer");
+
+    fireEvent.pointerLeave(canvas);
+    expect(canvas).toHaveClass("cursor-grab");
   });
 });

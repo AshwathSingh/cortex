@@ -76,6 +76,7 @@ function renderStatus(role: WorkspaceRole = "OWNER") {
           name: "Cortex",
           description: null,
           role,
+          permissions: role === "VIEWER" ? [] : ["sources.write"],
           created_at: "2026-09-24T00:00:00Z",
         },
         user: null,
@@ -221,7 +222,8 @@ describe("GraphSyncStatus", () => {
           workspaceId: WORKSPACE_ID,
           workspace: {
             id: WORKSPACE_ID, name: "Cortex", description: null,
-            role: "OWNER", created_at: "2026-09-24T00:00:00Z",
+            role: "OWNER", permissions: ["sources.write"],
+            created_at: "2026-09-24T00:00:00Z",
           },
           user: null, isLoading: false, error: null,
         }}
@@ -237,7 +239,7 @@ describe("GraphSyncStatus", () => {
     fireEvent.click(screen.getByRole("button", { name: /re-sync/i }));
 
     expect(await screen.findByText("Synced just now")).toBeInTheDocument();
-    expect(onGraphChanged).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onGraphChanged).toHaveBeenCalledTimes(1));
   });
 
   it("says how long an in-flight ingestion has been running", async () => {

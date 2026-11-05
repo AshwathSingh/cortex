@@ -17,6 +17,12 @@ const WORKSPACE = {
   name: "Cortex Engineering",
   description: null,
   role: "OWNER",
+  permissions: [
+    "sources.write",
+    "members.manage",
+    "roles.manage",
+    "workspace.delete",
+  ],
   created_at: "2026-09-28T00:00:00Z",
 } satisfies WorkspaceSummary;
 
@@ -31,6 +37,7 @@ const OTHER_WORKSPACE = {
   id: "workspace-2",
   name: "Platform",
   role: "EDITOR",
+  permissions: ["sources.write"],
 } satisfies WorkspaceSummary;
 
 const ASSISTANT_RESPONSE = {

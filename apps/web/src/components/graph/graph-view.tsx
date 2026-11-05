@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { GraphCanvas } from "@/components/graph/graph-canvas";
 import { GraphComments } from "@/components/graph/graph-comments";
@@ -47,9 +47,12 @@ const NODE_TYPES: {
   },
 ];
 
+const ALL_NODE_TYPES = NODE_TYPES.map(({ type }) => type);
+const NO_HIGHLIGHTS: string[] = [];
+
 type State =
   | { kind: "loading" }
-  | { kind: "ready"; graph: WorkspaceGraph }
+  | { kind: "ready"; graph: WorkspaceGraph; requestKey: string; requestError?: string; requestErrorKey?: string }
   | { kind: "error"; message: string };
 
 export function GraphView({
@@ -67,17 +70,31 @@ export function GraphView({
   const [inspectorState, setInspectorState] = useState<InspectorState>({ kind: "loading" });
   // T-27.4: which nodes and edges carry comments, for the canvas badges.
   const { activity, refresh: refreshActivity } = useCommentActivity(workspaceId);
+  const [selectedTypes, setSelectedTypes] = useState<GraphNodeType[]>(ALL_NODE_TYPES);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const requestKey = JSON.stringify([searchTerm, [...selectedTypes].sort()]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchTerm(searchInput.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
 
   useEffect(() => {
     const controller = new AbortController();
-
     async function load() {
       try {
+        const params = new URLSearchParams();
+        if (searchTerm) params.set("q", searchTerm);
+        for (const type of selectedTypes) params.append("types", type);
+        if (selectedTypes.length === 0) params.set("types", "");
+        const serializedParams = params.toString();
+        const query = serializedParams ? `?${serializedParams}` : "";
         const graph = await apiRequest<WorkspaceGraph>(
-          `/api/workspaces/${workspaceId}/graph`,
+          `/api/workspaces/${workspaceId}/graph${query}`,
           { signal: controller.signal },
         );
-        setState({ kind: "ready", graph });
+        setState({ kind: "ready", graph, requestKey });
       } catch (requestError) {
         if (controller.signal.aborted) return;
         if (requestError instanceof ApiError && requestError.status === 401) {
@@ -92,15 +109,15 @@ export function GraphView({
         // screen is still the last thing the server successfully sent, and
         // replacing it with an error loses work the user can still read. Only
         // the first load, which has nothing to fall back on, shows the error.
-        setState((previous) =>
-          previous.kind === "ready" ? previous : { kind: "error", message },
-        );
+        setState((previous) => previous.kind === "ready"
+          ? { ...previous, requestError: message, requestErrorKey: requestKey }
+          : { kind: "error", message });
       }
     }
 
     void load();
     return () => controller.abort();
-  }, [reloadToken, router, workspaceId]);
+  }, [reloadToken, requestKey, router, searchTerm, selectedTypes, workspaceId]);
 
   useEffect(() => {
     if (!selection) return;
@@ -150,52 +167,229 @@ export function GraphView({
   }, [router, selection, workspaceId]);
 
   const graph = state.kind === "ready" ? state.graph : null;
-  const isWorkspaceEmpty = graph !== null && graph.nodes.length === 0;
   const commentTarget = targetFor(selection);
+  const graphMatchesRequest = state.kind === "ready" && state.requestKey === requestKey;
+  const isWorkspaceEmpty = graph !== null
+    && graph.nodes.length === 0
+    && !searchTerm
+    && selectedTypes.length === ALL_NODE_TYPES.length;
+  const isSearchEmpty = graph !== null && graph.nodes.length === 0 && Boolean(searchTerm);
+  const visibleNodes = useMemo(
+    () => graph ? graph.nodes.filter((node) => selectedTypes.includes(node.type)) : [],
+    [graph, selectedTypes],
+  );
+  const visibleKeys = useMemo(() => new Set(visibleNodes.map((node) => node.key)), [visibleNodes]);
+  const visibleEdges = useMemo(
+    () => graph
+      ? graph.edges.filter((edge) => visibleKeys.has(edge.source) && visibleKeys.has(edge.target))
+      : [],
+    [graph, visibleKeys],
+  );
+  const highlightedNodeKeys = useMemo(
+    () => graphMatchesRequest && searchTerm ? visibleNodes.map((node) => node.key) : NO_HIGHLIGHTS,
+    [graphMatchesRequest, searchTerm, visibleNodes],
+  );
+
+  function selectTypes(nextTypes: GraphNodeType[]) {
+    setSelectedTypes(nextTypes);
+    if (!selection) return;
+
+    const nextVisibleKeys = new Set(
+      (graph?.nodes ?? [])
+        .filter((node) => nextTypes.includes(node.type))
+        .map((node) => node.key),
+    );
+    const selectionRemainsVisible = selection.kind === "node"
+      ? nextVisibleKeys.has(selection.key)
+      : (graph?.edges ?? []).some((edge) =>
+          nextVisibleKeys.has(edge.source)
+          && nextVisibleKeys.has(edge.target)
+          && edge.source === selection.edge.source
+          && edge.target === selection.edge.target
+          && edge.type === selection.edge.type,
+        );
+    if (!selectionRemainsVisible) setSelection(null);
+  }
+
+  function toggleType(type: GraphNodeType) {
+    const nextTypes = selectedTypes.includes(type)
+      ? selectedTypes.filter((selected) => selected !== type)
+      : [...selectedTypes, type];
+    selectTypes(nextTypes);
+  }
+
+  function submitSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSelection(null);
+    setSearchTerm(searchInput.trim());
+  }
+
+  function updateSearchInput(value: string) {
+    setSearchInput(value);
+    setSelection(null);
+  }
+
+  function clearSearch() {
+    setSearchInput("");
+    setSearchTerm("");
+    setSelection(null);
+  }
+
+  const isUpdatingGraph = Boolean(
+    graph && (!graphMatchesRequest || searchInput.trim() !== searchTerm),
+  );
+  const resultSummary = searchTerm
+    ? `${visibleNodes.length} ${visibleNodes.length === 1 ? "match" : "matches"}`
+    : `${visibleNodes.length} ${visibleNodes.length === 1 ? "node" : "nodes"}`;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {graph && !isWorkspaceEmpty ? (
         <div
-          className="flex min-h-14 flex-wrap items-center justify-between gap-4 border-b border-[var(--cortex-graph-divider)] px-6 py-2"
+          className="border-b border-[var(--cortex-graph-divider)] bg-background/30 px-6 py-3"
         >
-          <ul className="flex items-center gap-5" aria-label="Node types">
-            {NODE_TYPES.map(({ type, label, colour, shapeClass }) => (
-              <li key={type} className="flex items-center gap-2 text-xs text-muted">
-                <span
-                  aria-hidden="true"
-                  className="inline-flex size-3 items-center justify-center"
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <form
+              role="search"
+              onSubmit={submitSearch}
+              className="relative min-w-[18rem] flex-1 basis-[24rem] sm:max-w-[30rem]"
+            >
+              <label htmlFor="graph-search" className="sr-only">
+                Search artifacts
+              </label>
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 20 20"
+                className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-subtle"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+              >
+                <circle cx="8.5" cy="8.5" r="4.75" />
+                <path d="m12 12 4 4" />
+              </svg>
+              <input
+                id="graph-search"
+                type="text"
+                role="searchbox"
+                inputMode="search"
+                enterKeyHint="search"
+                value={searchInput}
+                maxLength={200}
+                autoComplete="off"
+                aria-describedby="graph-search-status"
+                onChange={(event) => updateSearchInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && searchInput) {
+                    event.preventDefault();
+                    clearSearch();
+                  }
+                }}
+                placeholder="Search this graph"
+                className="h-10 w-full appearance-none rounded-xl border border-border/45 bg-surface/70 pl-10 pr-10 text-sm text-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.025)] outline-none transition-[border-color,background-color,box-shadow] placeholder:text-subtle hover:border-border/70 focus-visible:border-accent-bright/70 focus-visible:bg-surface focus-visible:ring-2 focus-visible:ring-accent-bright/15"
+              />
+              {searchInput ? (
+                <button
+                  type="button"
+                  aria-label="Clear search"
+                  onClick={clearSearch}
+                  className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-lg text-subtle transition-colors hover:bg-background/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
                 >
-                  <span
-                    className={`block size-2 border-2 ${shapeClass}`}
-                    style={{ borderColor: colour }}
-                  />
-                </span>
-                {label}
-              </li>
-            ))}
-          </ul>
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 20 20"
+                    className="size-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  >
+                    <path d="m6 6 8 8M14 6l-8 8" />
+                  </svg>
+                </button>
+              ) : null}
+            </form>
 
-          <div className="flex items-center gap-5">
-            {/* Only shown once something is actually commented on: a legend
-                entry for a mark the reader will never see is just noise. */}
-            {activity.length > 0 ? (
-              <p className="flex items-center gap-2 whitespace-nowrap text-xs text-muted">
-                <span
-                  aria-hidden="true"
-                  className="block size-2.5 rounded-full"
-                  style={{ backgroundColor: "var(--cortex-graph-comment)" }}
-                />
-                Unseen comments
+            <span
+              aria-hidden="true"
+              className="hidden h-6 w-px bg-[var(--cortex-graph-divider)] lg:block"
+            />
+
+            <fieldset className="flex flex-wrap items-center gap-1.5">
+              <legend className="sr-only">Filter graph by artifact type</legend>
+              {NODE_TYPES.map(({ type, label, colour, shapeClass }) => {
+                const selected = selectedTypes.includes(type);
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => toggleType(type)}
+                    className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-[border-color,background-color,color] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                      selected
+                        ? "border-border/45 bg-surface-raised/80 text-foreground"
+                        : "border-transparent bg-transparent text-subtle hover:border-border/25 hover:bg-surface/50 hover:text-muted"
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="inline-flex size-3 items-center justify-center"
+                    >
+                      <span
+                        className={`block size-2 border-2 ${shapeClass} ${
+                          selected ? "opacity-100" : "opacity-45"
+                        }`}
+                        style={{ borderColor: colour }}
+                      />
+                    </span>
+                    {label}
+                  </button>
+                );
+              })}
+              {selectedTypes.length !== ALL_NODE_TYPES.length ? (
+                <button
+                  type="button"
+                  onClick={() => selectTypes(ALL_NODE_TYPES)}
+                  className="h-9 rounded-lg px-2.5 text-xs font-medium text-accent-bright transition-colors hover:bg-accent/10 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  Reset
+                </button>
+              ) : null}
+            </fieldset>
+
+            <div className="ml-auto flex items-center gap-4">
+              {/* Only shown once something is actually commented on: a legend
+                  entry for a mark the reader will never see is just noise. */}
+              {activity.length > 0 ? (
+                <p className="flex items-center gap-2 whitespace-nowrap text-xs text-muted">
+                  <span
+                    aria-hidden="true"
+                    className="block size-2.5 rounded-full"
+                    style={{ backgroundColor: "var(--cortex-graph-comment)" }}
+                  />
+                  Unseen comments
+                </p>
+              ) : null}
+              <p
+                id="graph-search-status"
+                role="status"
+                aria-live="polite"
+                className="whitespace-nowrap px-2 text-xs text-subtle"
+              >
+                {isUpdatingGraph
+                  ? "Updating…"
+                  : `${resultSummary} · ${visibleEdges.length} ${
+                      visibleEdges.length === 1 ? "connection" : "connections"
+                    }`}
               </p>
-            ) : null}
-            <p className="whitespace-nowrap text-xs text-subtle">
-              {graph.nodes.length} nodes · {graph.edges.length} connections
-            </p>
+            </div>
           </div>
         </div>
       ) : null}
-
+      {state.kind === "ready" && state.requestError && state.requestErrorKey === requestKey ? (
+        <div className="px-6 py-2"><FeedbackAlert message={state.requestError} /></div>
+      ) : null}
       <div className="relative flex min-h-0 flex-1">
         <div className="graph-scene relative min-w-0 flex-1 overflow-hidden" aria-live="polite">
           {state.kind === "loading" ? (
@@ -208,6 +402,15 @@ export function GraphView({
             <div className="mx-auto max-w-xl px-6 pt-8">
               <FeedbackAlert message={state.message} />
             </div>
+          ) : null}
+
+          {isSearchEmpty ? (
+            <section className="grid size-full place-items-center px-6 text-center" aria-live="polite">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">No artifacts match “{searchTerm}”</h2>
+                <p className="mt-2 text-sm text-muted">Try another keyword or clear your search.</p>
+              </div>
+            </section>
           ) : null}
 
           {isWorkspaceEmpty ? (
@@ -232,10 +435,31 @@ export function GraphView({
             </section>
           ) : null}
 
-          {graph && !isWorkspaceEmpty ? (
+          {graph && !isWorkspaceEmpty && visibleNodes.length === 0 ? (
+            <section className="grid size-full place-items-center px-6 text-center">
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">
+                  No artifacts match these filters
+                </h2>
+                <p className="mt-2 text-sm text-muted">
+                  Select another artifact type or show all types to restore the graph.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => selectTypes(ALL_NODE_TYPES)}
+                  className="mt-4 rounded-lg border border-border/60 px-3 py-2 text-sm font-medium text-accent transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  Show all artifact types
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          {graph && !isWorkspaceEmpty && visibleNodes.length > 0 ? (
             <GraphCanvas
-              nodes={graph.nodes}
-              edges={graph.edges}
+              nodes={visibleNodes}
+              edges={visibleEdges}
+              highlightedNodeKeys={highlightedNodeKeys}
               commentActivity={activity}
               onSelectionChange={(nextSelection) => {
                 setSelection(nextSelection);
@@ -256,7 +480,7 @@ export function GraphView({
               role="status"
               className="absolute right-5 top-5 rounded-md border border-[var(--cortex-graph-divider)] bg-background/80 px-3 py-2 text-xs text-muted backdrop-blur-sm"
             >
-              Display limit reached · showing {graph.nodes.length} nodes
+              Display limit reached · showing {visibleNodes.length} nodes
             </p>
           ) : null}
         </div>
