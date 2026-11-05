@@ -103,3 +103,48 @@ export type WorkspaceGraph = {
   /** Server hit a node/edge ceiling, so the canvas is showing a subset. */
   truncated: boolean;
 };
+
+/** Mirrors `app.pruning.detect.FlagRule`. */
+export type FlagRule = "STALE" | "CONTRADICTED" | "THIN";
+
+/** Mirrors `app.pruning.detect.Severity`. */
+export type FlagSeverity = "HIGH" | "MEDIUM" | "LOW";
+
+export type FlagTarget = {
+  /** The canvas key, so a flag can point at the node it is about. */
+  key: string;
+  type: string;
+  title: string;
+  url: string | null;
+};
+
+/** One fact that produced a flag, so the reader can judge it (US-28 AC4). */
+export type FlagEvidence = {
+  label: string;
+  detail: string;
+};
+
+/**
+ * US-28: one finding from the Pruning Agent.
+ *
+ * `label` and `summary` come from the server rather than being rebuilt here:
+ * the wording belongs with the rule that produced it, or the two drift.
+ */
+export type WorkspaceFlag = {
+  id: string;
+  rule: FlagRule;
+  label: string;
+  severity: FlagSeverity;
+  summary: string;
+  targets: FlagTarget[];
+  evidence: FlagEvidence[];
+};
+
+export type WorkspaceFlags = {
+  workspace_id: string;
+  /** When the rules ran. They run on the request, so it is effectively now. */
+  generated_at: string;
+  flags: WorkspaceFlag[];
+  /** The item ceiling was reached, so the rules saw a subset of the workspace. */
+  truncated: boolean;
+};
