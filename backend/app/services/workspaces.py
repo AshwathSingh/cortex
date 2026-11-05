@@ -1,4 +1,4 @@
-"""Workspace creation and deletion.
+"""Workspace creation, profile updates, and deletion.
 
 Deleting spans Postgres and Neo4j, which cannot share a transaction, so it runs
 in an order that is safe to stop and resume (US-05):
@@ -41,19 +41,16 @@ class WorkspaceNameTaken(Exception):
     """The owner already owns a workspace with this name."""
 
 
-def create_workspace(
-    session: Session, *, name: str, owner: User, description: str | None = None
-) -> Workspace:
-    """Create a workspace and its canonical owner membership.
-
-    Names are unique per owner, case-insensitively. Other users may reuse a
-    name, and workspaces merely shared with the owner do not count.
-    """
-    # Lock the owner row so two concurrent creates by the same user cannot both
-    # pass the duplicate check. A no-op on SQLite, which serialises writes anyway.
+def _lock_owner_and_find_duplicate(
+    session: Session,
+    *,
+    owner: User,
+    name: str,
+    excluding_workspace_id=None,
+):
     session.execute(select(User.id).where(User.id == owner.id).with_for_update())
 
-    taken = session.scalar(
+    query = (
         select(Workspace.id)
         .join(WorkspaceMembership, WorkspaceMembership.workspace_id == Workspace.id)
         .where(
@@ -63,6 +60,22 @@ def create_workspace(
         )
         .limit(1)
     )
+    if excluding_workspace_id is not None:
+        query = query.where(Workspace.id != excluding_workspace_id)
+    return session.scalar(query)
+
+
+def create_workspace(
+    session: Session, *, name: str, owner: User, description: str | None = None
+) -> Workspace:
+    """Create a workspace and its canonical owner membership.
+
+    Names are unique per owner, case-insensitively. Other users may reuse a
+    name, and workspaces merely shared with the owner do not count.
+    """
+    # Serialises creates and renames for one owner. A no-op on SQLite, which
+    # serialises writes anyway.
+    taken = _lock_owner_and_find_duplicate(session, owner=owner, name=name)
     if taken is not None:
         raise WorkspaceNameTaken(name)
 
@@ -76,6 +89,59 @@ def create_workspace(
             role=Role.OWNER,
         )
     )
+    return workspace
+
+
+def _lock_workspace_owners_and_find_duplicate(
+    session: Session, *, workspace: Workspace, name: str
+):
+    """Lock every owner deterministically and find another matching workspace."""
+    owner_ids = list(
+        session.scalars(
+            select(User.id)
+            .join(
+                WorkspaceMembership,
+                WorkspaceMembership.user_id == User.id,
+            )
+            .where(
+                WorkspaceMembership.workspace_id == workspace.id,
+                WorkspaceMembership.role == Role.OWNER,
+            )
+            .order_by(User.id)
+            .with_for_update(of=User)
+        )
+    )
+
+    return session.scalar(
+        select(Workspace.id)
+        .join(WorkspaceMembership, WorkspaceMembership.workspace_id == Workspace.id)
+        .where(
+            WorkspaceMembership.user_id.in_(owner_ids),
+            WorkspaceMembership.role == Role.OWNER,
+            Workspace.id != workspace.id,
+            func.lower(Workspace.name) == name.lower(),
+        )
+        .limit(1)
+    )
+
+
+def update_workspace(
+    session: Session,
+    *,
+    workspace: Workspace,
+    name: str,
+    description: str | None,
+) -> Workspace:
+    """Rename a workspace while preserving uniqueness for every owner."""
+    taken = _lock_workspace_owners_and_find_duplicate(
+        session, workspace=workspace, name=name
+    )
+    if taken is not None:
+        raise WorkspaceNameTaken(name)
+
+    workspace.name = name
+    workspace.description = description
+    session.flush()
     return workspace
 
 

@@ -1,7 +1,7 @@
 import type { InputHTMLAttributes, ReactNode } from "react";
 
 export const fieldControlClassName =
-  "mt-2 w-full rounded-control border border-border/60 bg-surface/70 px-4 text-[0.95rem] text-foreground outline-none transition placeholder:text-subtle hover:border-border focus:border-accent-bright focus:ring-2 focus:ring-accent-bright/20 disabled:opacity-60";
+  "cortex-field-control mt-2 w-full rounded-control border border-border/45 bg-background/35 px-4 text-[0.95rem] text-foreground outline-none transition-[border-color,box-shadow,background-color] placeholder:text-subtle hover:border-border/75 focus:border-accent-bright/80 focus:bg-background/55 focus:ring-2 focus:ring-accent-bright/20 disabled:opacity-60";
 
 export function Field({
   children,

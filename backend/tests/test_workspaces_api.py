@@ -284,6 +284,79 @@ def test_editor_can_open_a_workspace_they_do_not_own(api, scenario):
     assert response.json()["role"] == "EDITOR"
 
 
+def test_owner_can_update_workspace_profile(api, scenario):
+    client, sessions = api
+    authenticate(client, sessions, scenario.owner)
+
+    response = client.patch(
+        f"/api/workspaces/{scenario.apollo.id}",
+        json={"name": "Apollo Platform", "description": "Launch operations"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Apollo Platform"
+    assert response.json()["description"] == "Launch operations"
+    opened = client.get(f"/api/workspaces/{scenario.apollo.id}").json()
+    assert opened["name"] == "Apollo Platform"
+    assert opened["description"] == "Launch operations"
+
+
+def test_non_owner_cannot_update_workspace_profile(api, scenario):
+    client, sessions = api
+    authenticate(client, sessions, scenario.owner)
+
+    response = client.patch(
+        f"/api/workspaces/{scenario.shared.id}",
+        json={"name": "Renamed", "description": None},
+    )
+
+    assert response.status_code == 403
+    assert "workspace.update" in response.json()["detail"]
+
+
+def test_workspace_update_rejects_duplicate_owned_name(api, scenario):
+    client, sessions = api
+    authenticate(client, sessions, scenario.owner)
+
+    response = client.patch(
+        f"/api/workspaces/{scenario.apollo.id}",
+        json={"name": "  cortex  ", "description": None},
+    )
+
+    assert response.status_code == 409
+    assert "already have a workspace named" in response.json()["detail"]
+
+
+def test_workspace_update_rejects_duplicate_name_for_any_co_owner(api, scenario):
+    client, sessions = api
+    with sessions() as session:
+        apollo = session.get(Workspace, scenario.apollo.id)
+        outsider = session.get(User, scenario.outsider.id)
+        grant(session, apollo, outsider, Role.OWNER)
+        session.commit()
+    authenticate(client, sessions, scenario.owner)
+
+    response = client.patch(
+        f"/api/workspaces/{scenario.apollo.id}",
+        json={"name": "Private Project", "description": None},
+    )
+
+    assert response.status_code == 409
+    assert "already have a workspace named" in response.json()["detail"]
+
+
+def test_workspace_update_validates_profile_fields(api, scenario):
+    client, sessions = api
+    authenticate(client, sessions, scenario.owner)
+
+    response = client.patch(
+        f"/api/workspaces/{scenario.apollo.id}",
+        json={"name": "   ", "description": None},
+    )
+
+    assert response.status_code == 422
+
+
 def test_opening_a_workspace_with_no_role_on_it_is_refused(api, scenario):
     """Hand-typing someone else's workspace id must not reveal it."""
     client, sessions = api

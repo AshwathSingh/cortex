@@ -97,7 +97,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
   }, [requestVersion, router, workspaceId]);
 
   const sources = state.kind === "ready" ? state.sources : [];
-  const canAddSources = canManageSources(workspace?.role);
+  const canAddSources = canManageSources(workspace?.permissions);
   const indexedItems = sources.reduce(
     (total, source) => total + source.total_items,
     0,

@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { AuthenticatedUser } from "@/lib/api-types";
+import { postAuthDestination } from "@/lib/invite-link";
 
 type GitHubCallbackProps = {
   code: string | null;
@@ -40,7 +41,7 @@ export function GitHubCallback({ code, state, error }: GitHubCallbackProps) {
       body: JSON.stringify({ code, state }),
     })
       .then(() => {
-        router.replace("/workspaces");
+        router.replace(postAuthDestination());
         router.refresh();
       })
       .catch((requestError: unknown) => {
