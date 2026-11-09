@@ -15,11 +15,13 @@ import {
   ReviewIcon,
   SourcesIcon,
 } from "@/components/navigation/sidebar-icons";
+import { SourceFailureBanner } from "@/components/sources/source-failures";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { AuthenticatedUser, WorkspaceSummary } from "@/lib/api-types";
 import { rememberLastWorkspace } from "@/lib/last-workspace";
 import { routes } from "@/lib/routes";
+import { useSourceFailures } from "@/lib/use-source-failures";
 
 import {
   AssistantConversationProvider,
@@ -91,6 +93,10 @@ function WorkspaceShellFrame({
 }) {
   const activePath = usePathname();
   const router = useRouter();
+  // US-12 AC1: the notice belongs to the workspace, not to the Sources page.
+  // Mounted in the shell so a broken source is reported wherever the reader is,
+  // which is the whole difference between being told and having to go and look.
+  const { failures } = useSourceFailures(workspaceId);
   const {
     conversations,
     activeConversationId,
@@ -182,7 +188,10 @@ function WorkspaceShellFrame({
             <FeedbackAlert message={error} />
           </main>
         ) : (
-          children
+          <>
+            <SourceFailureBanner workspaceId={workspaceId} failures={failures} />
+            {children}
+          </>
         )}
       </div>
     </div>

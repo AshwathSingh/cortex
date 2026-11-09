@@ -176,7 +176,8 @@ def test_valid_repo_ingests(api_db):
     r = c.post(URL, json=body())
     assert r.status_code == 200
     assert r.json() == {"repo": "o/r", "pull_requests": 1, "issues": 1}
-    assert len(driver.tx.calls) == 4
+    # Four upserts plus T-12.3's five reconciliation statements.
+    assert len(driver.tx.calls) == 9
 
 
 def test_empty_repo_is_still_recorded(api_db):
@@ -186,7 +187,9 @@ def test_empty_repo_is_still_recorded(api_db):
 
     assert r.status_code == 200
     assert r.json() == {"repo": "o/r", "pull_requests": 0, "issues": 0}
-    assert len(driver.tx.calls) == 1
+    # The repository node, then the prunes -- an empty fetch is how "every item
+    # was deleted upstream" arrives, and it has to clear the leftovers (T-12.3).
+    assert len(driver.tx.calls) == 4
 
 
 @pytest.mark.parametrize("url", ["", "not a url", "https://gitlab.com/a/b", "https://github.com/only"])

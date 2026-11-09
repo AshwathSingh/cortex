@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { ChatConnections } from "@/components/sources/chat-connections";
+import { SourceFailureList } from "@/components/sources/source-failures";
 import { SourceStatus } from "@/components/sources/source-status";
+import { DocumentUpload } from "@/components/uploads/document-upload";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
@@ -13,6 +16,8 @@ import { useWorkspace } from "@/components/workspaces/workspace-context";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { IngestResult, WorkspaceSource } from "@/lib/api-types";
 import { routes } from "@/lib/routes";
+import { githubUrl, sourceKindMeta } from "@/lib/source-kinds";
+import { useSourceFailures } from "@/lib/use-source-failures";
 import { canManageSources } from "@/lib/workspace-permissions";
 
 type State =
@@ -47,8 +52,27 @@ function ArrowUpRightIcon() {
   );
 }
 
-function githubUrl(repo: string) {
-  return `https://github.com/${repo.split("/").map(encodeURIComponent).join("/")}`;
+function DocumentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="size-5">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
+      <path d="M14 3v5h5M9 13h6M9 17h4" />
+    </svg>
+  );
+}
+
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="size-5">
+      <path d="M20 14.5A2.5 2.5 0 0 1 17.5 17H9l-4 3v-3.5A2.5 2.5 0 0 1 4 14V6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8Z" />
+    </svg>
+  );
+}
+
+function sourceIcon(kind: string) {
+  if (kind === "upload") return <DocumentIcon />;
+  if (kind === "github") return <RepositoryIcon />;
+  return <ChatIcon />;
 }
 
 function itemLabel(count: number, singular: string) {
@@ -63,6 +87,9 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
   const [syncingRepo, setSyncingRepo] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const resyncControllerRef = useRef<AbortController | null>(null);
+  // T-12.2: the same list the workspace banner counts, so the two cannot
+  // disagree about what is broken.
+  const { failures, refresh: refreshFailures } = useSourceFailures(workspaceId);
 
   useEffect(() => () => resyncControllerRef.current?.abort(), []);
 
@@ -159,6 +186,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
       if (!controller.signal.aborted) {
         setSyncingRepo(null);
         setRequestVersion((version) => version + 1);
+        refreshFailures();
       }
       if (resyncControllerRef.current === controller) {
         resyncControllerRef.current = null;
@@ -172,7 +200,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
         headingId="sources-title"
         eyebrow="Knowledge inputs"
         title="Sources"
-        description="Repositories Cortex uses to build this workspace's project memory."
+        description="Repositories, documents and chat channels Cortex uses to build this workspace's project memory."
         action={canAddSources ? (
           <Link
             href={routes.workspace.ingest(workspaceId)}
@@ -205,6 +233,17 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
         </div>
       ) : null}
 
+      {state.kind === "ready" && !isWorkspaceLoading ? (
+        <SourceFailureList
+          workspaceId={workspaceId}
+          failures={failures}
+          onChanged={() => {
+            setRequestVersion((version) => version + 1);
+            refreshFailures();
+          }}
+        />
+      ) : null}
+
       {state.kind === "ready" && !isWorkspaceLoading && sources.length === 0 ? (
         <EmptyState
           icon={<RepositoryIcon />}
@@ -233,7 +272,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
                 id="indexed-sources-heading"
                 className="text-base font-semibold text-foreground"
               >
-                Indexed repositories
+                Indexed sources
               </h2>
               <p className="mt-1 text-sm text-muted">
                 {itemLabel(sources.length, "source")} ·{" "}
@@ -247,6 +286,9 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
           <ul className="divide-y divide-border/20">
             {sources.map((source) => {
               const isResyncing = syncingRepo === source.repo;
+              const meta = sourceKindMeta(source.kind);
+              const title = meta.title(source);
+              const href = meta.href(source);
               return (
                 <li
                   key={`${source.kind}:${source.repo}`}
@@ -254,57 +296,54 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
                 >
                   <div className="flex min-w-0 items-center gap-4">
                     <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-border/30 bg-surface-raised text-muted">
-                      <RepositoryIcon />
+                      {sourceIcon(source.kind)}
                     </span>
                     <div className="min-w-0">
-                      <a
-                        href={githubUrl(source.repo)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex max-w-full items-center gap-1.5 font-medium text-foreground transition-colors hover:text-accent-bright"
-                      >
-                        <span className="truncate">{source.repo}</span>
-                        <ArrowUpRightIcon />
-                        <span className="sr-only"> (opens on GitHub)</span>
-                      </a>
+                      {href ? (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex max-w-full items-center gap-1.5 font-medium text-foreground transition-colors hover:text-accent-bright"
+                        >
+                          <span className="truncate">{title}</span>
+                          <ArrowUpRightIcon />
+                          {meta.destination ? (
+                            <span className="sr-only">
+                              {` (opens on ${meta.destination})`}
+                            </span>
+                          ) : null}
+                        </a>
+                      ) : (
+                        // An uploaded file was read and discarded, and Slack
+                        // has no addressable URL for a team that does not depend
+                        // on its own subdomain, so there is nothing to open.
+                        <p className="truncate font-medium text-foreground">{title}</p>
+                      )}
                       <SourceStatus
                         source={isResyncing ? { ...source, status: "PENDING" } : source}
                       />
                     </div>
                   </div>
                   <div className="flex items-center justify-end gap-6">
-                    <dl className="grid grid-cols-3 gap-6 text-right">
-                      <div>
-                        <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-                          Pull requests
-                        </dt>
-                        <dd className="mt-1 font-mono text-sm text-foreground">
-                          {source.pull_requests.toLocaleString()}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-                          Issues
-                        </dt>
-                        <dd className="mt-1 font-mono text-sm text-foreground">
-                          {source.issues.toLocaleString()}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
-                          Indexed
-                        </dt>
-                        <dd className="mt-1 font-mono text-sm text-foreground">
-                          {source.total_items.toLocaleString()}
-                        </dd>
-                      </div>
+                    <dl className="grid auto-cols-fr grid-flow-col gap-6 text-right">
+                      {meta.countColumns.map((column) => (
+                        <div key={column.label}>
+                          <dt className="text-[0.65rem] font-semibold uppercase tracking-[0.12em] text-subtle">
+                            {column.label}
+                          </dt>
+                          <dd className="mt-1 font-mono text-sm text-foreground">
+                            {column.value(source).toLocaleString()}
+                          </dd>
+                        </div>
+                      ))}
                     </dl>
-                    {canAddSources ? (
+                    {canAddSources && source.kind === "github" ? (
                       <Button
                         type="button"
                         size="small"
                         variant="muted"
-                        aria-label={`Re-sync ${source.repo}`}
+                        aria-label={`Re-sync ${title}`}
                         onClick={() => void resync(source.repo)}
                         disabled={isSyncing || source.status === "PENDING"}
                       >
@@ -317,6 +356,22 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
             })}
           </ul>
         </section>
+      ) : null}
+
+      {/* Both shown even with nothing indexed yet: uploading a PRD or
+          connecting Slack is how an empty workspace gets its first source, and
+          neither is a repository. */}
+      {state.kind !== "loading" && !isWorkspaceLoading && canAddSources ? (
+        <DocumentUpload
+          workspaceId={workspaceId}
+          onUploaded={() => setRequestVersion((version) => version + 1)}
+        />
+      ) : null}
+      {state.kind !== "loading" && !isWorkspaceLoading && canAddSources ? (
+        <ChatConnections
+          workspaceId={workspaceId}
+          onIngested={() => setRequestVersion((version) => version + 1)}
+        />
       ) : null}
     </PageShell>
   );

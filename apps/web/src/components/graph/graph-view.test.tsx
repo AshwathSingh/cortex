@@ -31,11 +31,17 @@ vi.mock("@/components/graph/graph-canvas", () => ({
       <button onClick={() => onSelectionChange({ kind: "node", key: "Issue:30" })}>Select issue</button>
       <button onClick={() => onSelectionChange({ kind: "edge", edge: { source: "Author:1", target: "PullRequest:20", type: "AUTHORED" } })}>Select edge</button>
       <button onClick={() => onSelectionChange(null)}>Blank canvas</button>
+      <button onClick={() => onSelectionChange({ kind: "node", key: SECTION_KEY })}>Select section</button>
+      <button onClick={() => onSelectionChange({ kind: "node", key: MESSAGE_KEY })}>Select message</button>
     </div>
   ),
 }));
 
 const WORKSPACE_ID = "ccccccc0-0000-4000-8000-00000000c0de";
+/** An uploaded document's node id is a prefixed string, not an integer (US-09). */
+const SECTION_KEY = "DocumentSection:upload/4f1c9a2b/0";
+/** A chat node id carries its channel and is not an integer (US-08). */
+const MESSAGE_KEY = "Message:slack/C0ABC/1730000000.000100";
 const node: GraphNode = {
   key: "PullRequest:20", id: 20, type: "PullRequest", title: "#3 Add graph details",
   url: "https://github.com/acme/repo/pull/3", state: "open", repo: "acme/repo", number: 3,
@@ -156,6 +162,104 @@ describe("GraphView inspector flow", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Graph database unavailable");
   });
 
+  it("names every node type in the legend, documents and chat included", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(jsonResponse(graph))));
+    render(<GraphView workspaceId={WORKSPACE_ID} />);
+
+    await screen.findByRole("button", { name: "Select node" });
+
+    for (const label of [
+      "Author",
+      "Pull request",
+      "Issue",
+      "Document",
+      "Section",
+      "Channel",
+      "Message",
+    ]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+  });
+
+  it("fetches a document section's details by its slash-separated id", async () => {
+    const section: GraphNode = {
+      key: SECTION_KEY, id: "upload/4f1c9a2b/0", type: "DocumentSection",
+      title: "Scope", url: null, state: null, repo: null, number: null,
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (new URL(url, "http://localhost").pathname.endsWith("/graph")) {
+        return Promise.resolve(
+          jsonResponse({ ...graph, nodes: [section], edges: [] }),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({
+          key: SECTION_KEY, id: section.id, type: "DocumentSection",
+          title: "Scope", content: "Ingestion only.",
+          attributes: { filename: "prd.md", position: 0 }, origins: [],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GraphView workspaceId={WORKSPACE_ID} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Select section" }));
+
+    expect(await screen.findByText("Ingestion only.")).toBeInTheDocument();
+    // encodeURIComponent turns the id's slashes into %2F; the route's :path
+    // converter is what puts them back.
+    const detailCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("/graph/nodes/DocumentSection/"),
+    )!;
+    expect(String(detailCall[0])).toContain("upload%2F4f1c9a2b%2F0");
+  });
+
+  it("fetches a chat message's details by its slash-separated id", async () => {
+    const messageKey = MESSAGE_KEY;
+    const message: GraphNode = {
+      key: messageKey, id: "slack/C0ABC/1730000000.000100", type: "Message",
+      title: "We are going with Postgres", url: "https://slack.com/app_redirect?channel=C0ABC",
+      state: null, repo: null, number: null,
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (new URL(url, "http://localhost").pathname.endsWith("/graph")) {
+        return Promise.resolve(
+          jsonResponse({ ...graph, nodes: [message], edges: [] }),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({
+          key: messageKey, id: message.id, type: "Message", title: message.title,
+          content: "We are going with Postgres", attributes: {},
+          origins: [{
+            key: messageKey, type: "Message", title: message.title,
+            url: message.url!, relationship: null, direction: null,
+          }],
+        }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GraphView workspaceId={WORKSPACE_ID} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Select message" }));
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes("/graph/nodes/Message/"),
+        ),
+      ).toBe(true),
+    );
+    // encodeURIComponent turns the id's slashes into %2F; the route's :path
+    // converter is what puts them back.
+    const detailCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("/graph/nodes/Message/"),
+    )!;
+    expect(String(detailCall[0])).toContain("slack%2FC0ABC%2F1730000000.000100");
+  });
+
   it("requests selected edge evidence and renders its connected sources", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
@@ -241,7 +345,11 @@ describe("GraphView relationship mutations", () => {
 
   it("does not create a relationship when the rationale prompt is cancelled", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse(mutationGraph)));
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      void input;
+      void init;
+      return Promise.resolve(jsonResponse(mutationGraph));
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<GraphView workspaceId={WORKSPACE_ID} canEdit />);
@@ -252,7 +360,12 @@ describe("GraphView relationship mutations", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(screen.getByText("Relationship creation cancelled.")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Counting every call would also count US-27's comment activity read; what
+    // cancelling has to prevent is the write.
+    const writes = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).includes("/graph/edges") && init?.method === "POST",
+    );
+    expect(writes).toHaveLength(0);
   });
 
   it("deletes a selected relationship for a workspace writer", async () => {
@@ -313,7 +426,11 @@ describe("GraphView artifact filters", () => {
     fireEvent.click(screen.getByRole("button", { name: "Author" }));
     expect(screen.getByTestId("visible-node-keys")).toHaveTextContent("PullRequest:20");
     expect(screen.getByTestId("visible-edge-count")).toHaveTextContent("0");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // Graph reads only: US-27's comment activity is a request of its own.
+    const graphReads = fetchMock.mock.calls.filter(([url]) =>
+      new URL(String(url), "http://localhost").pathname.endsWith("/graph"),
+    );
+    expect(graphReads).toHaveLength(3);
   });
 
   it("shows a clear empty graph state when no artifact types are selected", async () => {
@@ -345,7 +462,7 @@ describe("GraphView artifact filters", () => {
     fireEvent.submit(screen.getByRole("search"));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      `/api/workspaces/${WORKSPACE_ID}/graph?q=graph&types=Author&types=PullRequest&types=Issue`,
+      `/api/workspaces/${WORKSPACE_ID}/graph?q=graph&types=Author&types=PullRequest&types=Issue&types=Document&types=DocumentSection&types=Channel&types=Message`,
       expect.objectContaining({ credentials: "same-origin" }),
     ));
     await waitFor(() => expect(screen.getByTestId("highlighted-node-keys")).toHaveTextContent(
@@ -413,7 +530,7 @@ describe("GraphView artifact filters", () => {
     expect(screen.getByRole("button", { name: "Clear search" })).toBeInTheDocument();
     fireEvent.submit(screen.getByRole("search"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      `/api/workspaces/${WORKSPACE_ID}/graph?q=graph&types=Author&types=PullRequest&types=Issue`,
+      `/api/workspaces/${WORKSPACE_ID}/graph?q=graph&types=Author&types=PullRequest&types=Issue&types=Document&types=DocumentSection&types=Channel&types=Message`,
       expect.anything(),
     ));
 

@@ -35,9 +35,8 @@ if TYPE_CHECKING:
     from app.models.user import User
     from app.models.workspace import Workspace
 
-# The only ``kind`` that exists. A plain string rather than an enum: the next
-# source type should not need a migration to add a value, and nothing branches
-# on it except the graph-count lookup, which is GitHub-specific anyway.
+# A plain string rather than an enum: a new source type should not need a
+# migration to add a value.
 GITHUB_KIND = "github"
 
 
@@ -72,8 +71,13 @@ class DataSource(Base):
         index=True,
     )
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
-    #: ``owner/repo`` for ``kind="github"``.
+    #: ``owner/repo`` for ``kind="github"``, the filename for ``kind="upload"``.
     external_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    # What to call the source on screen, when ``external_ref`` is not already
+    # it. NULL for GitHub, whose ref *is* its name. US-09 needs it because an
+    # upload that failed has no graph node to read a filename from, and that row
+    # is the only record the upload ever happened.
+    display_name: Mapped[str | None] = mapped_column(String(512))
     status: Mapped[SyncStatus] = mapped_column(
         Enum(SyncStatus, name="data_source_sync_status"), nullable=False
     )
@@ -92,6 +96,15 @@ class DataSource(Base):
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     #: The user-facing detail of the last failure; cleared by a success.
     last_error: Mapped[str | None] = mapped_column(Text)
+    # T-12.1: which *kind* of failure, so the UI can offer the right fix --
+    # re-authorize, wait, or correct the reference. ``last_error`` alone cannot
+    # be branched on without parsing English.
+    #
+    # Plain text rather than a database enum, for the same reason ``kind`` is:
+    # adding a category should not need a migration. The application maps it
+    # through ``app.services.source_failures.FailureCategory`` and treats
+    # anything it does not recognise as UNKNOWN.
+    last_error_code: Mapped[str | None] = mapped_column(String(32))
     # Who last refreshed it. The workspace is shared, so "Synced 5 min ago by
     # Ashwath" answers the question the timestamp alone raises. SET NULL rather
     # than CASCADE: losing a member must not erase the source's sync history.

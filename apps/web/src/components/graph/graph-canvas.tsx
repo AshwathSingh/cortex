@@ -9,7 +9,14 @@ import {
   type PointerEvent,
 } from "react";
 
-import type { GraphEdge, GraphNode, GraphNodeType, GraphSelection } from "@/lib/api-types";
+import type {
+  CommentActivity,
+  GraphEdge,
+  GraphNode,
+  GraphNodeType,
+  GraphSelection,
+} from "@/lib/api-types";
+import { activityIndex, edgeTargetKey } from "@/lib/graph-comment-target";
 import { GraphSimulation, type NodeSpec } from "@/lib/graph-layout";
 
 /** Fallbacks keep canvas rendering deterministic when CSS variables are unavailable. */
@@ -17,15 +24,52 @@ export const NODE_COLOURS: Record<GraphNodeType, string> = {
   Author: "#78a0ff",
   PullRequest: "#7ddfa0",
   Issue: "#e0a86a",
+  // US-09 AC5 and US-08. Deliberately away from the blue/green/amber above so
+  // an uploaded document or a chat node is not mistaken for a GitHub item at a
+  // glance. US-08 picked #c48fe8 for a channel independently of US-09 picking
+  // it for a document; the channel moved to teal when the two came together.
+  Document: "#c48fe8",
+  DocumentSection: "#9fb0c9",
+  Channel: "#5fd4c4",
+  Message: "#e894b8",
 };
 
-export type NodeShape = "circle" | "square" | "diamond";
+export type NodeShape =
+  | "circle"
+  | "square"
+  | "diamond"
+  | "hexagon"
+  | "triangle"
+  | "triangle-down"
+  | "pentagon";
 
+/**
+ * Shape carries the type as well as colour, so the canvas stays readable
+ * without relying on colour alone.
+ */
 export const NODE_SHAPES: Record<GraphNodeType, NodeShape> = {
   Author: "circle",
   PullRequest: "square",
   Issue: "diamond",
+  Document: "hexagon",
+  DocumentSection: "triangle",
+  // US-08 chose hexagon and triangle too, for the same hub-and-leaf reason.
+  // Seven types need seven silhouettes, so chat took the two new ones.
+  Channel: "pentagon",
+  Message: "triangle-down",
 };
+
+/**
+ * Types that many other nodes hang off, drawn larger and pushed harder apart.
+ * A document and a channel are hubs for the same reason an author is: every one
+ * of their sections or messages attaches to the one node, so leaf-sized they
+ * would disappear under their own edges.
+ */
+const HUB_TYPES = new Set<string>(["Author", "Document", "Channel"]);
+
+export function isHubType(type: string): boolean {
+  return HUB_TYPES.has(type);
+}
 
 const FALLBACK_COLOUR = "#a4adbd";
 const FALLBACK_SHAPE: NodeShape = "circle";
@@ -54,6 +98,16 @@ const KEEP_VISIBLE = 96;
 /** Clickable halo beyond a node's rim / an edge's line, in screen pixels. */
 const NODE_HIT_SLACK = 7;
 const EDGE_HIT_SLACK = 8;
+/**
+ * T-27.4: the comment badge.
+ *
+ * Unseen is drawn solid and a little larger; already-read is hollow. The
+ * difference is shape, not colour, so it survives a colour-blind reader and a
+ * greyscale screenshot -- the same rule the node types follow.
+ */
+const BADGE_RADIUS = 4.4;
+const BADGE_UNSEEN_RADIUS = 5.4;
+const BADGE_HALO_WIDTH = 2;
 const NO_HIGHLIGHTS: string[] = [];
 
 type Box = { x1: number; y1: number; x2: number; y2: number };
@@ -69,6 +123,12 @@ type GraphCanvasProps = {
   highlightedNodeKeys?: string[];
   height?: number;
   onSelectionChange?: (selection: GraphSelection) => void;
+  /**
+   * T-27.4: which nodes and edges carry comments. Deliberately *not* a
+   * dependency of the layout effect -- a changing badge must repaint the canvas,
+   * never rebuild the simulation (see P-14.1).
+   */
+  commentActivity?: readonly CommentActivity[];
 };
 
 type HitNode = { key: string; x: number; y: number; radius: number };
@@ -246,6 +306,46 @@ function tracePath(
     );
     return;
   }
+  if (shape === "hexagon") {
+    const hexExtent = radius * 1.08;
+    for (let corner = 0; corner < 6; corner += 1) {
+      // Start at -90deg so the hexagon sits flat-sided, not point-up, which
+      // reads as a distinct silhouette next to the diamond.
+      const angle = (Math.PI / 3) * corner - Math.PI / 2;
+      const px = x + Math.cos(angle) * hexExtent;
+      const py = y + Math.sin(angle) * hexExtent;
+      if (corner === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    return;
+  }
+  if (shape === "triangle" || shape === "triangle-down") {
+    // Slightly oversized: a triangle of equal radius looks smaller than a
+    // circle because so much of its bounding box is empty.
+    const triExtent = radius * 1.3;
+    // Pointing down rather than up is a silhouette of its own at this size,
+    // which is what keeps a message apart from a document section.
+    const flip = shape === "triangle-down" ? -1 : 1;
+    ctx.moveTo(x, y - triExtent * flip);
+    ctx.lineTo(x + triExtent * 0.92, y + triExtent * 0.62 * flip);
+    ctx.lineTo(x - triExtent * 0.92, y + triExtent * 0.62 * flip);
+    ctx.closePath();
+    return;
+  }
+  if (shape === "pentagon") {
+    const pentExtent = radius * 1.14;
+    for (let corner = 0; corner < 5; corner += 1) {
+      // Point-up, so it is not read as the flat-sided hexagon beside it.
+      const angle = ((Math.PI * 2) / 5) * corner - Math.PI / 2;
+      const px = x + Math.cos(angle) * pentExtent;
+      const py = y + Math.sin(angle) * pentExtent;
+      if (corner === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    return;
+  }
   const diamondExtent = radius * 1.18;
   ctx.moveTo(x, y - diamondExtent);
   ctx.lineTo(x + diamondExtent, y);
@@ -268,6 +368,7 @@ export function GraphCanvas({
   highlightedNodeKeys = NO_HIGHLIGHTS,
   height = 560,
   onSelectionChange,
+  commentActivity,
 }: GraphCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<number | null>(null);
@@ -278,6 +379,7 @@ export function GraphCanvas({
   const redrawRef = useRef<(() => void) | null>(null);
   const panRef = useRef<PanGesture | null>(null);
   const didDragRef = useRef(false);
+  const activityRef = useRef<Map<string, CommentActivity>>(new Map());
   const hoveredSelectionRef = useRef<GraphSelection>(null);
   const [zoomPercent, setZoomPercent] = useState(100);
   const [isHoveringInteractive, setIsHoveringInteractive] = useState(false);
@@ -285,6 +387,14 @@ export function GraphCanvas({
   useEffect(() => {
     selectionHandlerRef.current = onSelectionChange;
   }, [onSelectionChange]);
+
+  // A repaint, not a relayout. Badges change as people comment and as the
+  // reader opens threads, and rebuilding the simulation for that would move
+  // every node -- which is the bug P-14.1 fixed.
+  useEffect(() => {
+    activityRef.current = activityIndex(commentActivity ?? []);
+    redrawRef.current?.();
+  }, [commentActivity]);
 
   useEffect(() => {
     const maybeCanvas = canvasRef.current;
@@ -306,34 +416,61 @@ export function GraphCanvas({
       frameRef.current = null;
     }
 
-    function renderGraph() {
-      if (disposed) return;
-      cancelFrame();
+    function measure() {
+      const rect = parent.getBoundingClientRect();
+      return {
+        width: Math.max(1, Math.round(parent.clientWidth || rect.width || 960)),
+        height: Math.max(
+          1,
+          Math.round(parent.clientHeight || rect.height || height),
+        ),
+      };
+    }
 
-      const parentRect = parent.getBoundingClientRect();
-      const width = Math.max(1, Math.round(parent.clientWidth || parentRect.width || 960));
-      const measuredHeight = Math.max(
-        1,
-        Math.round(parent.clientHeight || parentRect.height || height),
-      );
+    /**
+     * P-14.1: the box the simulation lays out in, measured once per graph.
+     *
+     * It deliberately does not follow the element. Opening the inspector takes
+     * 22rem off the canvas, and rebuilding the simulation against the narrower
+     * box re-seeded every node -- so selecting one node rearranged the whole
+     * graph underneath the reader, including the node they had just clicked.
+     *
+     * Positions belong to the data, not to the viewport. The canvas still
+     * resizes; only the layout stays put, and panning and zooming cover the
+     * difference.
+     */
+    const layout = measure();
+
+    /** The canvas as it is right now, in CSS px, with its device-pixel scale. */
+    const view = {
+      width: layout.width,
+      height: layout.height,
+      scaleX: 1,
+      scaleY: 1,
+    };
+
+    function sizeCanvas() {
+      const { width, height: measuredHeight } = measure();
       const ratio = window.devicePixelRatio || 1;
       const deviceWidth = Math.round(width * ratio);
       const deviceHeight = Math.round(measuredHeight * ratio);
-      const deviceScaleX = deviceWidth / width;
-      const deviceScaleY = deviceHeight / measuredHeight;
-
       canvas.width = deviceWidth;
       canvas.height = deviceHeight;
       canvas.style.width = `${width}px`;
       canvas.style.height = `${measuredHeight}px`;
-      ctx.setTransform(
-        deviceScaleX,
-        0,
-        0,
-        deviceScaleY,
-        0,
-        0,
-      );
+      view.width = width;
+      view.height = measuredHeight;
+      view.scaleX = deviceWidth / width;
+      view.scaleY = deviceHeight / measuredHeight;
+    }
+
+    function renderGraph() {
+      if (disposed) return;
+      cancelFrame();
+
+      sizeCanvas();
+      const { width, height: measuredHeight } = layout;
+      ctx.setTransform(view.scaleX, 0, 0, view.scaleY, 0, 0);
 
       const styles = window.getComputedStyle(canvas);
       const resolvedFamily = styles.fontFamily || "system-ui, sans-serif";
@@ -345,6 +482,18 @@ export function GraphCanvas({
           NODE_COLOURS.PullRequest,
         ),
         Issue: cssValue(styles, "--cortex-graph-issue", NODE_COLOURS.Issue),
+        Document: cssValue(
+          styles,
+          "--cortex-graph-document",
+          NODE_COLOURS.Document,
+        ),
+        DocumentSection: cssValue(
+          styles,
+          "--cortex-graph-document-section",
+          NODE_COLOURS.DocumentSection,
+        ),
+        Channel: cssValue(styles, "--cortex-graph-channel", NODE_COLOURS.Channel),
+        Message: cssValue(styles, "--cortex-graph-message", NODE_COLOURS.Message),
       };
       const edgeColour = cssValue(
         styles,
@@ -356,6 +505,8 @@ export function GraphCanvas({
         "--cortex-graph-edge-hub",
         "rgba(120, 160, 255, 0.38)",
       );
+      const badgeColour = cssValue(styles, "--cortex-graph-comment", "#c9a2ff");
+      const badgeHalo = cssValue(styles, "--cortex-graph-badge-halo", "#070a0f");
       const labelColour = cssValue(styles, "--cortex-graph-label", "#c7cedd");
       const dimLabelColour = cssValue(
         styles,
@@ -377,7 +528,7 @@ export function GraphCanvas({
       }
 
       const radiusOf = (node: GraphNode): number => {
-        if (node.type !== "Author") return LEAF_RADIUS;
+        if (!isHubType(node.type)) return LEAF_RADIUS;
         return Math.min(
           AUTHOR_MAX_RADIUS,
           AUTHOR_RADIUS + (degree.get(node.key) ?? 0) * AUTHOR_GROWTH,
@@ -386,7 +537,7 @@ export function GraphCanvas({
       const specs: NodeSpec[] = nodes.map((node) => ({
         key: node.key,
         radius: radiusOf(node),
-        charge: node.type === "Author" ? 2.4 : 1,
+        charge: isHubType(node.type) ? 2.4 : 1,
       }));
       const simulation = new GraphSimulation(specs, edges, {
         width,
@@ -397,8 +548,10 @@ export function GraphCanvas({
       );
 
       function draw() {
-        ctx.setTransform(deviceScaleX, 0, 0, deviceScaleY, 0, 0);
-        ctx.clearRect(0, 0, width, measuredHeight);
+        // The live canvas, not the layout box: the two differ as soon as the
+        // inspector opens, and clearing the old size leaves a smear.
+        ctx.setTransform(view.scaleX, 0, 0, view.scaleY, 0, 0);
+        ctx.clearRect(0, 0, view.width, view.height);
         ctx.save();
         const viewport = viewportRef.current;
         const hoveredSelection = hoveredSelectionRef.current;
@@ -479,6 +632,56 @@ export function GraphCanvas({
           ctx.fill();
         }
 
+        // T-27.4: comment badges, drawn above every node and edge so one is
+        // never hidden under the thing it belongs to.
+        const activity = activityRef.current;
+        if (activity.size > 0) {
+          const badge = (x: number, y: number, unseen: boolean) => {
+            const radius = unseen ? BADGE_UNSEEN_RADIUS : BADGE_RADIUS;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            // The halo goes down first and keeps its outer half, so the badge
+            // reads against a node fill or an edge line underneath it.
+            ctx.lineWidth = BADGE_HALO_WIDTH;
+            ctx.strokeStyle = badgeHalo;
+            ctx.stroke();
+            if (unseen) {
+              ctx.fillStyle = badgeColour;
+              ctx.fill();
+              return;
+            }
+            // Already read: a ring rather than a disc.
+            ctx.fillStyle = badgeHalo;
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.lineWidth = 1.6;
+            ctx.strokeStyle = badgeColour;
+            ctx.stroke();
+          };
+
+          for (const edge of edges) {
+            const entry = activity.get(`edge:${edgeTargetKey(edge)}`);
+            if (!entry) continue;
+            const source = simulation.nodeAt(edge.source);
+            const target = simulation.nodeAt(edge.target);
+            if (!source || !target) continue;
+            badge(
+              (source.x + target.x) / 2,
+              (source.y + target.y) / 2,
+              entry.unseen > 0,
+            );
+          }
+
+          for (const placed of drawOrder) {
+            const entry = activity.get(`node:${placed.key}`);
+            if (!entry) continue;
+            // Up and to the right of the rim, where a label never goes.
+            const offset = placed.radius * 0.72;
+            badge(placed.x + offset, placed.y - offset, entry.unseen > 0);
+          }
+        }
+
         ctx.font = `${LABEL_FONT}px ${resolvedFamily}`;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
@@ -487,7 +690,7 @@ export function GraphCanvas({
         for (const placed of drawOrder) {
           const node = byKey.get(placed.key);
           if (!node) continue;
-          const isHub = node.type === "Author";
+          const isHub = isHubType(node.type);
           const text = truncate(node.title, isHub ? 22 : 26);
           const textWidth = ctx.measureText(text).width;
           const cx = Math.round(placed.x);
@@ -531,9 +734,34 @@ export function GraphCanvas({
       }
     }
 
+    /**
+     * Follow the element without touching the layout: resize the backing store,
+     * then slide the viewport by half the change so whatever was in the middle
+     * of the canvas stays there. Without the slide, opening a 22rem inspector
+     * would shift the graph 11rem to the right of where the reader left it.
+     */
+    function handleResize() {
+      if (disposed) return;
+      const previous = { width: view.width, height: view.height };
+      sizeCanvas();
+      const dx = (view.width - previous.width) / 2;
+      const dy = (view.height - previous.height) / 2;
+      if (dx !== 0 || dy !== 0) {
+        viewportRef.current = clampPan(
+          {
+            ...viewportRef.current,
+            offsetX: viewportRef.current.offsetX + dx,
+            offsetY: viewportRef.current.offsetY + dy,
+          },
+          { width: view.width, height: view.height },
+        );
+      }
+      redrawRef.current?.();
+    }
+
     renderGraph();
     if (typeof ResizeObserver !== "undefined") {
-      resizeObserver = new ResizeObserver(renderGraph);
+      resizeObserver = new ResizeObserver(handleResize);
       resizeObserver.observe(parent);
     }
 

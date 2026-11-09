@@ -5,26 +5,54 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.sources.base import (
+    InvalidSourceRef,
+    SourceAPIError,
+    SourceNotFound,
+    SourceRateLimited,
+    SourceUnauthorized,
+)
+
 API_BASE = "https://api.github.com"
 PER_PAGE = 100
 
 
-class InvalidRepoURL(ValueError):
+# T-8.1: these keep their GitHub names -- the client's callers and README use
+# them -- but each now subclasses the provider-independent error the ingestion
+# pipeline maps to an HTTP status, so the endpoint no longer names GitHub.
+
+
+class InvalidRepoURL(InvalidSourceRef):
     pass
 
 
-class RepoNotFound(Exception):
+class RepoNotFound(SourceNotFound):
     pass
 
 
-class GitHubAPIError(Exception):
+class GitHubAPIError(SourceAPIError):
     pass
 
 
-class RateLimitExceeded(GitHubAPIError):
+class RateLimitExceeded(GitHubAPIError, SourceRateLimited):
     def __init__(self, wait_seconds: float):
-        super().__init__(f"GitHub rate limit hit; would need to wait {wait_seconds:.0f}s")
+        # Explicit rather than super(): the MRO reaches SourceRateLimited.__init__,
+        # which takes the wait in seconds where this one takes a message.
+        Exception.__init__(
+            self, f"GitHub rate limit hit; would need to wait {wait_seconds:.0f}s"
+        )
         self.wait_seconds = wait_seconds
+
+
+class GitHubUnauthorized(GitHubAPIError, SourceUnauthorized):
+    """The token is missing, expired or revoked (T-12.1).
+
+    Separate from the generic API error because it is the one failure the user
+    can fix themselves, by signing in again. It is raised only after the
+    rate-limit check: GitHub answers an exhausted *secondary* limit with 403
+    too, and reporting that as a dead token would send the reader to a sign-in
+    screen that fixes nothing.
+    """
 
 
 _SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -105,6 +133,10 @@ class GitHubClient:
             self._sleep(wait)
         if resp.status_code == 404:
             raise RepoNotFound(f"GitHub returned 404 for {url}")
+        if resp.status_code in (401, 403):
+            raise GitHubUnauthorized(
+                f"GitHub rejected the credentials for {url} ({resp.status_code})"
+            )
         if resp.status_code >= 400:
             raise GitHubAPIError(f"GitHub returned {resp.status_code} for {url}")
         return resp

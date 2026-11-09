@@ -21,9 +21,14 @@ function source(over: Partial<WorkspaceSource> = {}): WorkspaceSource {
     pull_requests: 8,
     issues: 3,
     total_items: 11,
+    sections: 0,
+    channels: 0,
+    messages: 0,
+    display_name: null,
     last_attempted_at: minutesAgo(5),
     last_synced_at: minutesAgo(5),
     last_error: null,
+    last_error_code: null,
     last_synced_by: "11111111-0000-4000-8000-000000000001",
     last_synced_by_name: "Ashwath",
     ...over,
@@ -40,6 +45,7 @@ function renderInventory(role: WorkspaceRole = "OWNER") {
           name: "Cortex",
           description: null,
           role,
+          // The UI reads permissions, not the role name (US-21 custom roles).
           permissions: role === "VIEWER" ? [] : ["sources.write"],
           created_at: "2026-09-24T00:00:00Z",
         },
@@ -63,17 +69,6 @@ const { replace, routerMock } = vi.hoisted(() => {
 
 vi.mock("next/navigation", () => ({ useRouter: () => routerMock }));
 
-function mockFetch(status: number, body: unknown) {
-  const fn = vi.fn().mockResolvedValue(
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    }),
-  );
-  vi.stubGlobal("fetch", fn);
-  return fn;
-}
-
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -81,12 +76,31 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+/**
+ * Answer the source list with `body` and every other endpoint with an empty
+ * array.
+ *
+ * A fresh Response per call, not one shared instance: a Response body can only
+ * be read once, so a single object silently fails the second reader -- and the
+ * page makes two requests now that T-12.2 polls for failures as well.
+ */
+function mockFetch(status: number, body: unknown) {
+  const fn = vi.fn((input: RequestInfo | URL) =>
+    Promise.resolve(
+      String(input).endsWith("/sources") ? jsonResponse(body, status) : jsonResponse([]),
+    ),
+  );
+  vi.stubGlobal("fetch", fn);
+  return fn;
+}
+
 const INGESTED = { repo: "openai/cortex", pull_requests: 8, issues: 3 };
 
 /**
- * Routes the two endpoints the page uses: successive GETs of the source list
- * walk `pages` (the last one repeats, so polling settles), and the re-sync POST
- * goes to `onIngest`.
+ * Routes the endpoints the page uses: successive GETs of the source list walk
+ * `pages` (the last one repeats, so polling settles), the re-sync POST goes to
+ * `onIngest`, and the chat-connections read answers empty -- `ChatConnections`
+ * has its own tests.
  */
 function mockApi(
   pages: WorkspaceSource[][],
@@ -95,6 +109,14 @@ function mockApi(
   let reads = 0;
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === "POST") return onIngest();
+    if (String(input).endsWith("/uploads")) {
+      return Promise.resolve(
+        jsonResponse({ filename: "prd.md", format: "text", sections: 1, replaced: false }),
+      );
+    }
+    // Everything else the page reads -- chat connections, failure polling --
+    // answers empty; each has tests of its own.
+    if (!String(input).endsWith("/sources")) return Promise.resolve(jsonResponse([]));
     const page = pages[Math.min(reads, pages.length - 1)];
     reads += 1;
     return Promise.resolve(jsonResponse(page));
@@ -122,7 +144,11 @@ describe("SourceInventory", () => {
     const fetchFn = mockFetch(200, []);
     renderInventory();
     await screen.findByText(/connect your first source/i);
-    expect(fetchFn.mock.calls[0][0]).toBe(`/api/workspaces/${WORKSPACE_ID}/sources`);
+    // Found rather than indexed: the page also polls for failures (T-12.2) and
+    // the order the two effects run in is React's business, not this test's.
+    expect(
+      fetchFn.mock.calls.map(([url]) => String(url)),
+    ).toContain(`/api/workspaces/${WORKSPACE_ID}/sources`);
   });
 
   it("shows connected repositories and their indexed counts", async () => {
@@ -220,16 +246,133 @@ describe("SourceInventory", () => {
   });
 
   it("shows access errors and can retry", async () => {
-    const fetchFn = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Workspace access denied" }), { status: 403, headers: { "Content-Type": "application/json" } }))
-      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    // Routed by URL rather than by call order: the page also reads chat
+    // connections and polls for failures (T-12.2), so "the first request" is no
+    // longer the source list.
+    let listReads = 0;
+    const fetchFn = vi.fn((input: RequestInfo | URL) => {
+      if (!String(input).endsWith("/sources")) {
+        return Promise.resolve(jsonResponse([]));
+      }
+      listReads += 1;
+      return Promise.resolve(
+        listReads === 1
+          ? jsonResponse({ detail: "Workspace access denied" }, 403)
+          : jsonResponse([]),
+      );
+    });
     vi.stubGlobal("fetch", fetchFn);
     const user = userEvent.setup();
     renderInventory();
     expect(await screen.findByRole("alert")).toHaveTextContent(/access denied/i);
     await user.click(screen.getByRole("button", { name: /try again/i }));
     expect(await screen.findByText(/connect your first source/i)).toBeInTheDocument();
-    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(listReads).toBe(2);
+  });
+
+  it("renders a Slack source by its team name with chat counts", async () => {
+    mockApi([
+      [
+        source({
+          kind: "slack",
+          repo: "T0ACME",
+          display_name: "Acme",
+          pull_requests: 0,
+          issues: 0,
+          channels: 2,
+          messages: 30,
+          total_items: 32,
+        }),
+      ],
+    ]);
+    renderInventory();
+
+    // The team id is the data_sources key, not something a reader recognises.
+    expect(await screen.findByText("Acme")).toBeInTheDocument();
+    expect(screen.queryByText("T0ACME")).not.toBeInTheDocument();
+    expect(screen.getByText("Channels")).toBeInTheDocument();
+    expect(screen.getByText("Messages")).toBeInTheDocument();
+    expect(screen.queryByText("Pull requests")).not.toBeInTheDocument();
+    // Slack has no addressable team URL, so the title is not a link.
+    expect(screen.queryByRole("link", { name: /Acme/ })).not.toBeInTheDocument();
+  });
+
+  it("offers Re-sync only for repositories", async () => {
+    // A chat re-sync needs channels chosen again, so the row cannot do it.
+    mockApi([
+      [
+        source({ kind: "slack", repo: "T0ACME", display_name: "Acme" }),
+        source(),
+      ],
+    ]);
+    renderInventory();
+
+    expect(
+      await screen.findByRole("button", { name: /re-sync openai\/cortex/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /re-sync acme/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders an uploaded document by its filename with its section count", async () => {
+    mockApi([
+      [
+        source({
+          kind: "upload",
+          repo: "prd.md",
+          display_name: "prd.md",
+          pull_requests: 0,
+          issues: 0,
+          sections: 4,
+          total_items: 5,
+        }),
+      ],
+    ]);
+    renderInventory();
+
+    expect(await screen.findByText("prd.md")).toBeInTheDocument();
+    expect(screen.getByText("Sections")).toBeInTheDocument();
+    expect(screen.queryByText("Pull requests")).not.toBeInTheDocument();
+    // The file was read and discarded, so the title is not a link.
+    expect(screen.queryByRole("link", { name: /prd\.md/ })).not.toBeInTheDocument();
+  });
+
+  it("offers Re-sync only for repositories", async () => {
+    // A document is re-indexed by uploading it again, not from its row.
+    mockApi([
+      [
+        source({ kind: "upload", repo: "prd.md", display_name: "prd.md" }),
+        source(),
+      ],
+    ]);
+    renderInventory();
+
+    expect(
+      await screen.findByRole("button", { name: /re-sync openai\/cortex/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /re-sync prd\.md/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers the upload zone to a member who can add sources", async () => {
+    mockApi([[source()]]);
+    renderInventory();
+
+    expect(
+      await screen.findByText(/Drop files here, or choose files/),
+    ).toBeInTheDocument();
+  });
+
+  it("does not offer the upload zone to a viewer", async () => {
+    mockApi([[source()]]);
+    renderInventory("VIEWER");
+
+    await screen.findByText("openai/cortex");
+    expect(
+      screen.queryByText(/Drop files here, or choose files/),
+    ).not.toBeInTheDocument();
   });
 
   // Re-syncing a connected source, and polling while one is mid-ingestion.
