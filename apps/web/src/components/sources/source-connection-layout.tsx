@@ -36,7 +36,7 @@ export function SourceConnectionLayout({
   return (
     <section
       aria-labelledby="source-connection-title"
-      className="mx-auto max-w-4xl"
+      className="max-w-4xl"
     >
       <Link
         href={backHref}
