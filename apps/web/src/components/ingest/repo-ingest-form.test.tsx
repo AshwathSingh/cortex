@@ -51,7 +51,7 @@ async function submit(url: string) {
   const user = userEvent.setup();
   renderForm();
   if (url) await user.type(screen.getByLabelText(/repository url/i), url);
-  await user.click(screen.getByRole("button", { name: /ingest repository/i }));
+  await user.click(screen.getByRole("button", { name: /add repository/i }));
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -65,13 +65,27 @@ describe("RepoIngestForm", () => {
     );
   });
 
+  it("explains what will be indexed before the repository is added", () => {
+    renderForm();
+
+    expect(
+      screen.getByRole("heading", { name: "Repository details" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "What Cortex indexes" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Pull requests")).toBeInTheDocument();
+    expect(screen.getByText("Issues")).toBeInTheDocument();
+    expect(screen.getByText("Contributors")).toBeInTheDocument();
+  });
+
   it("does not render the ingest form for viewers", () => {
     renderForm("VIEWER");
 
     expect(screen.getByRole("heading", { name: /view-only access/i })).toBeInTheDocument();
     expect(screen.getByText(/ask a workspace owner or editor/i)).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /ingest repository/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /add repository/i })).not.toBeInTheDocument();
   });
 
   it("posts the URL and the workspace, and shows the counts on success", async () => {
@@ -79,7 +93,7 @@ describe("RepoIngestForm", () => {
     await submit("https://github.com/o/r");
 
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "o/r: 3 pull requests, 2 issues",
+      "Added o/r: 3 pull requests and 2 issues.",
     );
     const [url, init] = fetchFn.mock.calls[0];
     expect(url).toBe("/api/ingest/github");
@@ -161,7 +175,7 @@ describe("RepoIngestForm", () => {
     );
     await submit("https://github.com/o/r");
 
-    expect(screen.getByRole("button", { name: /ingesting/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /adding repository/i })).toBeDisabled();
     expect(screen.getByLabelText(/repository url/i)).toBeDisabled();
 
     resolve(

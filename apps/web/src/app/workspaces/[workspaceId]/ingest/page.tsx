@@ -13,7 +13,7 @@ export default async function IngestPage({
 }: PageProps<"/workspaces/[workspaceId]/ingest">) {
   const { workspaceId } = await params;
   return (
-    <PageShell width="form">
+    <PageShell>
       <RepoIngestForm workspaceId={workspaceId} />
     </PageShell>
   );
