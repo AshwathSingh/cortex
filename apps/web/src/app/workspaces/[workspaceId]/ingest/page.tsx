@@ -4,8 +4,8 @@ import { RepoIngestForm } from "@/components/ingest/repo-ingest-form";
 import { PageShell } from "@/components/ui/page-layout";
 
 export const metadata: Metadata = {
-  title: "Add repository | Cortex",
-  description: "Add a GitHub repository to a Cortex workspace.",
+  title: "Connect GitHub | Cortex",
+  description: "Connect GitHub to a Cortex workspace.",
 };
 
 export default async function IngestPage({

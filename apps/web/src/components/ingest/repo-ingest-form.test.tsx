@@ -30,10 +30,9 @@ function renderForm(role: WorkspaceRole = "OWNER") {
         workspaceId: WORKSPACE_ID,
         workspace: {
           id: WORKSPACE_ID,
-          name: "Cortex",
+          name: "Ron Weasley's Workspace",
           description: null,
           role,
-          // The UI reads permissions, not the role name (US-21 custom roles).
           permissions: role === "VIEWER" ? [] : ["sources.write"],
           created_at: "2026-09-24T00:00:00Z",
         },
@@ -57,55 +56,57 @@ async function submit(url: string) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("RepoIngestForm", () => {
-  it("returns to the source inventory", () => {
+  it("personalizes the flow and links back to sources", () => {
     renderForm();
+
+    expect(
+      screen.getByRole("heading", { name: "Connect GitHub" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Ron Weasley's Workspace")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /back to sources/i })).toHaveAttribute(
       "href",
       `/workspaces/${WORKSPACE_ID}/sources`,
     );
   });
 
-  it("explains what will be indexed before the repository is added", () => {
+  it("explains what Cortex will use from GitHub", () => {
     renderForm();
 
     expect(
-      screen.getByRole("heading", { name: "Repository details" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "What Cortex indexes" }),
+      screen.getByRole("heading", { name: "What Cortex will use from GitHub" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Pull requests")).toBeInTheDocument();
     expect(screen.getByText("Issues")).toBeInTheDocument();
     expect(screen.getByText("Contributors")).toBeInTheDocument();
   });
 
-  it("does not render the ingest form for viewers", () => {
+  it("keeps the method read-only without source permissions", () => {
     renderForm("VIEWER");
 
-    expect(screen.getByRole("heading", { name: /view-only access/i })).toBeInTheDocument();
-    expect(screen.getByText(/ask a workspace owner or editor/i)).toBeInTheDocument();
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /add repository/i })).not.toBeInTheDocument();
+    expect(screen.getByText("View-only access")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/repository url/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /add repository/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it("posts the URL and the workspace, and shows the counts on success", async () => {
+  it("posts the URL and workspace and shows counts on success", async () => {
     const fetchFn = mockFetch(200, { repo: "o/r", pull_requests: 3, issues: 2 });
     await submit("https://github.com/o/r");
 
     expect(await screen.findByRole("status")).toHaveTextContent(
       "Added o/r: 3 pull requests and 2 issues.",
     );
-    const [url, init] = fetchFn.mock.calls[0];
-    expect(url).toBe("/api/ingest/github");
-    // Without workspace_id the backend 422s and nothing is scoped to a workspace.
-    expect(JSON.parse(init.body)).toEqual({
-      repo_url: "https://github.com/o/r",
-      workspace_id: WORKSPACE_ID,
-    });
     expect(screen.getByRole("link", { name: /view sources/i })).toHaveAttribute(
       "href",
       `/workspaces/${WORKSPACE_ID}/sources`,
     );
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe("/api/ingest/github");
+    expect(JSON.parse(init.body)).toEqual({
+      repo_url: "https://github.com/o/r",
+      workspace_id: WORKSPACE_ID,
+    });
   });
 
   it("adds https:// to a scheme-less GitHub URL", async () => {
@@ -175,7 +176,9 @@ describe("RepoIngestForm", () => {
     );
     await submit("https://github.com/o/r");
 
-    expect(screen.getByRole("button", { name: /adding repository/i })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /adding repository/i }),
+    ).toBeDisabled();
     expect(screen.getByLabelText(/repository url/i)).toBeDisabled();
 
     resolve(
