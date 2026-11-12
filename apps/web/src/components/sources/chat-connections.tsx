@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-import { Button } from "@/components/ui/button";
+import { Button, buttonClassName } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { ApiError, apiRequest } from "@/lib/api";
 import type {
@@ -316,7 +316,10 @@ export function ChatConnections({
                       // has to be followed by the browser itself.
                       <a
                         href={`/api/sources/${provider}/install?workspace_id=${encodeURIComponent(workspaceId)}`}
-                        className="inline-flex min-h-9 items-center rounded-lg bg-accent px-3 text-sm font-semibold text-background transition-colors hover:bg-accent-bright"
+                        className={buttonClassName({
+                          size: "small",
+                          variant: "primary",
+                        })}
                       >
                         Connect {label}
                       </a>

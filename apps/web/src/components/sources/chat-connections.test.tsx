@@ -95,6 +95,8 @@ it("offers both providers when nothing is connected", async () => {
     "href",
     `/api/sources/slack/install?workspace_id=${WORKSPACE_ID}`,
   );
+  expect(slackLink).toHaveClass("text-foreground");
+  expect(slackLink).not.toHaveClass("text-background");
   expect(
     await screen.findByRole("link", { name: "Connect Discord" }),
   ).toHaveAttribute(
