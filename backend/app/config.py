@@ -68,6 +68,25 @@ class Settings(BaseSettings):
     # invite URL so an owner can see exactly what the bot may do before adding it.
     discord_bot_permissions: str = "66560"
 
+    # Jev AI (TypeSafe System One), the decision model behind the Connection
+    # Agent (US-23). One shared client (app.jev) reads these. The key is never
+    # logged or returned; with no key the agent is simply not started.
+    jev_api_key: SecretStr | None = None
+    jev_base_url: str = "https://api.typesafe.ai"
+    # Pinned, not the ``jev-latest`` alias: thresholds are tuned per version, and
+    # an alias moving would shift every confidence silently.
+    jev_model: str = "jev-1.14.0"
+    jev_timeout_ms: int = Field(default=20_000, gt=0)
+    jev_max_retries: int = Field(default=3, ge=0, le=10)
+
+    # Connection Agent routing (US-23). >= threshold: active edge; between the
+    # floor and the threshold: pending_review; below the floor: discarded. The
+    # values are Noul probabilities, for which the TypeSafe docs suggest 0.7/0.3.
+    connection_agent_confidence_threshold: float = Field(default=0.7, ge=0, le=1)
+    connection_agent_review_floor: float = Field(default=0.4, ge=0, le=1)
+    # Candidate pairs sent to Jev per artifact: the cost knob.
+    connection_agent_max_candidates: int = Field(default=10, ge=1, le=100)
+
     # Postgres holds users, workspaces and membership (US-41). The graph DB holds
     # nodes/edges/evidence; who may see a workspace is a relational question.
     database_url: str = "postgresql+psycopg://cortex:cortex@localhost:5432/cortex"
@@ -84,6 +103,7 @@ class Settings(BaseSettings):
         "slack_client_secret",
         "discord_client_secret",
         "discord_bot_token",
+        "jev_api_key",
         mode="before",
     )
     @classmethod
@@ -110,6 +130,10 @@ class Settings(BaseSettings):
             return []
         raw = self.token_encryption_previous_keys.get_secret_value()
         return [key.strip() for key in raw.split(",") if key.strip()]
+
+    @property
+    def connection_agent_enabled(self) -> bool:
+        return bool(self.jev_api_key)
 
     @property
     def github_oauth_configured(self) -> bool:
