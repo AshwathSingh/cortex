@@ -7,6 +7,7 @@ from app.api import (
     auth,
     flags,
     graph,
+    connections,
     graph_comments,
     health,
     ingest,
@@ -60,6 +61,7 @@ app.include_router(uploads.router)
 # is the rule that stops /{workspace_id} shadowing anything.
 app.include_router(graph_comments.router)
 app.include_router(source_failures.router)
+app.include_router(connections.router)
 
 
 @app.get("/health")

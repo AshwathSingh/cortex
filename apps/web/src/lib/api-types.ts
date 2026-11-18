@@ -197,6 +197,29 @@ export type GraphEdge = {
   source: string;
   target: string;
   type: string;
+  /** US-23: "agent" for Connection Agent edges, "manual" for drawn ones, else null. */
+  origin?: "agent" | "manual" | null;
+  relationship_type?: string | null;
+  confidence?: number | null;
+  created_at?: string | null;
+};
+
+/** US-23: one `pending_review` relationship the Connection Agent suggests. */
+export type ConnectionSuggestion = {
+  id: string;
+  relationship_type: string;
+  confidence: number;
+  evidence: string | null;
+  created_at: string | null;
+  source: { key: string; type: string; title: string; url: string | null };
+  target: { key: string; type: string; title: string; url: string | null };
+};
+
+export type ConnectionSummary = {
+  enabled: boolean;
+  pending_review: number;
+  /** Artifacts by analysis status: pending | running | done | failed | unanalysed. */
+  analysis: Record<string, number>;
 };
 
 export type GraphOrigin = {

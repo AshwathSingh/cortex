@@ -505,6 +505,11 @@ export function GraphCanvas({
         "--cortex-graph-edge-hub",
         "rgba(120, 160, 255, 0.38)",
       );
+      const agentEdgeColour = cssValue(
+        styles,
+        "--cortex-graph-edge-agent",
+        "rgba(94, 234, 212, 0.65)",
+      );
       const badgeColour = cssValue(styles, "--cortex-graph-comment", "#c9a2ff");
       const badgeHalo = cssValue(styles, "--cortex-graph-badge-halo", "#070a0f");
       const labelColour = cssValue(styles, "--cortex-graph-label", "#c7cedd");
@@ -578,16 +583,22 @@ export function GraphCanvas({
             && hoveredSelection.edge.source === edge.source
             && hoveredSelection.edge.target === edge.target
             && hoveredSelection.edge.type === edge.type;
+          // US-23: agent edges are dashed and teal, so they never pass for manual ones.
+          const agent = edge.origin === "agent";
           ctx.strokeStyle = hoveredEdge
             ? withAlpha(hoverColour, 0.7)
-            : hub
-              ? hubEdgeColour
-              : edgeColour;
-          ctx.lineWidth = hoveredEdge ? 2 : hub ? 1.4 : 1;
+            : agent
+              ? agentEdgeColour
+              : hub
+                ? hubEdgeColour
+                : edgeColour;
+          ctx.lineWidth = hoveredEdge ? 2 : agent ? 1.6 : hub ? 1.4 : 1;
+          if (agent) ctx.setLineDash([6, 4]);
           ctx.beginPath();
           ctx.moveTo(source.x, source.y);
           ctx.lineTo(target.x, target.y);
           ctx.stroke();
+          if (agent) ctx.setLineDash([]);
         }
 
         for (let i = drawOrder.length - 1; i >= 0; i -= 1) {

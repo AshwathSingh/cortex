@@ -7,7 +7,9 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { CreateRelationshipDialog } from "@/components/graph/create-relationship-dialog";
 import { GraphCanvas } from "@/components/graph/graph-canvas";
 import { GraphComments } from "@/components/graph/graph-comments";
+import { GraphEdgeLegend } from "@/components/graph/graph-edge-legend";
 import { GraphInspector, type InspectorState } from "@/components/graph/graph-inspector";
+import { SuggestedConnections } from "@/components/graph/suggested-connections";
 import { buttonClassName } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { useOptionalWorkspace } from "@/components/workspaces/workspace-context";
@@ -22,6 +24,7 @@ import type {
 } from "@/lib/api-types";
 import { activityKey, targetFor } from "@/lib/graph-comment-target";
 import { useCommentActivity } from "@/lib/use-comment-activity";
+import { useConnectionActivity } from "@/lib/use-connection-activity";
 
 const NODE_TYPES: {
   type: GraphNodeType;
@@ -106,6 +109,10 @@ export function GraphView({
   const [inspectorState, setInspectorState] = useState<InspectorState>({ kind: "loading" });
   // T-27.4: which nodes and edges carry comments, for the canvas badges.
   const { activity, refresh: refreshActivity } = useCommentActivity(workspaceId);
+  // US-23: agent progress drives live edges (`tick`) and the review badge.
+  const { summary: connectionSummary, tick: connectionTick, refresh: refreshConnections } =
+    useConnectionActivity(workspaceId, reloadToken);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedTypes, setSelectedTypes] = useState<GraphNodeType[]>(ALL_NODE_TYPES);
   const [searchInput, setSearchInput] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -136,7 +143,13 @@ export function GraphView({
           `/api/workspaces/${workspaceId}/graph${query}`,
           { signal: controller.signal },
         );
-        setState({ kind: "ready", graph, requestKey });
+        // Keep the very same object when nothing changed (a poll with no news), so
+        // the canvas does not rebuild its layout; new agent edges do replace it,
+        // and the canvas keeps the reader's zoom and pan.
+        setState((previous) => previous.kind === "ready" && previous.requestKey === requestKey
+          && !previous.requestError && JSON.stringify(previous.graph) === JSON.stringify(graph)
+          ? previous
+          : { kind: "ready", graph, requestKey });
       } catch (requestError) {
         if (controller.signal.aborted) return;
         if (requestError instanceof ApiError && requestError.status === 401) {
@@ -159,7 +172,7 @@ export function GraphView({
 
     void load();
     return () => controller.abort();
-  }, [reloadToken, requestKey, router, searchTerm, selectedTypes, workspaceId]);
+  }, [connectionTick, reloadToken, requestKey, router, searchTerm, selectedTypes, workspaceId]);
 
   useEffect(() => {
     if (!selection) return;
@@ -491,6 +504,25 @@ export function GraphView({
             </fieldset>
 
             <div className="ml-auto flex items-center gap-4">
+              <GraphEdgeLegend
+                showAgent={visibleEdges.some((edge) => edge.origin === "agent")}
+                showManual={visibleEdges.some((edge) => edge.origin === "manual")}
+              />
+              {connectionSummary?.enabled ? (
+                <button
+                  type="button"
+                  aria-pressed={showSuggestions}
+                  onClick={() => { setShowSuggestions((open) => !open); setSelection(null); }}
+                  className="h-9 whitespace-nowrap rounded-lg border border-border/60 px-3 text-xs font-medium text-accent-bright hover:bg-accent/10"
+                >
+                  Suggested connections
+                  {connectionSummary.pending_review > 0 ? (
+                    <span className="ml-2 rounded-full bg-accent/20 px-1.5 py-0.5 text-[0.65rem]">
+                      {connectionSummary.pending_review}
+                    </span>
+                  ) : null}
+                </button>
+              ) : null}
               {/* Only shown once something is actually commented on: a legend
                   entry for a mark the reader will never see is just noise. */}
               {activity.length > 0 ? (
@@ -675,6 +707,17 @@ export function GraphView({
             </p>
           ) : null}
         </div>
+        {showSuggestions && !selection ? (
+          <div className="w-[22rem] max-w-[40vw] shrink-0 overflow-y-auto border-l border-[var(--cortex-graph-divider)] p-4">
+            <SuggestedConnections
+              workspaceId={workspaceId}
+              canEdit={canEdit}
+              version={connectionTick}
+              onChanged={refreshConnections}
+              onClose={() => setShowSuggestions(false)}
+            />
+          </div>
+        ) : null}
         {selection ? (
           <div className="w-[22rem] max-w-[40vw] shrink-0 overflow-y-auto border-l border-[var(--cortex-graph-divider)] p-4">
             <GraphInspector

@@ -55,6 +55,8 @@
   --cortex-graph-node-unknown: #a4adbd;
   --cortex-graph-edge: rgb(120 160 255 / 22%);
   --cortex-graph-edge-hub: rgb(120 160 255 / 38%);
+  /* US-23: Connection Agent edges, drawn dashed in a hue of their own. */
+  --cortex-graph-edge-agent: rgb(94 234 212 / 65%);
   --cortex-graph-label: #c7cedd;
   --cortex-graph-label-dim: #8b94a6;
   --cortex-graph-divider: rgb(98 136 202 / 16%);
