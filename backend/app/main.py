@@ -18,6 +18,8 @@ from app.api import (
     uploads,
     workspaces,
 )
+from app.agent import events as agent_events
+from app.config import settings
 from app.db.neo4j_driver import close_driver
 from app.db.postgres import dispose_engine
 from app.security import validate_encryption_keys
@@ -26,6 +28,10 @@ from app.security import validate_encryption_keys
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_encryption_keys()
+    # US-23: the agent only runs when a Jev key is configured.
+    agent_events.configure(
+        agent_events.default_factory if settings.connection_agent_enabled else None
+    )
     yield
     close_driver()
     dispose_engine()

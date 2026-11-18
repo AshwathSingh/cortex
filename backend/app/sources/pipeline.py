@@ -29,6 +29,7 @@ from neo4j.exceptions import DriverError, Neo4jError
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.agent.events import emit_artifact_ingested
 from app.sources.base import (
     FetchedSource,
     SourceAdapter,
@@ -212,6 +213,9 @@ def run_ingestion(
         kind=adapter.kind,
     )
     session.commit()
+    # US-23: queue relationship discovery. Fire-and-forget and never raises, so
+    # ingestion has already succeeded whatever the agent does.
+    emit_artifact_ingested(workspace_id)
     return IngestionOutcome(
         external_ref=fetched.external_ref,
         display_ref=fetched.display_ref,
