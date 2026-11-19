@@ -101,7 +101,11 @@ class ConnectionAgent:
         routed = rel.route(verdict.confidence, self.threshold, self.review_floor)
         source, target = (a, b) if verdict.a_is_source else (b, a)
         dedup = rel.dedup_key(ws, source.key, target.key, verdict.relationship_type)
-        existing = self.store.existing_edge(ws, dedup)
+        # Looked up by endpoints, not by this dedup key: re-analysis can predict
+        # a different type (or direction) than last time, and the old edge's
+        # dedup_key -- which embeds its *old* type -- would never match the new
+        # one, leaving it to create a duplicate beside the stale edge.
+        existing = self.store.existing_edge_for_pair(ws, a.key, b.key)
         action = rel.decide_upsert(existing[1] if existing else None, routed)
         if action == "skip":
             if routed == "discard":
@@ -118,9 +122,17 @@ class ConnectionAgent:
             if created:
                 summary.created += routed == "active"
                 summary.pending += routed == "pending_review"
-        else:
+            return
+        assert existing is not None  # "update" / "promote" only come from a hit above
+        if existing[2] == verdict.relationship_type:
             mutations.update_agent_edge(
                 self.driver, ws, edge_id=existing[0], confidence=verdict.confidence,
                 evidence=evidence, model_version=result.model, explicit_refs=refs,
                 promote=action == "promote")
-            summary.updated += 1
+        else:
+            mutations.retype_agent_edge(
+                self.driver, ws, old_edge_id=existing[0], source_key=source.key,
+                target_key=target.key, relationship_type=verdict.relationship_type,
+                dedup=dedup, status=routed, confidence=verdict.confidence,
+                evidence=evidence, model_version=result.model, explicit_refs=refs)
+        summary.updated += 1

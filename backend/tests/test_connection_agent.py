@@ -184,9 +184,12 @@ class MemStore:
     def pair_blocked(self, ws, a, b):
         return frozenset((a, b)) in self.blocked
 
-    def existing_edge(self, ws, dedup):
-        e = self.edges.get(dedup)
-        return (e["id"], e["status"]) if e else None
+    def existing_edge_for_pair(self, ws, a, b):
+        pair = frozenset((a, b))
+        for e in self.edges.values():
+            if frozenset((e["source"], e["target"])) == pair:
+                return (e["id"], e["status"], e["type"])
+        return None
 
 
 @pytest.fixture
@@ -210,12 +213,25 @@ def mem(monkeypatch):
             if promote:
                 e["status"] = "active"
 
+        def retype(driver, ws, *, old_edge_id, source_key, target_key, relationship_type, dedup,
+                  status, confidence, evidence, model_version, explicit_refs):
+            old_dedup = next(k for k, e in store.edges.items() if e["id"] == old_edge_id)
+            if store.edges[old_dedup]["status"] == "rejected":
+                return None
+            del store.edges[old_dedup]
+            new_id = f"e{len(store.edges)}"
+            store.edges[dedup] = dict(id=new_id, status=status, confidence=confidence,
+                                      source=source_key, target=target_key, type=relationship_type,
+                                      evidence=evidence, model=model_version)
+            return new_id
+
         def status(driver, ws, key, st, *, content_hash=None, error=None):
             store.status[key] = st
             if st == "done":
                 store.hashes[key] = content_hash
 
         monkeypatch.setattr(service.mutations, "create_agent_edge", create)
+        monkeypatch.setattr(service.mutations, "retype_agent_edge", retype)
         monkeypatch.setattr(service.mutations, "update_agent_edge", update)
         monkeypatch.setattr(service.mutations, "set_analysis_status", status)
         agent = ConnectionAgent(store, fake, None, threshold=0.7, review_floor=0.4,
@@ -277,6 +293,53 @@ def test_pending_edge_is_promoted_when_reanalysis_clears_the_threshold(mem):
     assert [e["status"] for e in store.edges.values()] == ["active"]
 
 
+def test_reanalysis_with_a_different_type_retypes_in_place_not_a_duplicate(mem):
+    """Regression: looking the pair's edge up by a dedup_key that embeds the
+    *old* type meant a changed verdict never found it, so re-analysis added a
+    second edge beside the stale one instead of replacing it."""
+    store, fake, agent = mem(PAIR, says(0.9, key="IMPLEMENTS:ab"))
+    agent.run(WS)
+    (edge,) = store.edges.values()
+    assert edge["type"] == "IMPLEMENTS" and edge["status"] == "active"
+
+    store.artifacts["Issue:1"] = art(1, "Fix login crash", "Closes #2, edited text")
+    fake.answer = lambda state, questions: {"RELATED_TO:ab": 0.9}
+    agent.run(WS)
+
+    assert len(store.edges) == 1, "a type change must retype the one edge, not add a second"
+    (edge,) = store.edges.values()
+    assert edge["type"] == "RELATED_TO" and edge["status"] == "active"
+
+
+def test_type_change_never_downgrades_an_already_active_edge(mem):
+    """The "never downgrade an active edge" rule must still hold once the
+    lookup is by pair instead of by the old exact dedup key: a type change
+    that now scores mid-confidence leaves the active edge exactly as it was,
+    with no second edge added for the new, lower-scoring type."""
+    store, fake, agent = mem(PAIR, says(0.9, key="IMPLEMENTS:ab"))
+    agent.run(WS)
+    store.artifacts["Issue:1"] = art(1, "Fix login crash", "Closes #2, edited text")
+    fake.answer = lambda state, questions: {"RELATED_TO:ab": 0.5}
+    agent.run(WS)
+    assert len(store.edges) == 1
+    (edge,) = store.edges.values()
+    assert edge["type"] == "IMPLEMENTS" and edge["status"] == "active"
+
+
+def test_type_change_promotes_a_pending_edge_in_place(mem):
+    """A pending-review edge whose re-analysis now predicts a different,
+    high-confidence type is promoted in place under the new type -- not left
+    as a stale pending edge beside a second, active one."""
+    store, fake, agent = mem(PAIR, lambda state, questions: {"RELATED_TO:ab": 0.5})
+    agent.run(WS)
+    store.artifacts["Issue:1"] = art(1, "Fix login crash", "Closes #2, edited text")
+    fake.answer = says(0.9, key="IMPLEMENTS:ab")
+    agent.run(WS)
+    assert len(store.edges) == 1
+    (edge,) = store.edges.values()
+    assert edge["type"] == "IMPLEMENTS" and edge["status"] == "active"
+
+
 def test_rejected_or_manual_pairs_are_skipped_without_calling_jev(mem):
     store, fake, agent = mem(PAIR, says(0.99))
     store.blocked.add(frozenset(("Issue:1", "Issue:2")))
@@ -312,3 +375,69 @@ def test_artifacts_from_other_workspaces_are_never_linked(mem):
 
 def test_content_hash_ignores_unrelated_fields():
     assert content_hash(art(1, "t", "b")) == content_hash(art(9, "t", "b", repo="x"))
+
+
+# --- Neo4jStore.fetch_artifacts pagination (T-23.6) ----------------------------
+
+class _FakeSession:
+    """Hands out ``pages`` one per call; the caller stops once a page is short."""
+
+    def __init__(self, pages):
+        self._pages = pages
+        self._calls = 0
+        self.skips: list[int] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute_read(self, fn):
+        return fn(self)
+
+    def run(self, query, **kwargs):
+        self.skips.append(kwargs["skip"])
+        page = self._pages[self._calls] if self._calls < len(self._pages) else []
+        self._calls += 1
+        return page
+
+
+class _FakeDriver:
+    def __init__(self, pages):
+        self._session = _FakeSession(pages)
+
+    def session(self):
+        return self._session
+
+
+def _row(n):
+    return {"labels": ["Issue"], "props": {"id": n}, "author": None}
+
+
+def test_fetch_artifacts_pages_past_a_single_round_trip(monkeypatch):
+    """Regression: a hard ``LIMIT`` on the artifact query meant anything past
+    the first page was never fetched, so it was never a candidate and never
+    analysed. ``fetch_artifacts`` must keep paging until a short page says
+    the workspace is exhausted, however many round trips that takes."""
+    from app.agent import store as store_module
+
+    monkeypatch.setattr(store_module, "ARTIFACT_PAGE_SIZE", 2)
+    driver = _FakeDriver([[_row(1), _row(2)], [_row(3), _row(4)], [_row(5)]])
+
+    result = store_module.Neo4jStore(driver).fetch_artifacts(WS)
+
+    assert [a.id for a in result] == [1, 2, 3, 4, 5]
+    assert driver._session.skips == [0, 2, 4]
+
+
+def test_fetch_artifacts_stops_at_the_first_short_page(monkeypatch):
+    from app.agent import store as store_module
+
+    monkeypatch.setattr(store_module, "ARTIFACT_PAGE_SIZE", 5)
+    driver = _FakeDriver([[_row(1), _row(2)]])
+
+    result = store_module.Neo4jStore(driver).fetch_artifacts(WS)
+
+    assert [a.id for a in result] == [1, 2]
+    assert driver._session.skips == [0]

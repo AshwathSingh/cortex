@@ -140,6 +140,28 @@ def test_user_removing_an_agent_edge_leaves_a_tombstone(graph, api_db):
     assert [e for e in graph_edges if e["type"] == "AGENT_RELATIONSHIP"] == []
 
 
+def test_reanalysis_with_a_different_type_replaces_the_edge_not_duplicates_it(graph):
+    """Regression: the lookup used to be by an exact dedup_key, which embeds
+    the relationship type, so a changed verdict could never find the pair's
+    existing edge and a second one was created beside the stale one."""
+    seed(graph.driver)
+    a, fake = agent(graph.driver, 0.9)
+    a.run(WS)
+    (edge,) = agent_edges(graph)
+    assert edge["relationship_type"] == "IMPLEMENTS"
+    old_id = edge["id"]
+
+    with graph.driver.session() as s:  # force re-analysis
+        s.run("MATCH (n {workspace_id: $ws}) REMOVE n.analysis_hash", ws=WS).consume()
+    fake.answer = lambda state, q: {"RELATED_TO:ab": 0.9}
+    a.run(WS)
+
+    edges = agent_edges(graph)
+    assert len(edges) == 1, "a type change must replace the edge, not duplicate it"
+    assert edges[0]["relationship_type"] == "RELATED_TO" and edges[0]["id"] != old_id
+    assert edges[0]["status"] == "active" and edges[0]["confidence"] == 0.9
+
+
 def test_workspaces_are_isolated(graph):
     seed(graph.driver, WS)
     seed(graph.driver, TEST_WORKSPACE_ID_B)

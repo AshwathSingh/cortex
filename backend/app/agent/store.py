@@ -12,7 +12,10 @@ from app.github.mapper import normalise_workspace_id
 from app.graph.mutations import ARTIFACT_LABELS, _match, _typed_id, parse_key
 from app.graph.queries import node_key
 
-ARTIFACT_LIMIT = 5_000
+#: Per round trip, not a cap on the workspace's total -- ``fetch_artifacts``
+#: pages through all of it, so a workspace past this size is still analysed
+#: in full rather than silently dropping everything after the first page.
+ARTIFACT_PAGE_SIZE = 5_000
 BODY_LIMIT = 2_000  # characters sent to Jev per artifact: the main token-cost lever
 
 _ARTIFACTS = f"""
@@ -21,6 +24,7 @@ WHERE ({" OR ".join(f"n:{label}" for label in ARTIFACT_LABELS)}) AND n.workspace
 OPTIONAL MATCH (a:Author {{workspace_id: $ws}})-[:AUTHORED]->(n)
 RETURN labels(n) AS labels, properties(n) AS props, head(collect(a.login)) AS author
 ORDER BY props.id
+SKIP $skip
 LIMIT $limit
 """
 
@@ -32,9 +36,18 @@ WHERE EXISTS {{ MATCH (a)-[m:MANUAL_RELATIONSHIP]-(b) WHERE m.workspace_id = $ws
 RETURN 1 AS blocked
 """
 
-_EXISTING = f"""
-MATCH ()-[r:{AGENT_EDGE_TYPE} {{dedup_key: $dedup, workspace_id: $ws}}]-()
-RETURN r.id AS id, r.status AS status LIMIT 1
+def _existing_for_pair_query(a_label: str, b_label: str) -> str:
+    # Undirected and type-agnostic: re-analysis that predicts a different type
+    # (or a different direction) for a pair must find the pair's one existing
+    # edge by its endpoints, not by a dedup_key that embeds the *old* type --
+    # otherwise it would never match and a duplicate edge would be created
+    # alongside the stale one.
+    return f"""
+MATCH {_match(a_label, "a")}, {_match(b_label, "b")}
+MATCH (a)-[r:{AGENT_EDGE_TYPE}]-(b)
+WHERE r.workspace_id = $ws
+RETURN r.id AS id, r.status AS status, r.relationship_type AS relationship_type
+LIMIT 1
 """
 
 _SUGGESTIONS = f"""
@@ -84,9 +97,16 @@ class Neo4jStore:
 
     def fetch_artifacts(self, workspace_id: str) -> list[Artifact]:
         ws = normalise_workspace_id(workspace_id)
+        rows: list[Any] = []
+        skip = 0
         with self.driver.session() as session:
-            rows = list(session.execute_read(
-                lambda tx: list(tx.run(_ARTIFACTS, ws=ws, limit=ARTIFACT_LIMIT))))
+            while True:
+                page = list(session.execute_read(lambda tx: list(
+                    tx.run(_ARTIFACTS, ws=ws, skip=skip, limit=ARTIFACT_PAGE_SIZE))))
+                rows.extend(page)
+                if len(page) < ARTIFACT_PAGE_SIZE:
+                    break
+                skip += ARTIFACT_PAGE_SIZE
         return [to_artifact(r["labels"], r["props"], r["author"], ws) for r in rows]
 
     def pair_blocked(self, workspace_id: str, a_key: str, b_key: str) -> bool:
@@ -99,12 +119,16 @@ class Neo4jStore:
                 query, ws=ws, a_id=_typed_id(a_raw), b_id=_typed_id(b_raw)).single())
         return record is not None
 
-    def existing_edge(self, workspace_id: str, dedup: str) -> tuple[str, str] | None:
+    def existing_edge_for_pair(self, workspace_id: str, a_key: str, b_key: str) -> tuple[str, str, str] | None:
+        """Any agent edge already linking this pair, in either direction and
+        whatever its type -- see ``_existing_for_pair_query``."""
         ws = normalise_workspace_id(workspace_id)
+        (a_label, a_raw), (b_label, b_raw) = parse_key(a_key), parse_key(b_key)
+        query = _existing_for_pair_query(a_label, b_label)
         with self.driver.session() as session:
-            record = session.execute_read(
-                lambda tx: tx.run(_EXISTING, ws=ws, dedup=dedup).single())
-        return (record["id"], record["status"]) if record else None
+            record = session.execute_read(lambda tx: tx.run(
+                query, ws=ws, a_id=_typed_id(a_raw), b_id=_typed_id(b_raw)).single())
+        return (record["id"], record["status"], record["relationship_type"]) if record else None
 
     def list_suggestions(self, workspace_id: str, limit: int = 200) -> list[dict[str, Any]]:
         ws = normalise_workspace_id(workspace_id)

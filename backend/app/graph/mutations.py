@@ -110,6 +110,53 @@ RETURN r.id AS id
     return edge_id
 
 
+def retype_agent_edge(
+    driver: Driver, workspace_id: str, *, old_edge_id: str, source_key: str, target_key: str,
+    relationship_type: str, dedup: str, status: str, confidence: float, evidence: str,
+    model_version: str, explicit_refs: list[str],
+) -> str | None:
+    """Re-analysis predicted a different type (or direction) for a pair that
+    already has an edge. A Neo4j relationship's endpoints can't be repointed
+    by ``SET``, so this replaces it -- delete the stale edge, create the new
+    one -- in a single write, instead of leaving both in the graph as a
+    duplicate connection between the same pair.
+
+    Never touches a ``rejected`` edge (the WHERE guards it the same way
+    ``update_agent_edge`` does); returns None and writes nothing if so.
+    """
+    ws = normalise_workspace_id(workspace_id)
+    s_label, s_raw = parse_key(source_key)
+    t_label, t_raw = parse_key(target_key)
+    edge_id, ts = str(uuid.uuid4()), now_iso()
+    query = f"""
+MATCH {_match(s_label, "s")}
+MATCH {_match(t_label, "t")}
+MATCH ()-[old:{AGENT_EDGE_TYPE} {{id: $old_id, workspace_id: $ws}}]-()
+WHERE old.status <> 'rejected'
+DELETE old
+CREATE (s)-[r:{AGENT_EDGE_TYPE} {{
+  id: $edge_id, workspace_id: $ws, relationship_type: $rtype, origin: 'agent',
+  source_agent: $agent, model_version: $model, agent_version: $agent_version,
+  status: $status, confidence: $confidence, evidence: $evidence,
+  explicit_refs: $refs, dedup_key: $dedup, created_at: $ts, updated_at: $ts
+}}]->(t)
+RETURN r.id AS id
+"""
+    with driver.session() as session:
+        record = session.execute_write(lambda tx: tx.run(
+            query, s_id=_typed_id(s_raw), t_id=_typed_id(t_raw), ws=ws, old_id=old_edge_id,
+            edge_id=edge_id, rtype=relationship_type, agent=SOURCE_AGENT, model=model_version,
+            agent_version="1", status=status, confidence=confidence, evidence=evidence,
+            refs=explicit_refs, dedup=dedup, ts=ts,
+        ).single())
+    if record is None:
+        return None
+    record_mutation(MutationEvent(ws, f"system:{SOURCE_AGENT}", "edge.updated", edge_id,
+                                  {"status": status, "relationship_type": relationship_type,
+                                   "previous_edge_id": old_edge_id}))
+    return edge_id
+
+
 def update_agent_edge(
     driver: Driver, workspace_id: str, *, edge_id: str, confidence: float,
     evidence: str, model_version: str, explicit_refs: list[str], promote: bool,
