@@ -45,6 +45,17 @@ DEFAULT_EDGE_LIMIT = 6_000
 DEFAULT_ORIGIN_LIMIT = 100
 
 
+def active_edge(variable: str) -> str:
+    """The one status filter every graph read applies to a relationship.
+
+    ``pending_review`` and ``rejected`` agent edges are not part of the graph
+    (RAG, stats, contradiction checks, the canvas). Edges written before
+    ``status`` existed have none and count as active. Teammates: use this in any
+    new edge read rather than re-deriving it.
+    """
+    return f"coalesce({variable}.status, 'active') = 'active'"
+
+
 def _label_predicate(variable: str) -> str:
     return " OR ".join(f"{variable}:{label}" for label in GRAPH_LABELS)
 
@@ -67,6 +78,7 @@ EDGES_QUERY = f"""
 MATCH (a)-[r]->(b)
 WHERE ({_label_predicate("a")}) AND ({_label_predicate("b")})
   AND a.workspace_id = $workspace_id AND b.workspace_id = $workspace_id
+  AND {active_edge("r")}
   AND ($node_types IS NULL OR any(label IN labels(a) WHERE label IN $node_types))
   AND ($node_types IS NULL OR any(label IN labels(b) WHERE label IN $node_types))
   AND ($search_term IS NULL OR (
@@ -76,7 +88,11 @@ WHERE ({_label_predicate("a")}) AND ({_label_predicate("b")})
           WHERE value IS NOT NULL AND toLower(toString(value)) CONTAINS $search_term)))
 RETURN labels(a) AS source_labels, a.id AS source_id,
        labels(b) AS target_labels, b.id AS target_id,
-       type(r) AS type
+       type(r) AS type,
+       CASE type(r) WHEN 'AGENT_RELATIONSHIP' THEN coalesce(r.origin, 'agent')
+                    WHEN 'MANUAL_RELATIONSHIP' THEN 'manual' ELSE null END AS origin,
+       r.relationship_type AS relationship_type, r.confidence AS confidence,
+       r.created_at AS created_at
 ORDER BY head(labels(a)), a.id, head(labels(b)), b.id, type(r)
 LIMIT $limit
 """
@@ -89,6 +105,7 @@ WHERE ({_label_predicate("n")})
 OPTIONAL MATCH (n)-[r]-(related)
 WHERE ({_label_predicate("related")})
   AND related.workspace_id = $workspace_id
+  AND {active_edge("r")}
 WITH n, r, related
 ORDER BY head(labels(related)), related.id, type(r)
 LIMIT $origin_limit
@@ -113,6 +130,7 @@ WHERE ({_label_predicate("source")}) AND ({_label_predicate("target")})
   AND source.workspace_id = $workspace_id
   AND target.workspace_id = $workspace_id
   AND type(r) = $edge_type
+  AND {active_edge("r")}
 RETURN labels(source) AS source_labels, properties(source) AS source_props,
        labels(target) AS target_labels, properties(target) AS target_props,
        type(r) AS type, properties(r) AS props
@@ -126,7 +144,7 @@ WHERE ({_label_predicate("source")}) AND ({_label_predicate("target")})
   AND $source_type IN labels(source) AND source.id = $source_id
   AND $target_type IN labels(target) AND target.id = $target_id
   AND source.workspace_id = $workspace_id AND target.workspace_id = $workspace_id
-  AND type(r) = $edge_type
+  AND type(r) = $edge_type AND type(r) <> 'AGENT_RELATIONSHIP'
 WITH collect(r) AS relationships
 WITH relationships, size(relationships) AS deleted
 FOREACH (relationship IN relationships | DELETE relationship)
@@ -140,9 +158,10 @@ WHERE ({_label_predicate("source")}) AND ({_label_predicate("target")})
   AND $target_type IN labels(target) AND target.id = $target_id
   AND source.workspace_id = $workspace_id AND target.workspace_id = $workspace_id
 WITH source, target
-WHERE NOT EXISTS {{ MATCH (source)-[]-(target) }}
+WHERE NOT EXISTS {{ MATCH (source)-[x]-(target) WHERE {active_edge("x")} }}
 CREATE (source)-[r:MANUAL_RELATIONSHIP {{relationship_type: $relationship_type,
-  rationale: $rationale, workspace_id: $workspace_id, created_by: $created_by}}]->(target)
+  rationale: $rationale, workspace_id: $workspace_id, created_by: $created_by,
+  origin: 'manual', status: 'active'}}]->(target)
 RETURN type(r) AS type
 """
 
@@ -351,7 +370,13 @@ def fetch_graph(
         source = node_key(record["source_labels"], record["source_id"])
         target = node_key(record["target_labels"], record["target_id"])
         if source in present and target in present:
-            edges.append({"source": source, "target": target, "type": record["type"]})
+            edges.append({
+                "source": source, "target": target, "type": record["type"],
+                "origin": record.get("origin"),
+                "relationship_type": record.get("relationship_type"),
+                "confidence": record.get("confidence"),
+                "created_at": record.get("created_at"),
+            })
         else:
             dropped += 1
 
@@ -572,6 +597,14 @@ def mutate_graph_edge(driver: Driver, workspace_id, source_key: str, target_key:
                   target_type=target_type, target_id=target_id)
     with driver.session() as session:
         if delete:
+            if edge_type == "AGENT_RELATIONSHIP":
+                # Kept as a ``rejected`` tombstone so the agent never re-suggests it.
+                from app.graph.mutations import reject_agent_edge_by_endpoints
+
+                return reject_agent_edge_by_endpoints(
+                    driver, workspace, source_label=source_type, source_id=source_id,
+                    target_label=target_type, target_id=target_id, edge_type=edge_type,
+                    user_id=created_by)
             record = session.execute_write(lambda tx: tx.run(
                 DELETE_EDGE_QUERY, **params, edge_type=edge_type
             ).single())

@@ -37,6 +37,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
+from app.agent.events import emit_artifact_ingested
 from app.db.neo4j_driver import get_driver
 from app.models import DataSource
 from app.permissions import Permission
@@ -168,6 +169,7 @@ async def upload_document(
         kind=UPLOAD_KIND,
     )
     session.commit()
+    emit_artifact_ingested(workspace_id)  # US-23; fire-and-forget, never raises
 
     return UploadResponse(
         filename=filename,

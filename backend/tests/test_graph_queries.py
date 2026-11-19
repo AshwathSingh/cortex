@@ -16,6 +16,8 @@ from app.graph.queries import (
 )
 
 WS = "ccccccc0-0000-4000-8000-00000000c0de"
+# US-23 added these keys to every edge; structural edges leave them null.
+NO_PROVENANCE = {"origin": None, "relationship_type": None, "confidence": None, "created_at": None}
 
 
 def author(node_id: int, login: str = "alice") -> dict:
@@ -245,7 +247,7 @@ def test_edges_reference_node_keys():
     a, pr = author(1), pull_request(100)
     payload = fetch_graph(FakeDriver(nodes=[a, pr], edges=[edge(a, pr)]), WS)
     assert payload.edges == [
-        {"source": "Author:1", "target": "PullRequest:100", "type": "AUTHORED"}
+        {"source": "Author:1", "target": "PullRequest:100", "type": "AUTHORED", **NO_PROVENANCE}
     ]
 
 
@@ -260,7 +262,7 @@ def test_selected_types_filter_nodes_and_keep_only_edges_between_visible_types()
 
     assert [node["type"] for node in payload.nodes] == ["PullRequest", "Issue"]
     assert payload.edges == [
-        {"source": "PullRequest:100", "target": "Issue:200", "type": "AUTHORED"}
+        {"source": "PullRequest:100", "target": "Issue:200", "type": "AUTHORED", **NO_PROVENANCE}
     ]
     assert all(call[1]["node_types"] == ["PullRequest", "Issue"] for call in driver.tx.calls)
 
