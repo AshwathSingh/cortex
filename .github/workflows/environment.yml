@@ -1,0 +1,39 @@
+name: Reproducible development environment
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  setup:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: npm install -g npm@10.9.2
+      - run: npm run setup
+      - run: npm run dev:check
+      - run: npm run test:environment
+      - run: npm run lint
+      - run: npm test
+      - run: npx next typegen && npx tsc --noEmit
+        working-directory: apps/web
+      - if: runner.os == 'Linux'
+        run: npm run db:setup
+      - run: backend/.venv/bin/python -m pytest backend/tests -q
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: environment-logs-${{ matrix.os }}
+          path: .cortex-dev/*.log

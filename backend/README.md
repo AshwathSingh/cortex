@@ -1,56 +1,25 @@
 # Cortex backend — local dev setup
 
-Note:
+Use the root [Getting started](../README.md#getting-started) workflow:
 
-1. Use python 3.13 or lower, some packages in the requirements.txt are not supported in 3.14
-2. Rust is required for watchfile installation
-
-## 1. Start Docker
-
-```
-open -a Docker              # if Docker Desktop isn't already running
+```bash
+npm run setup
+npm run db:setup
+npm run dev:watch
 ```
 
-Wait for the whale icon in the menu bar to show it's ready (or `docker info` will
-succeed once it is).
+This uses Python 3.13.4, installs all backend dependencies from the hashed
+`requirements.txt` lockfile, and initializes both schemas. Keep direct dependency
+constraints in `requirements.in`; regenerate the lockfile when those change.
+The setup command generates `.env` only when it does not exist and never resets
+database volumes. For backend-only work after setup:
 
-## 2. Configure environment
-
-From the repo root:
-
-```
-cp .env.example .env
-```
-
-`.env` holds local secrets (DB credentials, GitHub OAuth keys) and is gitignored —
-never commit it.
-
-## 3. Start Postgres + Neo4j
-
-From the repo root:
-
-```
-docker compose up -d postgres neo4j
-docker compose ps            # confirm both are "Up"
-```
-
-In the case where you already have an neo4j container, run this command instead.
-
-```
-docker compose up -d --force-recreate neo4j
-```
-
-Stop everything with `docker compose down` (data persists in named volumes; add
-`-v` to also wipe them, you need to wipe your auth credentials from the docker everytime you changes the username and passwords in .env since docker will save these data from the very first instance).
-
-## 4. Install backend Python deps
-
-```
+```bash
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+.venv/bin/python -m uvicorn app.main:app --reload --env-file ../.env
 ```
+
+The commands below are available for individual schema and integration checks.
 
 ## 5. Initialize the Neo4j graph schema (T-7.1 / T-7.2)
 

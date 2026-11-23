@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16@sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-cortex}
@@ -12,7 +12,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   neo4j:
-    image: neo4j:5
+    image: neo4j:5@sha256:3388e05ee53c8313d01acdf33e63ad175af95a92226dc8551160564439ce2c8c
     restart: unless-stopped
     environment:
       NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-cortexgraph}
