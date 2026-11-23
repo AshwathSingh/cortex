@@ -258,6 +258,8 @@ export function ChatConnections({
       ) : null}
 
       {state.kind === "ready" ? (
+        <>
+        <p className="mt-4 text-xs leading-5 text-muted">Disconnecting revokes provider access. Indexed content stays in this workspace until you remove it from Indexed sources.</p>
         <ul className="divide-y divide-border/20">
           {CHAT_KINDS.map((provider) => {
             const label = CHAT_KIND_LABELS[provider];
@@ -392,6 +394,7 @@ export function ChatConnections({
             );
           })}
         </ul>
+        </>
       ) : null}
     </section>
   );

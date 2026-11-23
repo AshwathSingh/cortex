@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { ComponentPropsWithRef } from "react";
 
 const variants = {
   primary: "bg-accent text-foreground enabled:hover:bg-accent-hover",
@@ -36,7 +36,7 @@ export function Button({
   size,
   variant,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & ButtonStyleOptions) {
+}: ComponentPropsWithRef<"button"> & ButtonStyleOptions) {
   return (
     <button
       {...props}

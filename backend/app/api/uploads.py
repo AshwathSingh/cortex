@@ -40,6 +40,8 @@ from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
 from app.agent.events import emit_artifact_ingested
 from app.db.neo4j_driver import get_driver
 from app.models import DataSource
+from app.services.workspaces import lock_active_workspace
+from app.services.source_removal import SourceChanged, ingestion_fence, check_ingestion_fence
 from app.permissions import Permission
 from app.services.data_sources import (
     SyncInProgress,
@@ -115,12 +117,21 @@ async def upload_document(
             detail="The upload has no filename.",
         )
 
+    if not lock_active_workspace(session, workspace_id):
+        raise HTTPException(status_code=409, detail="This workspace is being deleted.")
+    try:
+        revision = ingestion_fence(session, workspace_id, UPLOAD_KIND, filename)
+    except SourceChanged as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    session.commit()
+
     # Read with a ceiling rather than trusting Content-Length, which is
     # client-supplied: one byte over is enough to know it is too big, and
     # stopping there bounds what an unauthorised-but-authenticated caller can
     # make the server hold in memory.
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     await file.close()
+    _check_upload_fence(session, workspace_id, filename, revision)
     if len(data) > MAX_UPLOAD_BYTES:
         raise _rejected(
             session, workspace_id, filename, DocumentTooLarge(filename, len(data))
@@ -145,11 +156,13 @@ async def upload_document(
     try:
         extracted = extract_document(filename, data)
     except tuple(REJECTION_STATUS) as rejection:
+        _check_upload_fence(session, workspace_id, filename, revision)
         raise _rejected(session, workspace_id, filename, rejection)
 
     sections = split_into_sections(extracted.text)
     document = prepare(filename, data, extracted.format, sections)
 
+    _check_upload_fence(session, workspace_id, filename, revision)
     try:
         write_document(driver, document, workspace_id=workspace_id)
     except (Neo4jError, DriverError):
@@ -213,6 +226,12 @@ def _rejected(
     all-or-nothing, so a rejected upload leaves no nodes and this row is the
     only thing that can render a red "Needs attention" against the file.
     """
+    if not lock_active_workspace(session, workspace_id):
+        raise HTTPException(status_code=409, detail="This workspace is being deleted.")
+    try:
+        ingestion_fence(session, workspace_id, UPLOAD_KIND, filename)
+    except SourceChanged as error:
+        raise HTTPException(status_code=409, detail=str(error))
     detail = str(rejection)
     record_sync_failure(
         session,
@@ -243,3 +262,13 @@ def _set_display_name(
     )
     if source is not None and source.display_name is None:
         source.display_name = filename
+
+
+def _check_upload_fence(session, workspace_id, filename, revision):
+    if not lock_active_workspace(session, workspace_id):
+        raise HTTPException(status_code=409, detail="This workspace is being deleted.")
+    try:
+        check_ingestion_fence(session, workspace_id, UPLOAD_KIND, filename, revision)
+    except SourceChanged as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(error))

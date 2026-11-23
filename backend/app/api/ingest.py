@@ -39,6 +39,7 @@ from app.github.client import GitHubClient
 from app.models import User
 from app.permissions import Permission
 from app.services.data_sources import SyncInProgress
+from app.services.source_removal import SourceChanged
 from app.sources.base import (
     InvalidSourceRef,
     SourceAdapter,
@@ -155,6 +156,9 @@ def _ingest(
             external_ref=external_ref,
             user_id=user.id,
         )
+    except SourceChanged as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(error))
     except SyncInProgress:
         # Server-arbitrated: two ingestions of one source would race to write
         # its final status, and the second would re-spend the provider rate

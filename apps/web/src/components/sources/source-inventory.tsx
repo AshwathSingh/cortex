@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { IndexedChannels } from "@/components/sources/indexed-channels";
+import {
+  RemoveSourceModal,
+  type RemovalTarget,
+} from "@/components/sources/remove-source-modal";
 import { ChatConnections } from "@/components/sources/chat-connections";
 import { SourceFailureList } from "@/components/sources/source-failures";
 import { SourceStatus } from "@/components/sources/source-status";
@@ -16,8 +21,12 @@ import { useWorkspace } from "@/components/workspaces/workspace-context";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { IngestResult, WorkspaceSource } from "@/lib/api-types";
 import { routes } from "@/lib/routes";
-import { githubUrl, sourceKindMeta } from "@/lib/source-kinds";
+import { githubUrl, isChatKind, sourceKindMeta } from "@/lib/source-kinds";
 import { useSourceFailures } from "@/lib/use-source-failures";
+import {
+  notifySourceRemoval,
+  subscribeSourceRemovals,
+} from "@/lib/workspace-data-events";
 import { canManageSources } from "@/lib/workspace-permissions";
 
 type State =
@@ -37,7 +46,16 @@ const SYNC_POLL_MS = 5_000;
 
 function RepositoryIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="size-5">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="size-5"
+    >
       <path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H19v17H7.5A2.5 2.5 0 0 0 5 21.5v-17Z" />
       <path d="M5 18.5A2.5 2.5 0 0 1 7.5 16H19M9 6h6" />
     </svg>
@@ -46,7 +64,16 @@ function RepositoryIcon() {
 
 function ArrowUpRightIcon() {
   return (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="size-4">
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="size-4"
+    >
       <path d="M6 14 14 6M7 6h7v7" />
     </svg>
   );
@@ -54,7 +81,16 @@ function ArrowUpRightIcon() {
 
 function DocumentIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="size-5">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="size-5"
+    >
       <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
       <path d="M14 3v5h5M9 13h6M9 17h4" />
     </svg>
@@ -63,7 +99,16 @@ function DocumentIcon() {
 
 function ChatIcon() {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="size-5">
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="size-5"
+    >
       <path d="M20 14.5A2.5 2.5 0 0 1 17.5 17H9l-4 3v-3.5A2.5 2.5 0 0 1 4 14V6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v8Z" />
     </svg>
   );
@@ -85,11 +130,27 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
   const [state, setState] = useState<State>({ kind: "loading" });
   const [requestVersion, setRequestVersion] = useState(0);
   const [syncingRepo, setSyncingRepo] = useState<string | null>(null);
+  const [removalTarget, setRemovalTarget] = useState<RemovalTarget | null>(
+    null,
+  );
+  const [removalNotice, setRemovalNotice] = useState<string | null>(null);
+  const [expandedSource, setExpandedSource] = useState<string | null>(null);
+  const removalTrigger = useRef<HTMLButtonElement | null>(null);
+  const noticeRef = useRef<HTMLParagraphElement | null>(null);
+  const inventoryHeading = useRef<HTMLHeadingElement | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const resyncControllerRef = useRef<AbortController | null>(null);
   // T-12.2: the same list the workspace banner counts, so the two cannot
   // disagree about what is broken.
   const { failures, refresh: refreshFailures } = useSourceFailures(workspaceId);
+
+  useEffect(
+    () =>
+      subscribeSourceRemovals(workspaceId, () =>
+        setRequestVersion((version) => version + 1),
+      ),
+    [workspaceId],
+  );
 
   useEffect(() => () => resyncControllerRef.current?.abort(), []);
 
@@ -102,7 +163,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
           `/api/workspaces/${workspaceId}/sources`,
           { signal: controller.signal },
         );
-        setState({ kind: "ready", sources });
+        if (!controller.signal.aborted) setState({ kind: "ready", sources });
       } catch (requestError) {
         if (controller.signal.aborted) return;
         if (requestError instanceof ApiError && requestError.status === 401) {
@@ -132,7 +193,8 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
   // The row the user just clicked counts as syncing before the server reports
   // it, so polling starts immediately rather than after the first poll.
   const isSyncing =
-    syncingRepo !== null || sources.some((source) => source.status === "PENDING");
+    syncingRepo !== null ||
+    sources.some((source) => source.status === "PENDING");
 
   useEffect(() => {
     if (!isSyncing) return;
@@ -201,15 +263,28 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
         eyebrow="Knowledge inputs"
         title="Sources"
         description="Repositories, documents and chat channels Cortex uses to build this workspace's project memory."
-        action={canAddSources ? (
-          <Link
-            href={routes.workspace.ingest(workspaceId)}
-            className={buttonClassName({ variant: "primary" })}
-          >
-            Add repository
-          </Link>
-        ) : undefined}
+        action={
+          canAddSources ? (
+            <Link
+              href={routes.workspace.ingest(workspaceId)}
+              className={buttonClassName({ variant: "primary" })}
+            >
+              Add repository
+            </Link>
+          ) : undefined
+        }
       />
+
+      {removalNotice ? (
+        <p
+          ref={noticeRef}
+          tabIndex={-1}
+          role="status"
+          className="mt-6 rounded-xl border border-border/30 bg-surface-raised px-4 py-3 text-sm text-foreground"
+        >
+          {removalNotice}
+        </p>
+      ) : null}
 
       {state.kind === "loading" || isWorkspaceLoading ? (
         <p role="status" className="mt-12 text-sm text-muted">
@@ -247,20 +322,26 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
       {state.kind === "ready" && !isWorkspaceLoading && sources.length === 0 ? (
         <EmptyState
           icon={<RepositoryIcon />}
-          title={canAddSources ? "Connect your first source" : "No indexed sources yet"}
+          title={
+            canAddSources
+              ? "Connect your first source"
+              : "No indexed sources yet"
+          }
           description={
             canAddSources
               ? "Add a GitHub repository to index its pull requests and issues."
               : "Ask a workspace owner or editor to connect a GitHub repository."
           }
-          action={canAddSources ? (
-            <Link
-              href={routes.workspace.ingest(workspaceId)}
-              className={buttonClassName({ className: "mt-6" })}
-            >
-              Add GitHub repository
-            </Link>
-          ) : undefined}
+          action={
+            canAddSources ? (
+              <Link
+                href={routes.workspace.ingest(workspaceId)}
+                className={buttonClassName({ className: "mt-6" })}
+              >
+                Add GitHub repository
+              </Link>
+            ) : undefined
+          }
         />
       ) : null}
 
@@ -269,6 +350,8 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
           <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border/30 pb-4">
             <div>
               <h2
+                ref={inventoryHeading}
+                tabIndex={-1}
                 id="indexed-sources-heading"
                 className="text-base font-semibold text-foreground"
               >
@@ -318,10 +401,16 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
                         // An uploaded file was read and discarded, and Slack
                         // has no addressable URL for a team that does not depend
                         // on its own subdomain, so there is nothing to open.
-                        <p className="truncate font-medium text-foreground">{title}</p>
+                        <p className="truncate font-medium text-foreground">
+                          {title}
+                        </p>
                       )}
                       <SourceStatus
-                        source={isResyncing ? { ...source, status: "PENDING" } : source}
+                        source={
+                          isResyncing
+                            ? { ...source, status: "PENDING" }
+                            : source
+                        }
                       />
                     </div>
                   </div>
@@ -350,7 +439,56 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
                         Re-sync
                       </Button>
                     ) : null}
+                    {canAddSources && isChatKind(source.kind) ? (
+                      <Button
+                        type="button"
+                        size="small"
+                        variant="muted"
+                        aria-expanded={
+                          expandedSource === `${source.kind}:${source.repo}`
+                        }
+                        onClick={() =>
+                          setExpandedSource(
+                            expandedSource === `${source.kind}:${source.repo}`
+                              ? null
+                              : `${source.kind}:${source.repo}`,
+                          )
+                        }
+                      >
+                        Manage channels
+                      </Button>
+                    ) : null}
+                    {canAddSources &&
+                    ["github", "upload", "slack", "discord"].includes(
+                      source.kind,
+                    ) ? (
+                      <Button
+                        type="button"
+                        size="small"
+                        variant="ghost"
+                        aria-label={`Remove ${title}`}
+                        onClick={(event) => {
+                          removalTrigger.current = event.currentTarget;
+                          setRemovalTarget({ source });
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    ) : null}
                   </div>
+                  {canAddSources &&
+                  isChatKind(source.kind) &&
+                  expandedSource === `${source.kind}:${source.repo}` ? (
+                    <IndexedChannels
+                      key={`${source.kind}:${source.repo}:${requestVersion}`}
+                      workspaceId={workspaceId}
+                      source={source}
+                      onRemove={(target, trigger) => {
+                        removalTrigger.current = trigger;
+                        setRemovalTarget(target);
+                      }}
+                    />
+                  ) : null}
                 </li>
               );
             })}
@@ -371,6 +509,50 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
         <ChatConnections
           workspaceId={workspaceId}
           onIngested={() => setRequestVersion((version) => version + 1)}
+        />
+      ) : null}
+      {removalTarget ? (
+        <RemoveSourceModal
+          key={`${workspaceId}:${removalTarget.source.kind}:${removalTarget.source.repo}:${removalTarget.channel?.id ?? ""}`}
+          workspaceId={workspaceId}
+          target={removalTarget}
+          onClose={() => {
+            setRemovalTarget(null);
+            requestAnimationFrame(() => {
+              if (removalTrigger.current?.isConnected)
+                removalTrigger.current.focus();
+              else (inventoryHeading.current ?? noticeRef.current)?.focus();
+            });
+          }}
+          onRemoved={(title) => {
+            const removed = removalTarget;
+            if (syncingRepo === removed.source.repo) {
+              resyncControllerRef.current?.abort();
+              setSyncingRepo(null);
+            }
+            setRemovalTarget(null);
+            setRemovalNotice(`${title} was removed from this workspace.`);
+            if (!removed.channel)
+              setState((current) =>
+                current.kind === "ready"
+                  ? {
+                      kind: "ready",
+                      sources: current.sources.filter(
+                        (source) =>
+                          source.kind !== removed.source.kind ||
+                          source.repo !== removed.source.repo,
+                      ),
+                    }
+                  : current,
+              );
+            notifySourceRemoval(workspaceId);
+            router.refresh();
+            requestAnimationFrame(() => {
+              if (removed.channel && removalTrigger.current?.isConnected)
+                removalTrigger.current.focus();
+              else (inventoryHeading.current ?? noticeRef.current)?.focus();
+            });
+          }}
         />
       ) : null}
     </PageShell>

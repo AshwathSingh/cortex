@@ -33,7 +33,8 @@ from app.graph.queries import (
     fetch_source_summaries,
     mutate_graph_edge,
 )
-from app.models import SyncStatus
+from app.models import SyncStatus, SourceRemoval
+from sqlalchemy import select
 from app.permissions import Permission
 from app.services.chat_credentials import list_chat_connections
 from app.services.data_sources import build_source_inventory, list_synced_sources
@@ -182,7 +183,7 @@ def read_workspace_sources(
         for row in list_chat_connections(session, workspace_id).values()
     }
 
-    return [
+    inventory = [
         SourceSummary(
             repo=item.repo,
             kind=item.kind,
@@ -205,6 +206,18 @@ def read_workspace_sources(
             list_synced_sources(session, workspace_id), summaries, display_names
         )
     ]
+
+    from app.services.source_removal import canonical_ref
+    for removal in session.scalars(select(SourceRemoval).where(SourceRemoval.workspace_id == workspace_id, SourceRemoval.pending.is_(True))):
+        existing = next((item for item in inventory if item.kind == removal.kind and canonical_ref(item.kind, item.repo) == removal.external_ref), None)
+        if existing:
+            existing.status = SyncStatus.FAILED
+            existing.last_error = "Removal incomplete. Retry removal to finish cleanup."
+        else:
+            inventory.append(SourceSummary(repo=removal.external_ref, kind=removal.kind,
+                status=SyncStatus.FAILED, pull_requests=0, issues=0, total_items=0,
+                last_error="Removal incomplete. Retry removal to finish cleanup."))
+    return inventory
 
 
 @router.get("/{workspace_id}/graph", response_model=GraphResponse)
@@ -315,6 +328,8 @@ def delete_graph_edge(
 ) -> dict[str, bool]:
     load_workspace_for_user(session, user, workspace_id, permission=Permission.SOURCES_WRITE)
     try:
+        _guard_graph_target(session, workspace_id, body.source_key, driver)
+        _guard_graph_target(session, workspace_id, body.target_key, driver)
         deleted = mutate_graph_edge(driver, workspace_id, body.source_key, body.target_key,
                                     body.edge_type, delete=True, created_by=str(user.id))
     except ValueError:
@@ -336,6 +351,8 @@ def create_graph_edge(
 ) -> GraphEdge:
     load_workspace_for_user(session, user, workspace_id, permission=Permission.SOURCES_WRITE)
     try:
+        _guard_graph_target(session, workspace_id, body.source_key, driver)
+        _guard_graph_target(session, workspace_id, body.target_key, driver)
         created = mutate_graph_edge(driver, workspace_id, body.source_key, body.target_key,
                                     "MANUAL_RELATIONSHIP", delete=False,
                                     relationship_type=body.relationship_type,
@@ -347,3 +364,57 @@ def create_graph_edge(
     if not created:
         raise HTTPException(status_code=409, detail="Relationship already exists or node not found")
     return GraphEdge(source=body.source_key, target=body.target_key, type="MANUAL_RELATIONSHIP")
+
+
+class SourceRemovalRequest(BaseModel):
+    kind: Literal["github", "upload", "slack", "discord"]
+    external_ref: str = Field(min_length=1, max_length=512)
+    channel_id: str | None = Field(default=None, min_length=1, max_length=512)
+
+
+@router.delete("/{workspace_id}/sources", status_code=204)
+def delete_workspace_source(
+    workspace_id: uuid.UUID,
+    body: SourceRemovalRequest,
+    user: CurrentUser,
+    session: DbSession,
+    driver: Driver = Depends(get_neo4j),
+) -> None:
+    from sqlalchemy.exc import SQLAlchemyError
+    from app.services.source_removal import SourceChanged, remove_source
+    load_workspace_for_user(session, user, workspace_id, permission=Permission.SOURCES_WRITE)
+    if body.channel_id and body.kind not in ("slack", "discord"):
+        raise HTTPException(status_code=422, detail="Only chat sources have channels.")
+    try:
+        remove_source(session, driver, workspace_id, body.kind, body.external_ref, body.channel_id)
+    except SourceChanged as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=str(error))
+    except (Neo4jError, DriverError, SQLAlchemyError):
+        session.rollback()
+        raise HTTPException(status_code=503, detail="Removal could not finish. Retry to complete cleanup safely.")
+
+
+@router.get("/{workspace_id}/sources/channels")
+def read_indexed_channels(
+    workspace_id: uuid.UUID,
+    user: CurrentUser,
+    session: DbSession,
+    kind: Literal["slack", "discord"],
+    external_ref: str = Query(min_length=1, max_length=512),
+    driver: Driver = Depends(get_neo4j),
+) -> list[dict]:
+    from app.services.source_removal import indexed_channels
+    load_workspace_for_user(session, user, workspace_id)
+    try:
+        return indexed_channels(session, driver, workspace_id, kind, external_ref)
+    except (Neo4jError, DriverError):
+        raise HTTPException(status_code=503, detail="Unable to load indexed channels. Try again.")
+
+
+def _guard_graph_target(session, workspace_id, key, driver):
+    from app.services.source_removal import SourceChanged, guard_target
+    try:
+        guard_target(session, workspace_id, key, driver)
+    except SourceChanged as error:
+        raise HTTPException(status_code=409, detail=str(error))
