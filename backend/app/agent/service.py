@@ -13,6 +13,7 @@ Edges are upserted by ``dedup_key``, so re-running is safe.
 
 import hashlib
 import logging
+from contextlib import nullcontext
 from dataclasses import dataclass
 
 from app.agent import relationships as rel
@@ -39,9 +40,13 @@ def _state_item(a: Artifact) -> dict:
     return item
 
 
-def _evidence(v: rel.Verdict, source: Artifact, target: Artifact, refs: list[str], model: str) -> str:
-    text = (f"Jev judged that '{source.title}' {v.relationship_type.replace('_', ' ').lower()} "
-            f"'{target.title}' (probability {v.confidence:.0%}, model {model}).")
+def _evidence(
+    v: rel.Verdict, source: Artifact, target: Artifact, refs: list[str], model: str
+) -> str:
+    text = (
+        f"Jev judged that '{source.title}' {v.relationship_type.replace('_', ' ').lower()} "
+        f"'{target.title}' (probability {v.confidence:.0%}, model {model})."
+    )
     return text + (" Explicit references: " + "; ".join(refs) + "." if refs else "")
 
 
@@ -55,46 +60,94 @@ class RunSummary:
 
 
 class ConnectionAgent:
-    def __init__(self, store, jev, driver, *, threshold: float, review_floor: float,
-                 max_candidates: int):
+    def __init__(
+        self,
+        store,
+        jev,
+        driver,
+        *,
+        threshold: float,
+        review_floor: float,
+        max_candidates: int,
+        write_guard_factory=None,
+    ):
+        self.write_guard_factory = write_guard_factory
         self.store, self.jev, self.driver = store, jev, driver
-        self.threshold, self.review_floor, self.max_candidates = threshold, review_floor, max_candidates
+        self.threshold, self.review_floor, self.max_candidates = (
+            threshold,
+            review_floor,
+            max_candidates,
+        )
 
     def run(self, workspace_id: str) -> RunSummary:
         summary = RunSummary()
+        write_guard = (
+            self.write_guard_factory(workspace_id)
+            if self.write_guard_factory
+            else nullcontext
+        )
         pool = self.store.fetch_artifacts(workspace_id)
         todo = [a for a in pool if a.analysis_hash != content_hash(a)]
         seen: set[frozenset[str]] = set()
         for artifact in todo:
-            mutations.set_analysis_status(self.driver, workspace_id, artifact.key, "running")
+            with write_guard():
+                mutations.set_analysis_status(
+                    self.driver, workspace_id, artifact.key, "running"
+                )
             try:
                 for other in find_candidates(artifact, pool, self.max_candidates):
                     pair = frozenset((artifact.key, other.key))
                     if pair in seen:
                         continue
                     seen.add(pair)
-                    self._analyse_pair(workspace_id, artifact, other, summary)
+                    self._analyse_pair(
+                        workspace_id, artifact, other, summary, write_guard=write_guard
+                    )
             except JevError as error:
                 summary.failed += 1
-                logger.error("connection analysis failed workspace=%s artifact=%s error=%s",
-                             workspace_id, artifact.key, type(error).__name__)
-                mutations.set_analysis_status(
-                    self.driver, workspace_id, artifact.key, "failed",
-                    error=f"{type(error).__name__}: {str(error)[:200]}")
+                logger.error(
+                    "connection analysis failed workspace=%s artifact=%s error=%s",
+                    workspace_id,
+                    artifact.key,
+                    type(error).__name__,
+                )
+                with write_guard():
+                    mutations.set_analysis_status(
+                        self.driver,
+                        workspace_id,
+                        artifact.key,
+                        "failed",
+                        error=f"{type(error).__name__}: {str(error)[:200]}",
+                    )
                 continue
             summary.analysed += 1
-            mutations.set_analysis_status(
-                self.driver, workspace_id, artifact.key, "done",
-                content_hash=content_hash(artifact))
+            with write_guard():
+                mutations.set_analysis_status(
+                    self.driver,
+                    workspace_id,
+                    artifact.key,
+                    "done",
+                    content_hash=content_hash(artifact),
+                )
         return summary
 
-    def _analyse_pair(self, ws: str, a: Artifact, b: Artifact, summary: RunSummary) -> None:
+    def _analyse_pair(
+        self,
+        ws: str,
+        a: Artifact,
+        b: Artifact,
+        summary: RunSummary,
+        *,
+        write_guard=nullcontext,
+    ) -> None:
         if self.store.pair_blocked(ws, a.key, b.key):
             return
         result = self.jev.ask_nouls(
-            workspace_id=ws, item_workspace_ids=(a.workspace_id, b.workspace_id),
+            workspace_id=ws,
+            item_workspace_ids=(a.workspace_id, b.workspace_id),
             state={"artifact_a": _state_item(a), "artifact_b": _state_item(b)},
-            questions=rel.build_questions())
+            questions=rel.build_questions(),
+        )
         verdict = rel.best_verdict(result.nouls)
         if verdict is None:
             return
@@ -114,25 +167,50 @@ class ConnectionAgent:
         refs = explicit_references(a, b)
         evidence = _evidence(verdict, source, target, refs, result.model)
         if action == "create":
-            created = mutations.create_agent_edge(
-                self.driver, ws, source_key=source.key, target_key=target.key,
-                relationship_type=verdict.relationship_type, dedup=dedup, status=routed,
-                confidence=verdict.confidence, evidence=evidence,
-                model_version=result.model, explicit_refs=refs)
+            with write_guard():
+                created = mutations.create_agent_edge(
+                    self.driver,
+                    ws,
+                    source_key=source.key,
+                    target_key=target.key,
+                    relationship_type=verdict.relationship_type,
+                    dedup=dedup,
+                    status=routed,
+                    confidence=verdict.confidence,
+                    evidence=evidence,
+                    model_version=result.model,
+                    explicit_refs=refs,
+                )
             if created:
                 summary.created += routed == "active"
                 summary.pending += routed == "pending_review"
             return
         assert existing is not None  # "update" / "promote" only come from a hit above
-        if existing[2] == verdict.relationship_type:
-            mutations.update_agent_edge(
-                self.driver, ws, edge_id=existing[0], confidence=verdict.confidence,
-                evidence=evidence, model_version=result.model, explicit_refs=refs,
-                promote=action == "promote")
-        else:
-            mutations.retype_agent_edge(
-                self.driver, ws, old_edge_id=existing[0], source_key=source.key,
-                target_key=target.key, relationship_type=verdict.relationship_type,
-                dedup=dedup, status=routed, confidence=verdict.confidence,
-                evidence=evidence, model_version=result.model, explicit_refs=refs)
+        with write_guard():
+            if existing[2] == verdict.relationship_type:
+                mutations.update_agent_edge(
+                    self.driver,
+                    ws,
+                    edge_id=existing[0],
+                    confidence=verdict.confidence,
+                    evidence=evidence,
+                    model_version=result.model,
+                    explicit_refs=refs,
+                    promote=action == "promote",
+                )
+            else:
+                mutations.retype_agent_edge(
+                    self.driver,
+                    ws,
+                    old_edge_id=existing[0],
+                    source_key=source.key,
+                    target_key=target.key,
+                    relationship_type=verdict.relationship_type,
+                    dedup=dedup,
+                    status=routed,
+                    confidence=verdict.confidence,
+                    evidence=evidence,
+                    model_version=result.model,
+                    explicit_refs=refs,
+                )
         summary.updated += 1

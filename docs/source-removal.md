@@ -37,3 +37,10 @@ Validation uses reserved Neo4j test workspaces and disposable PostgreSQL databas
 `python -m pytest tests/test_source_removal.py`. The tests cover permissions,
 shared authors, channel and workspace isolation, upload identity, partial-failure
 retry, PostgreSQL writer locking, and removal during ingestion.
+
+Connection Agent runs snapshot the workspace's source-removal revisions. Graph
+writes hold a shared workspace lock and reject results from an older revision,
+including when the same source is re-added with identical node ids. Model calls
+hold no database lock. Successful removal queues fresh analysis for surviving
+artifacts. Active, pending-review and rejected incident edges are removed with
+the source, including their inline evidence and attached comments.

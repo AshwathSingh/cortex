@@ -7,6 +7,7 @@ Flags and their evidence are derived on read, so disappear with their graph item
 """
 
 import uuid
+from contextlib import contextmanager
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from neo4j import Driver
@@ -237,6 +238,10 @@ def remove_source(
     row.pending = False
     row.targets = {"keys": keys}  # Only identifiers; no removed content is retained.
     session.commit()
+    # Refresh analysis for surviving artifacts after invalidating an older run.
+    from app.agent.events import emit_artifact_ingested
+
+    emit_artifact_ingested(workspace_id)
 
 
 CHANNELS = """
@@ -311,3 +316,42 @@ def guard_target(
         raise SourceChanged(
             "This content has been removed. Refresh the page before continuing."
         )
+
+
+class SourceRemovalFence:
+    """A run snapshots source generations, then locks only during graph writes.
+
+    Remote model calls hold no database locks. Any removal invalidates this run
+    even if identical node ids are explicitly ingested again before it returns.
+    """
+
+    def __init__(self, workspace_id: str, session_factory=None):
+        if session_factory is None:
+            from app.db.postgres import get_session_factory
+
+            session_factory = get_session_factory()
+        self.workspace_id = uuid.UUID(str(workspace_id))
+        self.session_factory = session_factory
+        with session_factory() as session:
+            self.revisions = self._snapshot(session)
+
+    def _snapshot(self, session):
+        if not lock_active_workspace(session, self.workspace_id):
+            raise SourceChanged("This workspace was removed during analysis.")
+        rows = session.scalars(
+            select(SourceRemoval).where(SourceRemoval.workspace_id == self.workspace_id)
+        ).all()
+        if any(row.pending for row in rows):
+            raise SourceChanged(
+                "Source removal is in progress; analysis was cancelled."
+            )
+        return sorted((row.kind, row.external_ref, row.revision) for row in rows)
+
+    @contextmanager
+    def write(self):
+        with self.session_factory() as session:
+            if self._snapshot(session) != self.revisions:
+                raise SourceChanged(
+                    "Sources changed during analysis; its stale result was discarded."
+                )
+            yield

@@ -131,7 +131,7 @@ def retype_agent_edge(
     query = f"""
 MATCH {_match(s_label, "s")}
 MATCH {_match(t_label, "t")}
-MATCH ()-[old:{AGENT_EDGE_TYPE} {{id: $old_id, workspace_id: $ws}}]-()
+MATCH ()-[old:{AGENT_EDGE_TYPE} {{id: $old_id, workspace_id: $ws}}]->()
 WHERE old.status <> 'rejected'
 DELETE old
 CREATE (s)-[r:{AGENT_EDGE_TYPE} {{

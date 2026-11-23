@@ -333,3 +333,100 @@ def test_upload_deleted_while_parsing_cannot_write_or_record_failure(
             assert session.scalar(select(DataSource)) is None
     finally:
         app.dependency_overrides.pop(uploads.get_neo4j, None)
+
+
+@pytest.mark.parametrize("status", ["active", "pending_review", "rejected"])
+def test_removal_cleans_agent_edges_evidence_and_attached_comments(world, status):
+    from app.graph.mutations import create_agent_edge
+    from app.agent.store import Neo4jStore
+
+    sessions, graph = world
+    write_graph(
+        graph.driver, "o/remove", [pull_request(11, user(1))], [], workspace_id=A
+    )
+    write_graph(graph.driver, "o/keep", [], [issue(22, user(1))], workspace_id=A)
+    source, target = "PullRequest:9000000001011", "Issue:9000000002022"
+    edge = f"{source}|AGENT_RELATIONSHIP|{target}"
+    create_agent_edge(
+        graph.driver,
+        A,
+        source_key=source,
+        target_key=target,
+        relationship_type="IMPLEMENTS",
+        dedup=f"remove-{status}",
+        status=status,
+        confidence=0.9,
+        evidence="Owned source evidence",
+        model_version="test",
+        explicit_refs=[],
+    )
+    with sessions() as session:
+        seed_source(session, "github", "o/remove")
+        session.add(
+            GraphComment(
+                workspace_id=WS, target_kind="edge", target_key=edge, body="Review"
+            )
+        )
+        session.commit()
+        remove_source(session, graph.driver, WS, "github", "o/remove")
+        assert session.scalar(select(GraphComment)) is None
+    assert Neo4jStore(graph.driver).list_suggestions(A) == []
+    with graph.driver.session() as session:
+        assert (
+            session.run(
+                "MATCH ()-[r:AGENT_RELATIONSHIP {workspace_id: $ws}]->() RETURN count(r) AS total",
+                ws=A,
+            ).single()["total"]
+            == 0
+        )
+    assert graph.node("Issue", 9000000002022) is not None
+
+
+@pytest.mark.parametrize("readd", [False, True])
+def test_delayed_agent_result_is_fenced_after_source_removal(world, readd):
+    from app.agent.service import ConnectionAgent
+    from app.agent.store import Neo4jStore
+    from app.jev.testing import FakeJev
+    from app.services.source_removal import SourceRemovalFence
+
+    sessions, graph = world
+    pr = pull_request(
+        11, user(1), title="Fix login failure", body="Fix login failure #22"
+    )
+    write_graph(graph.driver, "o/remove", [pr], [], workspace_id=A)
+    write_graph(
+        graph.driver,
+        "o/keep",
+        [],
+        [issue(22, user(1), title="Login failure", body="Login failure needs fixing")],
+        workspace_id=A,
+    )
+
+    def answer(state, questions):
+        with sessions() as session:
+            remove_source(session, graph.driver, WS, "github", "o/remove")
+        if readd:
+            write_graph(graph.driver, "o/remove", [pr], [], workspace_id=A)
+        return {"IMPLEMENTS:ab": 0.9}
+
+    agent = ConnectionAgent(
+        Neo4jStore(graph.driver),
+        FakeJev(answer),
+        graph.driver,
+        threshold=0.7,
+        review_floor=0.4,
+        max_candidates=10,
+        write_guard_factory=lambda ws: SourceRemovalFence(ws, sessions).write,
+    )
+    with pytest.raises(SourceChanged):
+        agent.run(A)
+    with graph.driver.session() as session:
+        assert (
+            session.run(
+                "MATCH ()-[r:AGENT_RELATIONSHIP {workspace_id: $ws}]->() RETURN count(r) AS total",
+                ws=A,
+            ).single()["total"]
+            == 0
+        )
+    if readd:
+        assert graph.node("PullRequest", pr["id"]).get("analysis_hash") is None
