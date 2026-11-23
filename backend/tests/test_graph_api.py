@@ -85,9 +85,9 @@ def test_returns_nodes_and_edges(api_db):
 
     assert body["workspace_id"] == TEST_WORKSPACE_ID
     assert [n["key"] for n in body["nodes"]] == ["Author:1", "PullRequest:100", "Issue:200"]
-    assert body["edges"] == [
-        {"source": "Author:1", "target": "PullRequest:100", "type": "AUTHORED"},
-        {"source": "Author:1", "target": "Issue:200", "type": "AUTHORED"},
+    assert [(e["source"], e["target"], e["type"], e["origin"]) for e in body["edges"]] == [
+        ("Author:1", "PullRequest:100", "AUTHORED", None),
+        ("Author:1", "Issue:200", "AUTHORED", None),
     ]
     assert body["truncated"] is False
 
@@ -103,8 +103,8 @@ def test_type_filters_are_forwarded_to_the_workspace_scoped_graph_query(api_db):
     body = c.get(URL, params=[("types", "PullRequest"), ("types", "Issue")]).json()
 
     assert [node["type"] for node in body["nodes"]] == ["PullRequest", "Issue"]
-    assert body["edges"] == [
-        {"source": "PullRequest:100", "target": "Issue:200", "type": "AUTHORED"}
+    assert [(e["source"], e["target"], e["type"]) for e in body["edges"]] == [
+        ("PullRequest:100", "Issue:200", "AUTHORED")
     ]
     assert all(
         call[1]["node_types"] == ["PullRequest", "Issue"]

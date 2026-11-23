@@ -56,6 +56,11 @@ class GraphEdge(BaseModel):
     source: str
     target: str
     type: str
+    #: US-23: "agent" | "manual" | null (structural edges such as AUTHORED).
+    origin: str | None = None
+    relationship_type: str | None = None
+    confidence: float | None = None
+    created_at: str | None = None
 
 
 class GraphResponse(BaseModel):
@@ -311,7 +316,7 @@ def delete_graph_edge(
     load_workspace_for_user(session, user, workspace_id, permission=Permission.SOURCES_WRITE)
     try:
         deleted = mutate_graph_edge(driver, workspace_id, body.source_key, body.target_key,
-                                    body.edge_type, delete=True)
+                                    body.edge_type, delete=True, created_by=str(user.id))
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid graph node key")
     except (Neo4jError, DriverError):

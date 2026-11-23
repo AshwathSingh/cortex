@@ -224,11 +224,9 @@ def test_editor_can_create_manual_relationship(api_db):
     response = client.post(MUTATION_URL, json=MUTATION_BODY)
 
     assert response.status_code == 200
-    assert response.json() == {
-        "source": "Author:1",
-        "target": "PullRequest:20",
-        "type": "MANUAL_RELATIONSHIP",
-    }
+    assert response.json() | {"origin": None} == response.json()
+    assert (response.json()["source"], response.json()["target"], response.json()["type"]) == (
+        "Author:1", "PullRequest:20", "MANUAL_RELATIONSHIP")
     params = driver.tx.calls[0][1]
     assert params["workspace_id"] == TEST_WORKSPACE_ID
     assert params["source_type"] == "Author"

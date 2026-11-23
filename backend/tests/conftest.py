@@ -26,6 +26,13 @@ def _wipe_test_data(driver) -> None:
         s.run(_CLEANUP, workspaces=list(TEST_WORKSPACE_IDS)).consume()
 
 
+@pytest.fixture(autouse=True)
+def _no_real_jev(monkeypatch):
+    """The suite never reaches the real Jev API (it costs money) or starts the
+    Connection Agent from an app lifespan, whatever the developer's .env holds."""
+    monkeypatch.setattr(settings, "jev_api_key", None)
+
+
 @pytest.fixture(scope="session")
 def neo4j_driver():
     """Real Neo4j driver; skips the test if the database isn't reachable."""

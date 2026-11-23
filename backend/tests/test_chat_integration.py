@@ -166,7 +166,10 @@ def test_a_message_is_linked_to_its_channel_and_author(client, graph):
     use_providers(slack=slack_handler([slack_message("1730000000.000100")]))
     ingest(client, "slack", ["C1"])
 
-    edges = client.get(f"/api/workspaces/{TEST_WORKSPACE_ID}/graph").json()["edges"]
+    edges = [
+        {k: e[k] for k in ("source", "target", "type")}
+        for e in client.get(f"/api/workspaces/{TEST_WORKSPACE_ID}/graph").json()["edges"]
+    ]
 
     assert {
         "source": "Message:slack/C1/1730000000.000100",
@@ -247,7 +250,10 @@ def test_a_slack_thread_reply_is_linked_to_its_parent(client, graph):
     use_providers(slack=handler)
     ingest(client, "slack", ["C1"])
 
-    edges = client.get(f"/api/workspaces/{TEST_WORKSPACE_ID}/graph").json()["edges"]
+    edges = [
+        {k: e[k] for k in ("source", "target", "type")}
+        for e in client.get(f"/api/workspaces/{TEST_WORKSPACE_ID}/graph").json()["edges"]
+    ]
     assert {
         "source": "Message:slack/C1/1730000001.000200",
         "target": "Message:slack/C1/1730000000.000100",
