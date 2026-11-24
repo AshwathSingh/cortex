@@ -113,7 +113,7 @@ export function DocumentUpload({
   const busy = uploading !== null;
 
   return (
-    <section aria-labelledby="upload-heading" className="mt-12">
+    <section id="documents" tabIndex={-1} aria-labelledby="upload-heading" className="mt-12 scroll-mt-8">
       <div className="border-b border-border/30 pb-4">
         <h2 id="upload-heading" className="text-base font-semibold text-foreground">
           Documents

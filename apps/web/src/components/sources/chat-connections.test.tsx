@@ -50,13 +50,28 @@ type Routes = {
 function mockApi(routes: Routes = {}) {
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.endsWith("/sources/options"))
+      return Promise.resolve(
+        json({
+          can_manage_sources: true,
+          providers: ["github", "upload", "slack", "discord"].map((kind) => ({
+            kind,
+            available: true,
+            reason: null,
+          })),
+        }),
+      );
     if (init?.method === "DELETE") {
-      return (routes.disconnect ?? (() => Promise.resolve(new Response(null, { status: 204 }))))();
+      return (
+        routes.disconnect ??
+        (() => Promise.resolve(new Response(null, { status: 204 })))
+      )();
     }
     if (url.includes("/api/ingest/")) {
       return (
         routes.ingest ??
-        (() => Promise.resolve(json({ source: "Acme", channels: 2, messages: 41 })))
+        (() =>
+          Promise.resolve(json({ source: "Acme", channels: 2, messages: 41 })))
       )();
     }
     if (url.includes("/channels")) {
@@ -109,13 +124,21 @@ it("names the connected team and who connected it", async () => {
   mockApi({ connections: () => Promise.resolve(json([slack()])) });
   renderConnections();
 
-  expect(await screen.findByText("Acme · connected by Ashwath")).toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: "Connect Slack" })).not.toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Connect Discord" })).toBeInTheDocument();
+  expect(
+    await screen.findByText("Acme · connected by Ashwath"),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("link", { name: "Connect Slack" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: "Connect Discord" }),
+  ).toBeInTheDocument();
 });
 
 it("loads channels only when the picker is opened", async () => {
-  const fetchFn = mockApi({ connections: () => Promise.resolve(json([slack()])) });
+  const fetchFn = mockApi({
+    connections: () => Promise.resolve(json([slack()])),
+  });
   renderConnections();
   await screen.findByText("Acme · connected by Ashwath");
 
@@ -123,7 +146,9 @@ it("loads channels only when the picker is opened", async () => {
     fetchFn.mock.calls.filter(([url]) => String(url).includes("/channels"));
   expect(channelCalls()).toHaveLength(0);
 
-  await userEvent.click(screen.getByRole("button", { name: "Choose channels" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Choose channels" }),
+  );
 
   expect(await screen.findByLabelText("#general")).toBeInTheDocument();
   expect(screen.getByLabelText("#design")).toBeInTheDocument();
@@ -132,13 +157,19 @@ it("loads channels only when the picker is opened", async () => {
 
 it("ingests exactly the channels that were ticked", async () => {
   const onIngested = vi.fn();
-  const fetchFn = mockApi({ connections: () => Promise.resolve(json([slack()])) });
+  const fetchFn = mockApi({
+    connections: () => Promise.resolve(json([slack()])),
+  });
   renderConnections(onIngested);
   await screen.findByText("Acme · connected by Ashwath");
-  await userEvent.click(screen.getByRole("button", { name: "Choose channels" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Choose channels" }),
+  );
   await userEvent.click(await screen.findByLabelText("#design"));
 
-  await userEvent.click(screen.getByRole("button", { name: /Ingest 1 selected/ }));
+  await userEvent.click(
+    screen.getByRole("button", { name: /Ingest 1 selected/ }),
+  );
 
   await waitFor(() => expect(onIngested).toHaveBeenCalled());
   const [, init] = fetchFn.mock.calls.find(([url]) =>
@@ -157,7 +188,9 @@ it("cannot ingest without choosing a channel", async () => {
   mockApi({ connections: () => Promise.resolve(json([slack()])) });
   renderConnections();
   await screen.findByText("Acme · connected by Ashwath");
-  await userEvent.click(screen.getByRole("button", { name: "Choose channels" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Choose channels" }),
+  );
   await screen.findByLabelText("#general");
 
   expect(screen.getByRole("button", { name: /Ingest/ })).toBeDisabled();
@@ -173,9 +206,13 @@ it("reports the server's reason when an ingestion fails", async () => {
   });
   renderConnections();
   await screen.findByText("Acme · connected by Ashwath");
-  await userEvent.click(screen.getByRole("button", { name: "Choose channels" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Choose channels" }),
+  );
   await userEvent.click(await screen.findByLabelText("#general"));
-  await userEvent.click(screen.getByRole("button", { name: /Ingest 1 selected/ }));
+  await userEvent.click(
+    screen.getByRole("button", { name: /Ingest 1 selected/ }),
+  );
 
   expect(
     await screen.findByText("Slack rejected Cortex's access to Acme."),
@@ -190,7 +227,9 @@ it("explains an empty channel list rather than showing nothing", async () => {
   renderConnections();
   await screen.findByText("Acme · connected by Ashwath");
 
-  await userEvent.click(screen.getByRole("button", { name: "Choose channels" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Choose channels" }),
+  );
 
   expect(
     await screen.findByText(/Invite Cortex to a channel in Slack/),
@@ -206,9 +245,13 @@ it("surfaces a failure to list channels", async () => {
   renderConnections();
   await screen.findByText("Acme · connected by Ashwath");
 
-  await userEvent.click(screen.getByRole("button", { name: "Choose channels" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Choose channels" }),
+  );
 
-  expect(await screen.findByText("Slack rate limit reached")).toBeInTheDocument();
+  expect(
+    await screen.findByText("Slack rate limit reached"),
+  ).toBeInTheDocument();
 });
 
 it("disconnecting removes the connection and re-reads the list", async () => {
@@ -223,17 +266,57 @@ it("disconnecting removes the connection and re-reads the list", async () => {
   renderConnections();
   await screen.findByText("Acme · connected by Ashwath");
 
-  await userEvent.click(screen.getByRole("button", { name: "Disconnect Slack" }));
+  await userEvent.click(
+    screen.getByRole("button", { name: "Disconnect Slack" }),
+  );
 
-  expect(await screen.findByRole("link", { name: "Connect Slack" })).toBeInTheDocument();
+  expect(
+    await screen.findByRole("link", { name: "Connect Slack" }),
+  ).toBeInTheDocument();
   expect(
     fetchFn.mock.calls.filter(([, init]) => init?.method === "DELETE"),
   ).toHaveLength(1);
 });
 
 it("sends an unauthenticated visitor to log in", async () => {
-  mockApi({ connections: () => Promise.resolve(json({ detail: "Not authenticated" }, 401)) });
+  mockApi({
+    connections: () =>
+      Promise.resolve(json({ detail: "Not authenticated" }, 401)),
+  });
   renderConnections();
 
   await waitFor(() => expect(replace).toHaveBeenCalledWith("/login"));
+});
+
+it("explains missing provider configuration instead of linking to a failed install", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL) =>
+      Promise.resolve(
+        json(
+          String(input).endsWith("/sources/options")
+            ? {
+                can_manage_sources: true,
+                providers: [
+                  {
+                    kind: "slack",
+                    available: false,
+                    reason: "Slack is not configured on this server.",
+                  },
+                  { kind: "discord", available: true, reason: null },
+                ],
+              }
+            : [],
+        ),
+      ),
+    ),
+  );
+  renderConnections();
+  expect(
+    await screen.findByText("Slack is not configured on this server."),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("link", { name: "Connect Slack" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Connect Discord" })).toBeVisible();
 });

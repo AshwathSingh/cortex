@@ -38,7 +38,7 @@ from app.api.deps import CurrentUser, DbSession, load_workspace_for_user
 from app.api.rate_limit import RateLimiter
 from app.config import settings
 from app.models import SourceInstallTransaction
-from app.permissions import Permission
+from app.permissions import Permission, membership_permissions
 from app.security import hash_session_token
 from app.services.chat_credentials import (
     SourceCredentialMissing,
@@ -143,9 +143,7 @@ def _install_failed() -> HTTPException:
     )
 
 
-@router.get(
-    "/api/sources/{kind}/install", dependencies=[Depends(install_limiter)]
-)
+@router.get("/api/sources/{kind}/install", dependencies=[Depends(install_limiter)])
 def start_install(
     kind: ChatKind,
     user: CurrentUser,
@@ -254,9 +252,7 @@ def finish_install(
     _require_configured(kind)
 
     expected_state = request.cookies.get(INSTALL_STATE_COOKIE)
-    if not expected_state or not secrets.compare_digest(
-        expected_state, payload.state
-    ):
+    if not expected_state or not secrets.compare_digest(expected_state, payload.state):
         raise _install_failed()
 
     workspace_id, started_by, _ = _consume_transaction(session, payload.state, kind)
@@ -431,3 +427,51 @@ def read_channels(
 
     channels.sort(key=lambda c: (c.name.lower(), c.id))
     return channels
+
+
+class SourceOption(BaseModel):
+    kind: Literal["github", "upload", "slack", "discord"]
+    available: bool
+    reason: str | None = None
+
+
+class SourceOptionsResponse(BaseModel):
+    can_manage_sources: bool
+    providers: list[SourceOption]
+
+
+@router.get(
+    "/api/workspaces/{workspace_id}/sources/options",
+    response_model=SourceOptionsResponse,
+)
+def read_source_options(
+    workspace_id: uuid.UUID, user: CurrentUser, session: DbSession
+) -> SourceOptionsResponse:
+    """Workspace members can see availability; only sources.write enables actions.
+
+    No provider requests, credential values, or connection-specific data leave
+    this endpoint. GitHub public ingestion and document uploads need no OAuth.
+    """
+    _, membership = load_workspace_for_user(session, user, workspace_id)
+    return SourceOptionsResponse(
+        can_manage_sources=Permission.SOURCES_WRITE
+        in membership_permissions(membership),
+        providers=[
+            SourceOption(kind="github", available=True),
+            SourceOption(kind="upload", available=True),
+            SourceOption(
+                kind="slack",
+                available=settings.slack_configured,
+                reason=None
+                if settings.slack_configured
+                else "Slack is not configured on this server. Ask the person who manages Cortex to enable it.",
+            ),
+            SourceOption(
+                kind="discord",
+                available=settings.discord_configured,
+                reason=None
+                if settings.discord_configured
+                else "Discord is not configured on this server. Ask the person who manages Cortex to enable it.",
+            ),
+        ],
+    )

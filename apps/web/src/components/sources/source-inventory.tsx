@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import { SourceChooser } from "@/components/sources/source-chooser";
 import { IndexedChannels } from "@/components/sources/indexed-channels";
 import {
   RemoveSourceModal,
@@ -207,6 +208,21 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
     return () => clearInterval(timer);
   }, [isSyncing]);
 
+  useEffect(() => {
+    if (state.kind === "loading" || isWorkspaceLoading || !canAddSources)
+      return;
+    function focusSourceControl() {
+      const target = document.getElementById(window.location.hash.slice(1));
+      if (!target || !["documents", "slack", "discord"].includes(target.id))
+        return;
+      target.scrollIntoView({ block: "start" });
+      target.focus({ preventScroll: true });
+    }
+    focusSourceControl();
+    window.addEventListener("hashchange", focusSourceControl);
+    return () => window.removeEventListener("hashchange", focusSourceControl);
+  }, [state.kind, isWorkspaceLoading, canAddSources, workspaceId]);
+
   /**
    * Re-ingest a repository that is already connected. The repo is known, so
    * this needs no form -- it is the same `POST /api/ingest/github` the ingest
@@ -266,10 +282,10 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
         action={
           canAddSources ? (
             <Link
-              href={routes.workspace.ingest(workspaceId)}
+              href={routes.workspace.addSource(workspaceId)}
               className={buttonClassName({ variant: "primary" })}
             >
-              Add repository
+              Add source
             </Link>
           ) : undefined
         }
@@ -329,19 +345,10 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
           }
           description={
             canAddSources
-              ? "Add a GitHub repository to index its pull requests and issues."
-              : "Ask a workspace owner or editor to connect a GitHub repository."
+              ? "Choose a repository, document, Slack channel or Discord channel to start building this workspace’s memory."
+              : "Repositories, documents and chat channels appear here once a member with source management access adds them."
           }
-          action={
-            canAddSources ? (
-              <Link
-                href={routes.workspace.ingest(workspaceId)}
-                className={buttonClassName({ className: "mt-6" })}
-              >
-                Add GitHub repository
-              </Link>
-            ) : undefined
-          }
+          action={<SourceChooser workspaceId={workspaceId} />}
         />
       ) : null}
 

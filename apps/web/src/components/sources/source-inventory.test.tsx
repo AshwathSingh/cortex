@@ -90,12 +90,23 @@ function jsonResponse(body: unknown, status = 200) {
  * be read once, so a single object silently fails the second reader -- and the
  * page makes two requests now that T-12.2 polls for failures as well.
  */
+const SOURCE_OPTIONS = {
+  can_manage_sources: true,
+  providers: ["github", "upload", "slack", "discord"].map((kind) => ({
+    kind,
+    available: true,
+    reason: null,
+  })),
+};
+
 function mockFetch(status: number, body: unknown) {
   const fn = vi.fn((input: RequestInfo | URL) =>
     Promise.resolve(
       String(input).endsWith("/sources")
         ? jsonResponse(body, status)
-        : jsonResponse([]),
+        : jsonResponse(
+            String(input).endsWith("/sources/options") ? SOURCE_OPTIONS : [],
+          ),
     ),
   );
   vi.stubGlobal("fetch", fn);
@@ -128,6 +139,8 @@ function mockApi(
         }),
       );
     }
+    if (String(input).endsWith("/sources/options"))
+      return Promise.resolve(jsonResponse(SOURCE_OPTIONS));
     // Everything else the page reads -- chat connections, failure polling --
     // answers empty; each has tests of its own.
     if (!String(input).endsWith("/sources"))
@@ -185,8 +198,9 @@ describe("SourceInventory", () => {
     );
     expect(row).not.toHaveClass("sm:grid-cols-[minmax(0,1fr)_auto]");
 
-    const actions = screen.getByRole("button", { name: /re-sync openai\/cortex/i })
-      .parentElement;
+    const actions = screen.getByRole("button", {
+      name: /re-sync openai\/cortex/i,
+    }).parentElement;
     expect(actions).toHaveClass("flex-wrap", "lg:justify-end");
   });
 
@@ -271,7 +285,7 @@ describe("SourceInventory", () => {
     mockFetch(200, []);
     renderInventory();
     expect(
-      await screen.findByRole("link", { name: /add github repository/i }),
+      await screen.findByRole("link", { name: /add repository/i }),
     ).toHaveAttribute("href", `/workspaces/${WORKSPACE_ID}/ingest`);
   });
 
@@ -283,7 +297,7 @@ describe("SourceInventory", () => {
       await screen.findByText(/no indexed sources yet/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/ask a workspace owner or editor/i),
+      screen.getByText(/ask a member with source management access/i),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("link", { name: /add repository/i }),
@@ -297,7 +311,11 @@ describe("SourceInventory", () => {
     let listReads = 0;
     const fetchFn = vi.fn((input: RequestInfo | URL) => {
       if (!String(input).endsWith("/sources")) {
-        return Promise.resolve(jsonResponse([]));
+        return Promise.resolve(
+          jsonResponse(
+            String(input).endsWith("/sources/options") ? SOURCE_OPTIONS : [],
+          ),
+        );
       }
       listReads += 1;
       return Promise.resolve(
@@ -609,7 +627,13 @@ it("removes a source and announces success", async () => {
       }
       return Promise.resolve(
         jsonResponse(
-          String(input).endsWith("/sources") ? (deleted ? [] : [source()]) : [],
+          String(input).endsWith("/sources")
+            ? deleted
+              ? []
+              : [source()]
+            : String(input).endsWith("/sources/options")
+              ? SOURCE_OPTIONS
+              : [],
         ),
       );
     }),
@@ -626,4 +650,48 @@ it("removes a source and announces success", async () => {
     screen.queryByRole("button", { name: "Remove openai/cortex" }),
   ).not.toBeInTheDocument();
   expect(routerMock.refresh).toHaveBeenCalled();
+});
+
+it("uses the unified chooser as the primary Add source destination", async () => {
+  mockFetch(200, [source()]);
+  renderInventory();
+  expect(
+    await screen.findByRole("link", { name: "Add source" }),
+  ).toHaveAttribute("href", `/workspaces/${WORKSPACE_ID}/sources/new`);
+});
+
+it("presents repositories, documents and both chat providers when empty", async () => {
+  mockFetch(200, []);
+  renderInventory();
+  expect(
+    await screen.findByRole("link", { name: "Upload a document" }),
+  ).toBeVisible();
+  for (const name of [
+    "GitHub repository",
+    "Document upload",
+    "Slack",
+    "Discord",
+  ]) {
+    expect(screen.getByRole("heading", { name })).toBeVisible();
+  }
+});
+
+it("focuses the requested source control after asynchronous loading", async () => {
+  const scroll = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: scroll,
+  });
+  window.history.replaceState(null, "", "#documents");
+  try {
+    mockFetch(200, []);
+    renderInventory();
+    await waitFor(() =>
+      expect(document.getElementById("documents")).toHaveFocus(),
+    );
+    expect(scroll).toHaveBeenCalled();
+  } finally {
+    window.history.replaceState(null, "", window.location.pathname);
+    delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+  }
 });
