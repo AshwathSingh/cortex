@@ -177,6 +177,17 @@ describe("SourceInventory", () => {
       "https://github.com/openai/cortex",
     );
     expect(screen.getByText("1 source · 11 items indexed")).toBeInTheDocument();
+
+    const row = repository.closest("li");
+    expect(row).toHaveClass(
+      "lg:grid-cols-[minmax(0,1fr)_auto]",
+      "lg:items-center",
+    );
+    expect(row).not.toHaveClass("sm:grid-cols-[minmax(0,1fr)_auto]");
+
+    const actions = screen.getByRole("button", { name: /re-sync openai\/cortex/i })
+      .parentElement;
+    expect(actions).toHaveClass("flex-wrap", "lg:justify-end");
   });
 
   // US-10 acceptance criteria.

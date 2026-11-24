@@ -375,7 +375,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
               return (
                 <li
                   key={`${source.kind}:${source.repo}`}
-                  className="grid gap-5 py-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+                  className="grid gap-5 py-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center"
                 >
                   <div className="flex min-w-0 items-center gap-4">
                     <span className="grid size-10 shrink-0 place-items-center rounded-xl border border-border/30 bg-surface-raised text-muted">
@@ -414,7 +414,7 @@ export function SourceInventory({ workspaceId }: { workspaceId: string }) {
                       />
                     </div>
                   </div>
-                  <div className="flex items-center justify-end gap-6">
+                  <div className="flex flex-wrap items-center gap-6 lg:justify-end">
                     <dl className="grid auto-cols-fr grid-flow-col gap-6 text-right">
                       {meta.countColumns.map((column) => (
                         <div key={column.label}>

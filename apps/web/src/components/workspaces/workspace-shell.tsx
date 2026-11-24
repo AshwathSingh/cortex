@@ -151,7 +151,7 @@ function WorkspaceShellFrame({
     <div
       data-workspace-id={workspaceId}
       style={sidebarStyles(sidebarAppearance)}
-      className="grid min-h-screen min-w-[64rem] grid-cols-[var(--cortex-sidebar-width)_minmax(0,1fr)]"
+      className="grid min-h-screen min-w-0 w-full grid-cols-[var(--cortex-sidebar-width)_minmax(0,1fr)]"
     >
       <AppSidebar
         productLabel="Cortex"

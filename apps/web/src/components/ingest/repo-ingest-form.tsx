@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { type FormEvent, useState } from "react";
 
+import { SourceConnectionLayout } from "@/components/sources/source-connection-layout";
 import { Button } from "@/components/ui/button";
 import { FeedbackAlert } from "@/components/ui/feedback-alert";
 import { FormField } from "@/components/ui/form-field";
-import { PageHeader } from "@/components/ui/page-layout";
 import { useWorkspace } from "@/components/workspaces/workspace-context";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { IngestResult } from "@/lib/api-types";
@@ -20,6 +20,21 @@ const fallbackMessages: Record<number, string> = {
   502: "GitHub returned an unexpected response.",
   503: "Graph database is unavailable.",
 };
+
+const indexedArtifacts = [
+  {
+    label: "Pull requests",
+    description: "Titles, descriptions, state and authorship.",
+  },
+  {
+    label: "Issues",
+    description: "Open and closed work, with its current status.",
+  },
+  {
+    label: "Contributors",
+    description: "The people connected to repository activity.",
+  },
+] as const;
 
 /** Add `https://` when no scheme is given, so `github.com/owner/repo` works. */
 export function normalizeRepoUrl(input: string): string {
@@ -67,98 +82,94 @@ export function RepoIngestForm({ workspaceId }: { workspaceId: string }) {
   }
 
   const isLoading = status.kind === "loading";
-  const header = (
-    <PageHeader
+
+  return (
+    <SourceConnectionLayout
       backHref={routes.workspace.sources(workspaceId)}
       backLabel="Back to sources"
-      description="Build project memory from a GitHub repository."
-      headingId="ingest-heading"
-      title="Add a repository"
-    />
-  );
-
-  if (isWorkspaceLoading) {
-    return (
-      <section aria-labelledby="ingest-heading">
-        {header}
-        <p role="status" className="mt-10 text-sm text-muted">
+      sourceName="GitHub"
+      workspaceName={workspace?.name ?? "this workspace"}
+      description="Add repository activity to this workspace's project memory."
+      methodTitle="Connect with a URL"
+      methodDescription="Paste the full GitHub URL for the repository you want to connect."
+      dataTitle="What Cortex will use from GitHub"
+      dataDescription="These artifacts are indexed together for this connection."
+      dataItems={indexedArtifacts}
+    >
+      {isWorkspaceLoading ? (
+        <p role="status" className="text-sm text-muted">
           Checking workspace access…
         </p>
-      </section>
-    );
-  }
-
-  if (!canManageSources(workspace?.permissions)) {
-    return (
-      <section aria-labelledby="ingest-heading">
-        {header}
-        <div className="mt-10 border-y border-border/25 py-8">
-          <h2 className="text-base font-semibold text-foreground">
+      ) : !canManageSources(workspace?.permissions) ? (
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">
             View-only access
-          </h2>
+          </h3>
           <p className="mt-2 max-w-xl text-sm leading-6 text-muted">
             Ask a workspace owner or editor to connect a GitHub repository.
           </p>
         </div>
-      </section>
-    );
-  }
-
-  return (
-    <section aria-labelledby="ingest-heading">
-      {header}
-
-      <form
-        onSubmit={handleSubmit}
-        noValidate
-        aria-label="Ingest a GitHub repository"
-        className="mt-10"
-      >
-        <FormField
-          id="repo-url"
-          label="GitHub repository URL"
-          type="text"
-          inputMode="url"
-          value={repoUrl}
-          onChange={(event) => setRepoUrl(event.target.value)}
-          placeholder="github.com/owner/repo"
-          disabled={isLoading}
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <Button
-          type="submit"
-          disabled={isLoading}
-          size="large"
-          variant="primary"
-          className="mt-6 disabled:cursor-wait"
+      ) : (
+        <form
+          onSubmit={handleSubmit}
+          noValidate
+          aria-label="Add a GitHub repository"
+          className="max-w-3xl"
         >
-          {isLoading ? "Ingesting…" : "Ingest repository"}
-        </Button>
-
-        <div aria-live="polite">
-          {isLoading ? (
-            <p className="mt-5 text-sm text-muted">
-              Fetching pull requests and issues. Large repositories can take a while.
-            </p>
-          ) : null}
-          <FeedbackAlert
-            message={status.kind === "error" ? status.message : null}
+          <FormField
+            id="repo-url"
+            label="GitHub repository URL"
+            hint="owner/repository"
+            type="text"
+            inputMode="url"
+            value={repoUrl}
+            onChange={(event) => setRepoUrl(event.target.value)}
+            placeholder="github.com/owner/repo"
+            disabled={isLoading}
+            autoComplete="off"
+            spellCheck={false}
           />
-          {status.kind === "success" ? (
-            <div role="status" className="mt-5 text-sm text-foreground">
-              <p>
-                Ingested <strong>{status.result.repo}</strong>:{" "}
-                {status.result.pull_requests} pull requests, {status.result.issues}{" "}
-                issues.
+          <Button
+            type="submit"
+            disabled={isLoading}
+            size="large"
+            variant="primary"
+            className="mt-6 w-full disabled:cursor-wait sm:w-auto"
+          >
+            {isLoading ? "Adding repository…" : "Add repository"}
+          </Button>
+
+          <div aria-live="polite">
+            {isLoading ? (
+              <p className="mt-5 text-sm leading-6 text-muted">
+                Reading pull requests and issues. Large repositories can take a
+                while.
               </p>
-              <Link href={routes.workspace.sources(workspaceId)} className="mt-3 inline-block font-semibold text-accent-bright transition-colors hover:text-foreground">
-                View sources →
-              </Link>
-            </div>
-          ) : null}
-        </div>
-      </form>
-    </section>
+            ) : null}
+            <FeedbackAlert
+              message={status.kind === "error" ? status.message : null}
+            />
+            {status.kind === "success" ? (
+              <div
+                role="status"
+                className="mt-5 border-l-2 border-emerald-400/60 pl-3 text-sm leading-6 text-foreground"
+              >
+                <p>
+                  Added <strong>{status.result.repo}</strong>:{" "}
+                  {status.result.pull_requests} pull requests and{" "}
+                  {status.result.issues} issues.
+                </p>
+                <Link
+                  href={routes.workspace.sources(workspaceId)}
+                  className="mt-2 inline-block font-semibold text-accent-bright transition-colors hover:text-foreground"
+                >
+                  View sources →
+                </Link>
+              </div>
+            ) : null}
+          </div>
+        </form>
+      )}
+    </SourceConnectionLayout>
   );
 }
