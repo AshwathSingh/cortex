@@ -52,7 +52,7 @@ def default_factory(driver):
         threshold=settings.connection_agent_confidence_threshold,
         review_floor=settings.connection_agent_review_floor,
         max_candidates=settings.connection_agent_max_candidates,
-        write_guard_factory=lambda ws: SourceRemovalFence(ws).write,
+        write_guard_factory=SourceRemovalFence,
     )
 
 

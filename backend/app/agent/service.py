@@ -13,7 +13,7 @@ Edges are upserted by ``dedup_key``, so re-running is safe.
 
 import hashlib
 import logging
-from contextlib import nullcontext
+from contextlib import nullcontext, ExitStack
 from dataclasses import dataclass
 
 from app.agent import relationships as rel
@@ -86,50 +86,58 @@ class ConnectionAgent:
             if self.write_guard_factory
             else nullcontext
         )
-        pool = self.store.fetch_artifacts(workspace_id)
-        todo = [a for a in pool if a.analysis_hash != content_hash(a)]
-        seen: set[frozenset[str]] = set()
-        for artifact in todo:
-            with write_guard():
-                mutations.set_analysis_status(
-                    self.driver, workspace_id, artifact.key, "running"
-                )
-            try:
-                for other in find_candidates(artifact, pool, self.max_candidates):
-                    pair = frozenset((artifact.key, other.key))
-                    if pair in seen:
-                        continue
-                    seen.add(pair)
-                    self._analyse_pair(
-                        workspace_id, artifact, other, summary, write_guard=write_guard
+        with ExitStack() as resources:
+            close = getattr(write_guard, "close", None)
+            if close:
+                resources.callback(close)
+            pool = self.store.fetch_artifacts(workspace_id)
+            todo = [a for a in pool if a.analysis_hash != content_hash(a)]
+            seen: set[frozenset[str]] = set()
+            for artifact in todo:
+                with write_guard():
+                    mutations.set_analysis_status(
+                        self.driver, workspace_id, artifact.key, "running"
                     )
-            except JevError as error:
-                summary.failed += 1
-                logger.error(
-                    "connection analysis failed workspace=%s artifact=%s error=%s",
-                    workspace_id,
-                    artifact.key,
-                    type(error).__name__,
-                )
+                try:
+                    for other in find_candidates(artifact, pool, self.max_candidates):
+                        pair = frozenset((artifact.key, other.key))
+                        if pair in seen:
+                            continue
+                        seen.add(pair)
+                        self._analyse_pair(
+                            workspace_id,
+                            artifact,
+                            other,
+                            summary,
+                            write_guard=write_guard,
+                        )
+                except JevError as error:
+                    summary.failed += 1
+                    logger.error(
+                        "connection analysis failed workspace=%s artifact=%s error=%s",
+                        workspace_id,
+                        artifact.key,
+                        type(error).__name__,
+                    )
+                    with write_guard():
+                        mutations.set_analysis_status(
+                            self.driver,
+                            workspace_id,
+                            artifact.key,
+                            "failed",
+                            error=f"{type(error).__name__}: {str(error)[:200]}",
+                        )
+                    continue
+                summary.analysed += 1
                 with write_guard():
                     mutations.set_analysis_status(
                         self.driver,
                         workspace_id,
                         artifact.key,
-                        "failed",
-                        error=f"{type(error).__name__}: {str(error)[:200]}",
+                        "done",
+                        content_hash=content_hash(artifact),
                     )
-                continue
-            summary.analysed += 1
-            with write_guard():
-                mutations.set_analysis_status(
-                    self.driver,
-                    workspace_id,
-                    artifact.key,
-                    "done",
-                    content_hash=content_hash(artifact),
-                )
-        return summary
+            return summary
 
     def _analyse_pair(
         self,

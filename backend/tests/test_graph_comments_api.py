@@ -434,3 +434,20 @@ def test_a_comment_outlives_its_author(two_members):
     assert comment["body"] == "bob's argument"
     assert comment["author_id"] is None
     assert comment["author_name"] is None
+
+
+@pytest.mark.parametrize("endpoint", [URL, SEEN_URL])
+def test_guard_validation_error_is_a_422(two_members, monkeypatch, endpoint):
+    from app.services import source_removal
+
+    client, sessions, (alice, _) = two_members
+    sign_in(client, sessions, alice)
+
+    def invalid(*args, **kwargs):
+        raise ValueError("Invalid graph target")
+
+    monkeypatch.setattr(source_removal, "guard_target", invalid)
+    response = client.post(
+        endpoint, json={"target_kind": "node", "target_key": NODE, "body": "comment"}
+    )
+    assert response.status_code == 422

@@ -208,15 +208,54 @@ def read_workspace_sources(
     ]
 
     from app.services.source_removal import canonical_ref
-    for removal in session.scalars(select(SourceRemoval).where(SourceRemoval.workspace_id == workspace_id, SourceRemoval.pending.is_(True))):
-        existing = next((item for item in inventory if item.kind == removal.kind and canonical_ref(item.kind, item.repo) == removal.external_ref), None)
+
+    for removal in session.scalars(
+        select(SourceRemoval).where(
+            SourceRemoval.workspace_id == workspace_id, SourceRemoval.pending.is_(True)
+        )
+    ):
+        if removal.channel_id is not None:
+            # Only that channel is pending, not the whole Slack/Discord source.
+            # Preserve a legacy parent row solely so its channel retry is reachable.
+            if not any(
+                item.kind == removal.kind and item.repo == removal.external_ref
+                for item in inventory
+            ):
+                inventory.append(
+                    SourceSummary(
+                        repo=removal.external_ref,
+                        kind=removal.kind,
+                        status=SyncStatus.SUCCESS,
+                        pull_requests=0,
+                        issues=0,
+                        total_items=0,
+                    )
+                )
+            continue
+        existing = next(
+            (
+                item
+                for item in inventory
+                if item.kind == removal.kind
+                and canonical_ref(item.kind, item.repo) == removal.external_ref
+            ),
+            None,
+        )
         if existing:
             existing.status = SyncStatus.FAILED
             existing.last_error = "Removal incomplete. Retry removal to finish cleanup."
         else:
-            inventory.append(SourceSummary(repo=removal.external_ref, kind=removal.kind,
-                status=SyncStatus.FAILED, pull_requests=0, issues=0, total_items=0,
-                last_error="Removal incomplete. Retry removal to finish cleanup."))
+            inventory.append(
+                SourceSummary(
+                    repo=removal.external_ref,
+                    kind=removal.kind,
+                    status=SyncStatus.FAILED,
+                    pull_requests=0,
+                    issues=0,
+                    total_items=0,
+                    last_error="Removal incomplete. Retry removal to finish cleanup.",
+                )
+            )
     return inventory
 
 
@@ -386,7 +425,7 @@ def delete_workspace_source(
     if body.channel_id and body.kind not in ("slack", "discord"):
         raise HTTPException(status_code=422, detail="Only chat sources have channels.")
     try:
-        remove_source(session, driver, workspace_id, body.kind, body.external_ref, body.channel_id)
+        remove_source(session, driver, workspace_id, body.kind, body.external_ref, body.channel_id, actor=f"user:{user.id}")
     except SourceChanged as error:
         session.rollback()
         raise HTTPException(status_code=409, detail=str(error))

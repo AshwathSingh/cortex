@@ -8,7 +8,7 @@ Flags and their evidence are derived on read, so disappear with their graph item
 
 import uuid
 from contextlib import contextmanager
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 from neo4j import Driver
 from app.models import (
@@ -16,10 +16,13 @@ from app.models import (
     GraphComment,
     GraphCommentView,
     SourceRemoval,
+    SourceRemovalTarget,
+    WORKSPACE_ACTIVE,
     SyncStatus,
     Workspace,
 )
-from app.graph.queries import node_key
+from app.graph import mutations
+from app.graph.queries import node_key, parse_graph_target_key, coerce_node_id
 from app.services.workspaces import lock_active_workspace
 from app.uploads.graph import document_id
 
@@ -68,43 +71,14 @@ def check_ingestion_fence(
 
 # Author ownership is relational: source_ref is overwritten when chat authors
 # appear in several servers. Preserve authors with ANY link to surviving data.
-PLAN = """
-MATCH (n {workspace_id: $workspace_id})
-WHERE ($kind = 'github' AND (n:Repository OR n:PullRequest OR n:Issue) AND n.repo = $ref)
-   OR ($kind = 'upload' AND ((n:Document AND n.id = $document_id)
-       OR (n:DocumentSection AND n.document_id = $document_id)))
-   OR ($kind IN ['slack', 'discord'] AND n.kind = $kind AND n.source_ref = $ref
-       AND ((n:Channel AND ($channel_id IS NULL OR n.id = $channel_id))
-         OR (n:Message AND ($channel_id IS NULL OR n.channel_id = $channel_id))))
-WITH collect(n) AS owned
-OPTIONAL MATCH (a:Author {workspace_id: $workspace_id})--(n)
-WHERE n IN owned AND NOT EXISTS { MATCH (a)--(other) WHERE NOT other IN owned }
-WITH owned, collect(DISTINCT a) AS authors
-WITH owned + authors AS doomed
-UNWIND doomed AS n
-RETURN elementId(n) AS element_id, labels(n) AS labels, n.id AS id,
-       [(n)-[r]-() | {source_labels: labels(startNode(r)), source_id: startNode(r).id,
-          target_labels: labels(endNode(r)), target_id: endNode(r).id, type: type(r)}] AS edges,
-       [(n)--(a:Author) | {labels: labels(a), id: a.id}] AS authors
-"""
 
 
 def plan_cleanup(
     driver: Driver, workspace_id: uuid.UUID, kind: str, ref: str, channel_id: str | None
 ) -> dict:
-    with driver.session() as graph:
-        records = graph.execute_read(
-            lambda tx: list(
-                tx.run(
-                    PLAN,
-                    workspace_id=str(workspace_id),
-                    kind=kind,
-                    ref=ref,
-                    document_id=document_id(ref),
-                    channel_id=channel_id,
-                )
-            )
-        )
+    records = mutations.fetch_source_removal_plan(
+        driver, workspace_id, kind, ref, channel_id
+    )
     keys = set()
     for record in records:
         for author in record["authors"]:
@@ -118,6 +92,46 @@ def plan_cleanup(
     return {"keys": sorted(keys)}
 
 
+def _surviving_keys(driver, workspace_id, keys):
+    # Return raw labels/ids and use the SAME node_key helper as the canvas and
+    # cleanup plan. Extra labels must never erase a surviving node's discussion.
+    ids = list(
+        dict.fromkeys(
+            coerce_node_id(endpoint.partition(":")[2])
+            for key in keys
+            for endpoint in key.split("|")[::2]
+        )
+    )
+    if not ids:
+        return set()
+
+    def read(tx):
+        nodes = list(
+            tx.run(
+                "MATCH (n {workspace_id: $ws}) WHERE n.id IN $ids RETURN labels(n) AS labels, n.id AS id",
+                ws=str(workspace_id),
+                ids=ids,
+            )
+        )
+        edges = list(
+            tx.run(
+                "MATCH (a {workspace_id: $ws})-[r]->(b {workspace_id: $ws}) WHERE a.id IN $ids AND b.id IN $ids RETURN labels(a) AS source_labels, a.id AS source_id, labels(b) AS target_labels, b.id AS target_id, type(r) AS type",
+                ws=str(workspace_id),
+                ids=ids,
+            )
+        )
+        return nodes, edges
+
+    with driver.session() as graph:
+        nodes, edges = graph.execute_read(read)
+    surviving = {node_key(row["labels"], row["id"]) for row in nodes}
+    surviving.update(
+        f"{node_key(row['source_labels'], row['source_id'])}|{row['type']}|{node_key(row['target_labels'], row['target_id'])}"
+        for row in edges
+    )
+    return surviving
+
+
 def remove_source(
     session: Session,
     driver: Driver,
@@ -125,9 +139,9 @@ def remove_source(
     kind: str,
     ref: str,
     channel_id: str | None = None,
+    *,
+    actor: str = "system:source_removal",
 ) -> None:
-    # Exclusive workspace lock conflicts with ingestion's shared write lock.
-    # Keep it across graph planning and cleanup; release only after SQL commits.
     def lock():
         session.execute(
             select(Workspace.id).where(Workspace.id == workspace_id).with_for_update()
@@ -143,9 +157,19 @@ def remove_source(
         )
     if not row or not row.pending:
         targets = plan_cleanup(driver, workspace_id, kind, ref, channel_id)
-        targets["keys"] = sorted(
-            set(targets["keys"]) | set(row.targets.get("keys", []) if row else [])
+        previous = (
+            set(
+                session.scalars(
+                    select(SourceRemovalTarget.target_key).where(
+                        SourceRemovalTarget.workspace_id == workspace_id,
+                        SourceRemovalTarget.source_removal_id == row.id,
+                    )
+                ).all()
+            )
+            if row
+            else set()
         )
+        targets["keys"] = sorted(set(targets["keys"]) | previous)
         if row is None:
             row = SourceRemoval(
                 workspace_id=workspace_id,
@@ -154,75 +178,84 @@ def remove_source(
             )
             session.add(row)
         row.revision = str(uuid.uuid4())
-        row.pending = True
-        row.channel_id = channel_id
-        row.targets = targets
+        row.pending, row.channel_id, row.targets = True, channel_id, targets
+        session.flush()
+        for key in set(targets["keys"]) - previous:
+            session.add(
+                SourceRemovalTarget(
+                    workspace_id=workspace_id, source_removal_id=row.id, target_key=key
+                )
+            )
+        session.execute(
+            update(Workspace)
+            .where(Workspace.id == workspace_id)
+            .values(
+                source_removal_revision=Workspace.source_removal_revision + 1,
+                source_removals_pending=Workspace.source_removals_pending + 1,
+            )
+        )
         revision = row.revision
         session.commit()
         lock()
         row = journal(session, workspace_id, kind, ref)
         if row.revision != revision or not row.pending:
-            return  # another retry completed this cleanup while we reacquired
+            return
     targets = row.targets
-    with driver.session() as graph:
-
-        def cleanup(tx):
-            # Resolve ownership again in the SAME Neo4j transaction as deletion.
-            # Never replay saved element ids: Neo4j may reuse deleted ids.
-            records = list(
-                tx.run(
-                    PLAN,
-                    workspace_id=str(workspace_id),
-                    kind=kind,
-                    ref=ref,
-                    document_id=document_id(ref),
-                    channel_id=channel_id,
-                )
-            )
-            ids = [record["element_id"] for record in records]
-            tx.run(
-                "MATCH (n {workspace_id: $workspace_id}) WHERE elementId(n) IN $ids DETACH DELETE n",
-                workspace_id=str(workspace_id),
-                ids=ids,
-            ).consume()
-
-        graph.execute_write(cleanup)
-        # Keys for surviving shared nodes/edges must retain their discussions.
-        existing = graph.execute_read(
-            lambda tx: list(
-                tx.run(
-                    "MATCH (n {workspace_id: $workspace_id}) "
-                    "WITH collect(head(labels(n)) + ':' + toString(n.id)) AS node_keys "
-                    "OPTIONAL MATCH (a {workspace_id: $workspace_id})-[r]->(b {workspace_id: $workspace_id}) "
-                    "WITH node_keys, collect(head(labels(a)) + ':' + toString(a.id) + '|' + type(r) + '|' + head(labels(b)) + ':' + toString(b.id)) AS edge_keys RETURN node_keys + edge_keys AS keys",
-                    workspace_id=str(workspace_id),
-                )
-            )
-        )
-    surviving = set(existing[0]["keys"]) if existing else set()
+    operation_id = row.revision
+    nodes_removed = mutations.delete_source_graph(
+        driver,
+        workspace_id,
+        kind,
+        ref,
+        channel_id,
+        actor=actor,
+        operation_id=operation_id,
+    )
+    surviving = _surviving_keys(driver, workspace_id, targets["keys"])
     keys = [key for key in targets["keys"] if key not in surviving]
-    for model in (GraphComment, GraphCommentView):
-        # Bound batches stay below database parameter ceilings for large repos.
+    counts = {
+        "nodes_removed": nodes_removed,
+        "comments_removed": 0,
+        "read_markers_removed": 0,
+        "sources_removed": 0,
+    }
+    for model, label in (
+        (GraphComment, "comments_removed"),
+        (GraphCommentView, "read_markers_removed"),
+    ):
         for start in range(0, len(keys), 500):
-            session.execute(
+            result = session.execute(
                 delete(model).where(
                     model.workspace_id == workspace_id,
                     model.target_key.in_(keys[start : start + 500]),
                 )
             )
+            counts[label] += result.rowcount
+    # Remove temporary guards for shared/restored targets, retaining only the
+    # identifiers that are genuinely gone. Completed journals hold no key arrays.
+    kept = list(surviving.intersection(targets["keys"]))
+    for start in range(0, len(kept), 500):
+        session.execute(
+            delete(SourceRemovalTarget).where(
+                SourceRemovalTarget.source_removal_id == row.id,
+                SourceRemovalTarget.workspace_id == workspace_id,
+                SourceRemovalTarget.target_key.in_(kept[start : start + 500]),
+            )
+        )
     if channel_id is None:
         predicate = (
             func.lower(func.trim(DataSource.external_ref)) == canonical_ref(kind, ref)
             if kind == "upload"
             else DataSource.external_ref == ref
         )
-        session.execute(
+        result = session.execute(
             delete(DataSource).where(
                 DataSource.workspace_id == workspace_id,
                 DataSource.kind == kind,
                 predicate,
             )
         )
+        counts["sources_removed"] = result.rowcount
     else:
         source = session.scalar(
             select(DataSource).where(
@@ -235,10 +268,23 @@ def remove_source(
             source.status = SyncStatus.FAILED
             source.last_error = "Sync stopped because a channel was removed. Choose the remaining channels to ingest again."
             source.last_error_code = "unknown"
-    row.pending = False
-    row.targets = {"keys": keys}  # Only identifiers; no removed content is retained.
+    row.pending, row.targets = False, {}
+    session.execute(
+        update(Workspace)
+        .where(Workspace.id == workspace_id)
+        .values(source_removals_pending=Workspace.source_removals_pending - 1)
+    )
     session.commit()
-    # Refresh analysis for surviving artifacts after invalidating an older run.
+    if any(counts.values()):
+        mutations.record_source_removed(
+            workspace_id,
+            actor=actor,
+            operation_id=operation_id,
+            kind=kind,
+            ref=ref,
+            channel_id=channel_id,
+            counts=counts,
+        )
     from app.agent.events import emit_artifact_ingested
 
     emit_artifact_ingested(workspace_id)
@@ -265,15 +311,18 @@ def indexed_channels(
             )
         ]
     row = journal(session, workspace_id, kind, ref)
-    if (
-        row
-        and row.pending
-        and row.channel_id
-        and not any(c["id"] == row.channel_id for c in channels)
-    ):
-        channels.append(
-            {"id": row.channel_id, "name": "Removal incomplete — retry", "messages": 0}
+    if row and row.pending and row.channel_id:
+        channel = next(
+            (item for item in channels if item["id"] == row.channel_id), None
         )
+        if channel is None:
+            channel = {
+                "id": row.channel_id,
+                "name": row.channel_id.split("/", 1)[-1],
+                "messages": 0,
+            }
+            channels.append(channel)
+        channel["removal_pending"] = True
     return channels
 
 
@@ -283,20 +332,23 @@ def guard_target(
     target_key: str,
     driver: Driver | None = None,
 ) -> None:
-    """Serialize mutations with cleanup and reject stale inspector submissions.
-
-    Only removed targets need a graph lookup; ordinary comment posting keeps
-    its existing availability when Neo4j is offline.
-    """
+    source, edge_type, target = parse_graph_target_key(target_key)
+    key = target_key.strip()
     if not lock_active_workspace(session, workspace_id):
         raise SourceChanged("This workspace is being deleted.")
-    rows = session.scalars(
-        select(SourceRemoval).where(SourceRemoval.workspace_id == workspace_id)
+    # Indexed lookup of ONE key; never deserialize historical cleanup plans.
+    matches = session.execute(
+        select(SourceRemoval.pending, SourceRemovalTarget.source_removal_id)
+        .join(SourceRemoval, SourceRemoval.id == SourceRemovalTarget.source_removal_id)
+        .where(
+            SourceRemovalTarget.workspace_id == workspace_id,
+            SourceRemoval.workspace_id == workspace_id,
+            SourceRemovalTarget.target_key == key,
+        )
     ).all()
-    matching = [row for row in rows if target_key in row.targets.get("keys", [])]
-    if not matching:
+    if not matches:
         return
-    if any(row.pending for row in matching):
+    if any(row.pending for row in matches):
         raise SourceChanged(
             "This content is being removed. Refresh the page before continuing."
         )
@@ -304,25 +356,32 @@ def guard_target(
         from app.db.neo4j_driver import get_driver
 
         driver = get_driver()
-    from app.graph.queries import fetch_node_details, fetch_edge_details, coerce_node_id
+    from app.graph.queries import fetch_node_details, fetch_edge_details
 
-    if "|" in target_key:
-        source, edge_type, target = target_key.split("|")
+    if edge_type is not None:
         exists = fetch_edge_details(driver, workspace_id, source, target, edge_type)
     else:
-        label, raw_id = target_key.split(":", 1)
+        label, raw_id = source.split(":", 1)
         exists = fetch_node_details(driver, workspace_id, label, coerce_node_id(raw_id))
     if not exists:
         raise SourceChanged(
             "This content has been removed. Refresh the page before continuing."
         )
+    # Explicitly re-added targets no longer need historical tombstones. The
+    # shared workspace lock keeps this pruning atomic with the caller's write.
+    session.execute(
+        delete(SourceRemovalTarget).where(
+            SourceRemovalTarget.workspace_id == workspace_id,
+            SourceRemovalTarget.target_key == key,
+        )
+    )
 
 
 class SourceRemovalFence:
-    """A run snapshots source generations, then locks only during graph writes.
+    """Reuse one session and compare one locked workspace row before writes.
 
-    Remote model calls hold no database locks. Any removal invalidates this run
-    even if identical node ids are explicitly ingested again before it returns.
+    The initial revision is fetched once; it MUST be revalidated under a shared
+    lock at each graph write. No transaction/connection is held during Jev calls.
     """
 
     def __init__(self, workspace_id: str, session_factory=None):
@@ -331,27 +390,43 @@ class SourceRemovalFence:
 
             session_factory = get_session_factory()
         self.workspace_id = uuid.UUID(str(workspace_id))
-        self.session_factory = session_factory
-        with session_factory() as session:
-            self.revisions = self._snapshot(session)
+        self.session = session_factory()
+        try:
+            self.revision = self._snapshot()
+            self.session.rollback()
+        except Exception:
+            self.session.close()
+            raise
 
-    def _snapshot(self, session):
-        if not lock_active_workspace(session, self.workspace_id):
+    def _snapshot(self):
+        row = self.session.execute(
+            select(
+                Workspace.status,
+                Workspace.source_removal_revision,
+                Workspace.source_removals_pending,
+            )
+            .where(Workspace.id == self.workspace_id)
+            .with_for_update(read=True)
+        ).one_or_none()
+        if row is None or row.status != WORKSPACE_ACTIVE:
             raise SourceChanged("This workspace was removed during analysis.")
-        rows = session.scalars(
-            select(SourceRemoval).where(SourceRemoval.workspace_id == self.workspace_id)
-        ).all()
-        if any(row.pending for row in rows):
+        if row.source_removals_pending:
             raise SourceChanged(
                 "Source removal is in progress; analysis was cancelled."
             )
-        return sorted((row.kind, row.external_ref, row.revision) for row in rows)
+        return row.source_removal_revision
 
     @contextmanager
     def write(self):
-        with self.session_factory() as session:
-            if self._snapshot(session) != self.revisions:
+        with self.session.begin():
+            if self._snapshot() != self.revision:
                 raise SourceChanged(
                     "Sources changed during analysis; its stale result was discarded."
                 )
             yield
+
+    def __call__(self):
+        return self.write()
+
+    def close(self):
+        self.session.close()

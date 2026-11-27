@@ -540,6 +540,24 @@ def _parse_node_key(key: str) -> tuple[str, int | str]:
     return node_type, coerce_node_id(raw_id)
 
 
+def parse_graph_target_key(key: str) -> tuple[str, str | None, str | None]:
+    """Validate node/edge shape before splitting or looking up tombstones."""
+    import re
+
+    key = key.strip()
+    if not key or len(key) > 512:
+        raise ValueError("Invalid graph target key")
+    parts = key.split("|")
+    if len(parts) == 1:
+        _parse_node_key(parts[0])
+        return parts[0], None, None
+    if len(parts) != 3 or re.fullmatch(r"[A-Z][A-Z0-9_]{0,99}", parts[1]) is None:
+        raise ValueError("Invalid graph edge key")
+    _parse_node_key(parts[0])
+    _parse_node_key(parts[2])
+    return parts[0], parts[1], parts[2]
+
+
 def fetch_edge_details(
     driver: Driver,
     workspace_id: str | uuid.UUID,

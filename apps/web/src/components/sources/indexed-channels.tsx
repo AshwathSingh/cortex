@@ -79,17 +79,22 @@ export function IndexedChannels({
                 <p className="mt-1 text-xs text-muted">
                   {channel.messages.toLocaleString()} indexed messages
                 </p>
+                {channel.removal_pending ? (
+                  <p role="status" className="text-xs text-muted">
+                    Removal incomplete. Retry this channel to finish cleanup.
+                  </p>
+                ) : null}
               </div>
               <Button
                 type="button"
                 size="small"
                 variant="ghost"
-                aria-label={`Remove #${channel.name}`}
+                aria-label={`${channel.removal_pending ? "Retry removal of" : "Remove"} #${channel.name}`}
                 onClick={(event) =>
                   onRemove({ source, channel }, event.currentTarget)
                 }
               >
-                Remove
+                {channel.removal_pending ? "Retry removal" : "Remove"}
               </Button>
             </li>
           ))}

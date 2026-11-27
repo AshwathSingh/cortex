@@ -8,7 +8,12 @@ import { ApiError, apiRequest } from "@/lib/api";
 import type { WorkspaceSource } from "@/lib/api-types";
 import { isChatKind, sourceKindMeta } from "@/lib/source-kinds";
 
-export type IndexedChannel = { id: string; name: string; messages: number };
+export type IndexedChannel = {
+  id: string;
+  name: string;
+  messages: number;
+  removal_pending?: boolean;
+};
 export type RemovalTarget = {
   source: WorkspaceSource;
   channel?: IndexedChannel;
