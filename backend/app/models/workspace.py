@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
+    Integer,
     CheckConstraint,
     DateTime,
     Enum,
@@ -44,7 +46,12 @@ class Role(str, enum.Enum):
 class Workspace(Base):
     __tablename__ = "workspaces"
     __table_args__ = (
-        CheckConstraint("status IN ('active', 'deleting')", name="ck_workspaces_status"),
+        CheckConstraint(
+            "status IN ('active', 'deleting')", name="ck_workspaces_status"
+        ),
+        CheckConstraint(
+            "source_removals_pending >= 0", name="ck_workspace_pending_removals"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -58,6 +65,15 @@ class Workspace(Base):
         default=WORKSPACE_ACTIVE,
         server_default=WORKSPACE_ACTIVE,
     )
+    # A constant-size fence for background graph writers; changed under the
+    # same workspace lock as source removal, never held across provider calls.
+    source_removal_revision: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    source_removals_pending: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -121,7 +137,9 @@ Index(
 class WorkspaceMembership(Base):
     __tablename__ = "workspace_memberships"
     __table_args__ = (
-        UniqueConstraint("user_id", "workspace_id", name="uq_membership_user_workspace"),
+        UniqueConstraint(
+            "user_id", "workspace_id", name="uq_membership_user_workspace"
+        ),
         # A custom role must belong to the membership's own workspace: the pair
         # (custom_role_id, workspace_id) has to match a role row's (id, workspace_id).
         # A NULL custom_role_id (built-in role) skips the check. No ON DELETE action:

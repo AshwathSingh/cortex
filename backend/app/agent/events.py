@@ -33,19 +33,27 @@ def configure(factory) -> None:
 
 
 def default_factory(driver):
+    from app.services.source_removal import SourceRemovalFence
     from app.agent.service import ConnectionAgent
     from app.agent.store import Neo4jStore
     from app.jev import JevClient
 
     jev = JevClient(
-        settings.jev_api_key.get_secret_value(), base_url=settings.jev_base_url,
-        model=settings.jev_model, timeout_ms=settings.jev_timeout_ms,
-        max_retries=settings.jev_max_retries)
+        settings.jev_api_key.get_secret_value(),
+        base_url=settings.jev_base_url,
+        model=settings.jev_model,
+        timeout_ms=settings.jev_timeout_ms,
+        max_retries=settings.jev_max_retries,
+    )
     return ConnectionAgent(
-        Neo4jStore(driver), jev, driver,
+        Neo4jStore(driver),
+        jev,
+        driver,
         threshold=settings.connection_agent_confidence_threshold,
         review_floor=settings.connection_agent_review_floor,
-        max_candidates=settings.connection_agent_max_candidates)
+        max_candidates=settings.connection_agent_max_candidates,
+        write_guard_factory=SourceRemovalFence,
+    )
 
 
 def emit_artifact_ingested(workspace_id) -> None:
@@ -80,7 +88,18 @@ def _run(ws: str) -> None:
                     _running.discard(ws)
                     return
                 _rerun.discard(ws)
-    except Exception:
-        logger.exception("connection analysis crashed workspace=%s", ws)
+    except Exception as error:
+        from app.services.source_removal import SourceChanged
+
+        if isinstance(error, SourceChanged):
+            logger.info(
+                "connection analysis cancelled after source change workspace=%s", ws
+            )
+        else:
+            logger.exception("connection analysis crashed workspace=%s", ws)
         with _guard:
             _running.discard(ws)
+            rerun = ws in _rerun
+            _rerun.discard(ws)
+        if rerun:
+            emit_artifact_ingested(ws)

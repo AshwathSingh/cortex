@@ -14,7 +14,7 @@ frontend_port="${CORTEX_FRONTEND_PORT:-3000}"
 backend_port="${CORTEX_BACKEND_PORT:-8000}"
 bind_host="${CORTEX_BIND_HOST:-127.0.0.1}"
 watch_interval="${CORTEX_WATCH_INTERVAL_SECONDS:-5}"
-startup_grace="${CORTEX_WATCH_STARTUP_GRACE_SECONDS:-10}"
+startup_grace="${CORTEX_WATCH_STARTUP_GRACE_SECONDS:-30}"
 log_dir="${CORTEX_WATCH_LOG_DIR:-$repo_root/.cortex-dev}"
 
 frontend_health_url="${CORTEX_FRONTEND_HEALTH_URL:-http://127.0.0.1:$frontend_port/login}"
@@ -26,6 +26,9 @@ backend_pid=""
 frontend_started_at=0
 backend_started_at=0
 cleanup_started=0
+frontend_failures=0
+backend_failures=0
+max_restarts=3
 database_unhealthy_reported=0
 
 usage() {
@@ -112,6 +115,7 @@ cleanup() {
   stop_owned_process "frontend" "$frontend_pid"
   stop_owned_process "backend" "$backend_pid"
   rm -f "$log_dir/watchdog.pid"
+  rmdir "$log_dir/watchdog.lock" 2>/dev/null || true
 }
 
 start_frontend() {
@@ -136,7 +140,7 @@ start_backend() {
     fail "Backend Python was not found at $backend_python. Set CORTEX_RUNTIME_ROOT or CORTEX_BACKEND_PYTHON."
 
   if [[ ! -f "$env_file" ]]; then
-    log "WARNING: $env_file was not found; starting with default backend configuration."
+    fail "Configuration is missing: $env_file. Restore it before restarting Cortex."
   else
     env_args=(--env-file "$env_file")
   fi
@@ -153,17 +157,22 @@ start_backend() {
 
 ensure_frontend() {
   if is_healthy "$frontend_health_url"; then
+    frontend_failures=0
     return
   fi
 
   if ! pid_is_alive "$frontend_pid"; then
     wait "$frontend_pid" 2>/dev/null || true
     frontend_pid=""
+    frontend_failures=$((frontend_failures + 1))
+    (( frontend_failures <= max_restarts )) || fail "Frontend repeatedly exited. See $log_dir/frontend.log; run npm run dev:check before restarting."
     start_frontend
     return
   fi
 
   if (( SECONDS - frontend_started_at >= startup_grace )); then
+    frontend_failures=$((frontend_failures + 1))
+    (( frontend_failures <= max_restarts )) || fail "Frontend repeatedly failed health checks. See $log_dir/frontend.log."
     log "Frontend stayed unhealthy beyond the startup grace period; restarting it."
     stop_owned_process "frontend" "$frontend_pid"
     frontend_pid=""
@@ -173,17 +182,22 @@ ensure_frontend() {
 
 ensure_backend() {
   if is_healthy "$backend_health_url"; then
+    backend_failures=0
     return
   fi
 
   if ! pid_is_alive "$backend_pid"; then
     wait "$backend_pid" 2>/dev/null || true
     backend_pid=""
+    backend_failures=$((backend_failures + 1))
+    (( backend_failures <= max_restarts )) || fail "Backend repeatedly exited. See $log_dir/backend.log; run npm run dev:check before restarting."
     start_backend
     return
   fi
 
   if (( SECONDS - backend_started_at >= startup_grace )); then
+    backend_failures=$((backend_failures + 1))
+    (( backend_failures <= max_restarts )) || fail "Backend repeatedly failed health checks. See $log_dir/backend.log."
     log "Backend stayed unhealthy beyond the startup grace period; restarting it."
     stop_owned_process "backend" "$backend_pid"
     backend_pid=""
@@ -253,8 +267,22 @@ if [[ -f "$log_dir/watchdog.pid" ]]; then
   fi
 fi
 
+if ! mkdir "$log_dir/watchdog.lock" 2>/dev/null; then
+  # A dead owner can leave an empty lock after a crash. Never steal a live lock.
+  if [[ -n "${existing_watchdog_pid:-}" ]] && ! kill -0 "$existing_watchdog_pid" 2>/dev/null; then
+    rmdir "$log_dir/watchdog.lock" 2>/dev/null || fail "Cannot clear stale watchdog lock."
+    mkdir "$log_dir/watchdog.lock" 2>/dev/null || fail "Another watchdog is starting."
+  else
+    fail "Another watchdog is starting or its lock needs inspection: $log_dir/watchdog.lock"
+  fi
+fi
 printf '%s\n' "$$" >"$log_dir/watchdog.pid"
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Hold the startup lock while checking dependencies so setup cannot race startup.
+"$node_binary" "$script_dir/dev_environment.mjs" check || exit 1
 
 log "Watching Cortex every ${watch_interval}s. Logs: $log_dir"
 

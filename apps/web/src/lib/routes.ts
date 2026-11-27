@@ -13,6 +13,8 @@ export const routes = {
     graph: (workspaceId: string) => `${workspacePath(workspaceId)}/graph`,
     review: (workspaceId: string) => `${workspacePath(workspaceId)}/review`,
     sources: (workspaceId: string) => `${workspacePath(workspaceId)}/sources`,
+    addSource: (workspaceId: string) =>
+      `${workspacePath(workspaceId)}/sources/new`,
     ingest: (workspaceId: string) => `${workspacePath(workspaceId)}/ingest`,
     manage: (workspaceId: string) => `${workspacePath(workspaceId)}/manage`,
   },

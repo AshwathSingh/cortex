@@ -263,13 +263,13 @@ def build_source_inventory(
     items are demonstrably indexed, we just do not know when. That makes the
     migration backfill-free.
     """
-    counts = {summary.repo: summary for summary in graph_summaries}
+    counts = {(summary.kind or GITHUB_KIND, summary.repo): summary for summary in graph_summaries}
     names = display_names or {}
     items: list[SourceInventoryItem] = []
 
     for entry in synced:
         source = entry.source
-        summary = counts.pop(source.external_ref, None)
+        summary = counts.pop((source.kind, source.external_ref), None)
         items.append(
             SourceInventoryItem(
                 repo=source.external_ref,

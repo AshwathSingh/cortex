@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { subscribeSourceRemovals } from "@/lib/workspace-data-events";
 import { ApiError, apiRequest } from "@/lib/api";
 import type { SourceFailure } from "@/lib/api-types";
 
@@ -36,6 +37,7 @@ export function useSourceFailures(workspaceId: string): SourceFailuresState {
   const [version, setVersion] = useState(0);
 
   const refresh = useCallback(() => setVersion((current) => current + 1), []);
+  useEffect(() => subscribeSourceRemovals(workspaceId, refresh), [workspaceId, refresh]);
 
   useEffect(() => {
     const controller = new AbortController();

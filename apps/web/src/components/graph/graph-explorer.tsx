@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { subscribeSourceRemovals } from "@/lib/workspace-data-events";
 import { GraphSyncStatus } from "@/components/graph/graph-sync-status";
 import { GraphView } from "@/components/graph/graph-view";
 import { useWorkspace } from "@/components/workspaces/workspace-context";
@@ -13,6 +14,7 @@ export function GraphExplorer({ workspaceId }: { workspaceId: string }) {
   // mount, so without this a finished re-sync would leave it showing the graph
   // from before the sync it just reported.
   const [graphVersion, setGraphVersion] = useState(0);
+  useEffect(() => subscribeSourceRemovals(workspaceId, () => setGraphVersion((version) => version + 1)), [workspaceId]);
 
   return (
     <main

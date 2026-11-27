@@ -178,3 +178,19 @@ def test_manual_edge_blocks_the_agent(graph):
     a, fake = agent(graph.driver, 0.99)
     a.run(WS)
     assert fake.calls == [] and agent_edges(graph) == []
+
+
+def test_unbound_directed_match_visits_each_agent_edge_once(graph):
+    seed(graph.driver)
+    agent(graph.driver, 0.9)[0].run(WS)
+    with graph.driver.session() as session:
+        undirected = session.run(
+            "MATCH ()-[r:AGENT_RELATIONSHIP {workspace_id: $ws}]-() RETURN count(r) AS total",
+            ws=WS,
+        ).single()["total"]
+        directed = session.run(
+            "MATCH ()-[r:AGENT_RELATIONSHIP {workspace_id: $ws}]->() RETURN count(r) AS total",
+            ws=WS,
+        ).single()["total"]
+    assert undirected == 2
+    assert directed == 1

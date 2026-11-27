@@ -1,3 +1,4 @@
+from app.models.source_removal import SourceRemoval, SourceRemovalTarget
 from app.models.data_source import GITHUB_KIND, DataSource, SyncStatus
 from app.models.github_credential import GitHubCredential
 from app.models.graph_comment import (
@@ -35,6 +36,8 @@ __all__ = [
     "Role",
     "SourceCredential",
     "SourceInstallTransaction",
+    "SourceRemoval",
+    "SourceRemovalTarget",
     "SyncStatus",
     "User",
     "UserSession",

@@ -46,6 +46,7 @@ from app.services.data_sources import (
     record_sync_success,
 )
 from app.services.workspaces import lock_active_workspace
+from app.services.source_removal import ingestion_fence, check_ingestion_fence
 
 
 #: Which failure category each provider error records (T-12.1). Ordered: the
@@ -106,11 +107,13 @@ def _fail(
     kind: str,
     detail: str,
     category: FailureCategory,
+    revision: str | None,
 ) -> None:
     if not lock_active_workspace(session, workspace_id):
         # Deleted while we were fetching; there is no source row left to mark.
         session.rollback()
         raise WorkspaceGone()
+    check_ingestion_fence(session, workspace_id, kind, external_ref, revision)
     record_sync_failure(
         session,
         workspace_id=workspace_id,
@@ -152,6 +155,7 @@ def run_ingestion(
     if not lock_active_workspace(session, workspace_id):
         session.rollback()
         raise WorkspaceGone()
+    revision = ingestion_fence(session, workspace_id, adapter.kind, external_ref)
     record_sync_attempt(
         session,
         workspace_id=workspace_id,
@@ -170,6 +174,7 @@ def run_ingestion(
             kind=adapter.kind,
             detail=adapter.describe(error),
             category=categorise(error),
+            revision=revision,
         )
         raise
 
@@ -180,6 +185,7 @@ def run_ingestion(
         session.rollback()
         raise WorkspaceGone()
 
+    check_ingestion_fence(session, workspace_id, adapter.kind, external_ref, revision)
     try:
         adapter.write(driver, fetched, workspace_id=workspace_id)
     except ValidationError as error:
@@ -191,6 +197,7 @@ def run_ingestion(
             kind=adapter.kind,
             detail=detail,
             category=FailureCategory.UPSTREAM,
+            revision=revision,
         )
         raise SourceAPIError(detail) from error
     except (Neo4jError, DriverError) as error:
@@ -202,6 +209,7 @@ def run_ingestion(
             kind=adapter.kind,
             detail=detail,
             category=FailureCategory.GRAPH,
+            revision=revision,
         )
         raise GraphUnavailable(detail) from error
 

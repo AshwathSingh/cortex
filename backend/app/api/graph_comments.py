@@ -93,7 +93,10 @@ def _target(kind: CommentTarget | str, key: str):
         raise HTTPException(status_code=422, detail=str(exc))
 
 
-@router.get("/{workspace_id}/graph/comments/activity", response_model=list[TargetActivityResponse])
+@router.get(
+    "/{workspace_id}/graph/comments/activity",
+    response_model=list[TargetActivityResponse],
+)
 def read_comment_activity(
     workspace_id: uuid.UUID,
     user: CurrentUser,
@@ -155,6 +158,7 @@ def create_graph_comment(
 ) -> GraphCommentResponse:
     load_workspace_for_user(session, user, workspace_id)
     target = _target(body.target_kind, body.target_key)
+    _guard_comment_target(session, workspace_id, target.key)
     try:
         comment = post_comment(
             session,
@@ -216,6 +220,7 @@ def mark_comments_seen(
     """Record that this caller has read this target's comments (T-27.4)."""
     load_workspace_for_user(session, user, workspace_id)
     target = _target(body.target_kind, body.target_key)
+    _guard_comment_target(session, workspace_id, target.key)
     seen_at = mark_seen(
         session, workspace_id=workspace_id, user_id=user.id, target=target
     )
@@ -223,3 +228,19 @@ def mark_comments_seen(
     return SeenResponse(
         target_kind=target.kind, target_key=target.key, last_seen_at=seen_at
     )
+
+
+def _guard_comment_target(session, workspace_id, key):
+    from app.services.source_removal import SourceChanged, guard_target
+    from neo4j.exceptions import DriverError, Neo4jError
+
+    try:
+        guard_target(session, workspace_id, key)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    except SourceChanged as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except (DriverError, Neo4jError):
+        raise HTTPException(
+            status_code=503, detail="Unable to verify this content. Try again."
+        )

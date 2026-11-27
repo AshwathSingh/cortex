@@ -114,6 +114,9 @@ describe("WorkspaceShell", () => {
     expect(
       screen.getByRole("link", { name: `Account: ${USER.display_name}` }),
     ).toHaveAttribute("href", `/workspaces/${WORKSPACE.id}/account`);
+    const shell = document.querySelector(`[data-workspace-id="${WORKSPACE.id}"]`);
+    expect(shell).toHaveClass("min-w-0", "w-full");
+    expect(shell).not.toHaveClass("min-w-[64rem]");
     expect(screen.getByRole("button", { name: `Switch workspace. Current workspace: ${WORKSPACE.name}` })).toBeInTheDocument();
   });
 

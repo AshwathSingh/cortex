@@ -184,7 +184,7 @@ What the repository uses today. Items marked _planned_ are in the design but not
 | --- | --- | --- |
 | Frontend | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4 | One app for routing, layout, and pages; `/api/*` is proxied to FastAPI |
 | Graph rendering | Canvas-based explorer with a force-directed layout | SVG lags beyond a few dozen nodes and edges |
-| Backend | Python 3.13 or lower, FastAPI, Pydantic v2, Uvicorn | Typed request/response validation |
+| Backend | Python 3.13.4, FastAPI, Pydantic v2, Uvicorn | Typed request/response validation |
 | Relational database | PostgreSQL 16 via SQLAlchemy 2 and Alembic (psycopg 3) | Users, sessions, workspaces, memberships, roles, GitHub credentials, data sources |
 | Graph database | Neo4j 5 (official `neo4j` driver) | Relationship traversal is the core operation; nodes are scoped by `workspace_id` |
 | Auth | GitHub OAuth plus email/password; HttpOnly session cookies | Passwords hashed with Argon2; GitHub tokens encrypted at rest (Fernet) and never returned by the API |
@@ -197,92 +197,99 @@ What the repository uses today. Items marked _planned_ are in the design but not
 
 ## Getting started
 
-### Prerequisites
+### Supported development environment
 
-- Node.js 20.9 or newer and npm
-- Python 3.13 or lower (3.14 is not supported by some pinned packages)
-- Docker Desktop
-- A [GitHub OAuth app](https://github.com/settings/developers) whose callback URL is `http://localhost:3000/auth/github/callback`
-- Rust toolchain, only if `pip` has to build `watchfiles` from source
+Use the tested versions in `.nvmrc` (Node 22.16.0) and `.python-version`
+(Python 3.13.4), npm 10.9.2, Docker Compose v2, Bash and curl. The setup is
+supported on macOS, Linux and Windows through WSL. CI installs from scratch on
+macOS and Linux. Python dependencies use pinned versions and distribution hashes;
+frontend dependencies use `apps/web/package-lock.json`. Database images are pinned
+by multi-platform digest in `docker-compose.yml`.
 
-Slack and LLM credentials are not needed yet; those features are not built.
+### Set up a fresh checkout
 
-### 1. Configure the environment
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`. Credentials and tokens must **never** be committed or exposed in the UI.
-
-| Variable | Purpose |
-| --- | --- |
-| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT` | Postgres container |
-| `DATABASE_URL` | `postgresql+psycopg://user:password@localhost:5432/db`; keep the port in sync |
-| `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` | Neo4j connection and container login |
-| `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI` | GitHub sign-in |
-| `TOKEN_ENCRYPTION_KEY` | Required. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-| `GITHUB_TOKEN` | Optional; raises the GitHub API limit from 60 to 5,000 requests per hour |
-| `ASSISTANT_RATE_LIMIT_PER_MINUTE`, `ASSISTANT_TIMEOUT_SECONDS` | Bounds assistant request frequency and provider latency. The rate limit is process-local; use a shared store before running multiple API workers. |
-| `SECURE_COOKIES` | Set to `true` outside local HTTP development |
-
-If you change the Postgres or Neo4j credentials after the first start, Docker keeps the old ones in its volumes. Run `docker compose down -v` to reset them.
-
-### 2. Start the databases
+With those tools installed and Docker running, run from the repository root:
 
 ```bash
-docker compose up -d postgres neo4j
-```
-
-### 3. Start the backend
-
-```bash
-cd backend
-python3.13 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python -m scripts.init_graph_schema      # Neo4j constraints
-python -m scripts.init_postgres_schema   # Alembic migrations
-python -m scripts.dev_workspace trial    # optional: seed two users and four workspaces
-uvicorn app.main:app --reload
-```
-
-The API runs on `http://127.0.0.1:8000`, with interactive docs at `/docs`. The seeded users sign in with `trial-owner@example.com` and `local-development-password`. More detail is in [backend/README.md](backend/README.md).
-
-### 4. Start the frontend
-
-From the repository root, in a second terminal:
-
-```bash
-npm --prefix apps/web install
-npm run dev
-```
-
-Open `http://localhost:3000` and sign in.
-
-### Keep the local app running
-
-Run the development watchdog from the repository root:
-
-```bash
+nvm install && nvm use
+npm run setup
+npm run db:setup
 npm run dev:watch
 ```
 
-It monitors the frontend and backend health endpoints, restarts failed services,
-and writes logs to `.cortex-dev/`. Press `Ctrl+C` to stop services started by the
-watchdog. Both services bind to `127.0.0.1` by default; set
-`CORTEX_BIND_HOST=0.0.0.0` only when access from another device is intentional.
-Use `npm run dev:watch -- --check` for a one-time health check.
+`setup` creates this checkout's Python environment and installs both lockfiles.
+It generates a private `.env` with unique local database passwords and a token
+encryption key when no `.env` exists; existing configuration is preserved. Database
+setup starts PostgreSQL and Neo4j, waits for authenticated connections, and applies
+both schemas. It never resets volumes or seeds user data. Open
+[http://localhost:3000](http://localhost:3000) and create an account or sign in.
+GitHub, Slack, Discord and hosted assistant credentials are optional; add them to
+`.env` when using those integrations. GitHub's OAuth callback is
+`http://localhost:3000/auth/github/callback`.
 
-An isolated worktree can reuse another checkout's `.env` and Python environment:
+If Python is installed under a different executable name, use
+`CORTEX_PYTHON=/path/to/python3.13 npm run setup`. The executable must match
+`.python-version`. Rust is not required: setup installs hashed binary wheels.
+
+When dependencies change, stop the app and rerun `npm run setup` followed by
+`npm run db:setup`. Setup recreates the local Python environment, removing packages
+that are no longer locked. Do not run installs while the app is running. The setup
+and startup locks reject overlapping operations; the watchdog checks lockfile
+fingerprints, required modules and runtime versions before launching services.
+
+### Check and stop the app
 
 ```bash
-CORTEX_RUNTIME_ROOT=/path/to/configured/cortex npm run dev:watch
+npm run dev:check              # runtime, dependency locks and backend imports
+npm run dev:watch -- --check   # frontend, backend and PostgreSQL health
+npm run test:environment       # setup and watchdog regression tests
 ```
+
+The watchdog logs to `.cortex-dev/`, restarts failed services up to three times
+between successful health checks, and stops its own services on Ctrl+C or SIGTERM.
+It leaves healthy services it did not start running. Both services bind to
+`127.0.0.1`; `CORTEX_BIND_HOST=0.0.0.0` exposes them to other devices.
+
+### Worktrees and existing data
+
+Run `npm run setup` in each worktree. Keep `node_modules` and `backend/.venv`
+local to that checkout; sharing `node_modules` by symlink breaks Turbopack's
+filesystem boundary. Use the same `.env` and Compose project explicitly if sharing
+existing local databases:
+
+```bash
+CORTEX_ENV_FILE=/path/to/existing/cortex/.env CORTEX_COMPOSE_PROJECT=cortex npm run db:setup
+CORTEX_ENV_FILE=/path/to/existing/cortex/.env npm run dev:watch
+```
+
+Stop the other app first, or choose different frontend/backend ports and set
+`BACKEND_URL` to the backend port. To isolate databases too, configure different
+`POSTGRES_PORT`, `NEO4J_HTTP_PORT` and `NEO4J_BOLT_PORT` values in the worktree's
+`.env`, and update `DATABASE_URL` and `NEO4J_URI` to match. Compose uses a separate
+project and volumes for each checkout directory by default.
+
+Database passwords belong to existing volumes, not just `.env`. Preserve the
+original credentials when reusing data. If authentication fails, check the Compose
+project and credentials; do not delete volumes as a routine repair.
+
+### Update dependency locks
+
+Change `backend/requirements.in`, then regenerate `backend/requirements.txt` using
+uv 0.13.7 (needed only by maintainers):
+
+```bash
+uv pip compile backend/requirements.in --python-version 3.13 --universal --generate-hashes --no-annotate -o backend/requirements.txt
+```
+
+Use `--upgrade-package <name>` for intentional Python upgrades. For frontend
+changes, update `apps/web/package.json` and its lockfile together. Update runtime
+pins and database digests deliberately, then run setup, checks and tests from a
+clean checkout. Commit lockfiles with their manifests.
 
 ### Tests
 
 ```bash
-cd backend && pytest        # backend
+backend/.venv/bin/python -m pytest backend/tests  # backend
 npm test                    # frontend, from the repository root
 npm run lint
 ```

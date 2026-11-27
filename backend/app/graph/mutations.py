@@ -1,4 +1,4 @@
-"""T-23.4: the shared graph-mutation layer (agent edges, review actions).
+"""T-23.4: the shared graph-mutation layer (agent edges, review actions, source cleanup).
 
 Every write the Connection Agent makes goes through here, and every write calls
 ``record_mutation``. Kuanyu's audit log / timeline (US-22) plugs in with
@@ -19,6 +19,8 @@ from neo4j import Driver
 
 from app.agent.relationships import AGENT_EDGE_TYPE, SOURCE_AGENT
 from app.github.mapper import normalise_workspace_id
+from app.graph.queries import node_key
+from app.uploads.graph import document_id
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,7 @@ logger = logging.getLogger(__name__)
 class MutationEvent:
     workspace_id: str
     actor: str
-    action: str  # edge.created | edge.updated | edge.promoted | edge.approved | edge.rejected
+    action: str  # edge.* | source.graph_removed | source.removed
     edge_id: str | None = None
     detail: dict[str, Any] = field(default_factory=dict)
 
@@ -131,7 +133,9 @@ def retype_agent_edge(
     query = f"""
 MATCH {_match(s_label, "s")}
 MATCH {_match(t_label, "t")}
-MATCH ()-[old:{AGENT_EDGE_TYPE} {{id: $old_id, workspace_id: $ws}}]-()
+// Directed matching visits an unbound relationship once; undirected matching
+// visits both endpoint orientations and would execute CREATE twice.
+MATCH ()-[old:{AGENT_EDGE_TYPE} {{id: $old_id, workspace_id: $ws}}]->()
 WHERE old.status <> 'rejected'
 DELETE old
 CREATE (s)-[r:{AGENT_EDGE_TYPE} {{
@@ -255,3 +259,116 @@ SET n.analysis_status = $status, n.analysis_error = $error,
             query, n_id=_typed_id(raw), ws=ws, status=status, error=error,
             hash=content_hash, ts=now_iso(),
         ).consume())
+
+
+SOURCE_REMOVAL_PLAN = """
+MATCH (n {workspace_id: $workspace_id})
+WHERE ($kind = 'github' AND (n:Repository OR n:PullRequest OR n:Issue) AND n.repo = $ref)
+   OR ($kind = 'upload' AND ((n:Document AND n.id = $document_id)
+       OR (n:DocumentSection AND n.document_id = $document_id)))
+   OR ($kind IN ['slack', 'discord'] AND n.kind = $kind AND n.source_ref = $ref
+       AND ((n:Channel AND ($channel_id IS NULL OR n.id = $channel_id))
+         OR (n:Message AND ($channel_id IS NULL OR n.channel_id = $channel_id))))
+WITH collect(n) AS owned
+OPTIONAL MATCH (a:Author {workspace_id: $workspace_id})--(n)
+WHERE n IN owned AND NOT EXISTS { MATCH (a)--(other) WHERE NOT other IN owned }
+WITH owned, collect(DISTINCT a) AS authors
+WITH owned + authors AS doomed
+UNWIND doomed AS n
+RETURN elementId(n) AS element_id, labels(n) AS labels, n.id AS id,
+       [(n)-[r]-() | {source_labels: labels(startNode(r)), source_id: startNode(r).id,
+          target_labels: labels(endNode(r)), target_id: endNode(r).id, type: type(r)}] AS edges,
+       [(n)--(a:Author) | {labels: labels(a), id: a.id}] AS authors
+"""
+
+
+def source_removal_parameters(workspace_id, kind, ref, channel_id):
+    return {
+        "workspace_id": normalise_workspace_id(workspace_id),
+        "kind": kind,
+        "ref": ref,
+        "document_id": document_id(ref),
+        "channel_id": channel_id,
+    }
+
+
+def fetch_source_removal_plan(driver, workspace_id, kind, ref, channel_id):
+    with driver.session() as graph:
+        return graph.execute_read(
+            lambda tx: list(
+                tx.run(
+                    SOURCE_REMOVAL_PLAN,
+                    **source_removal_parameters(workspace_id, kind, ref, channel_id),
+                )
+            )
+        )
+
+
+def delete_source_graph(
+    driver, workspace_id, kind, ref, channel_id, *, actor, operation_id
+):
+    """Recompute ownership and delete atomically; notify audit hooks after commit.
+
+    A batch event includes every affected node/edge key without raw content.
+    Empty retries emit no graph event; operation_id lets listeners correlate the
+    graph phase with a later source.removed event after relational cleanup.
+    """
+    parameters = source_removal_parameters(workspace_id, kind, ref, channel_id)
+
+    def cleanup(tx):
+        records = list(tx.run(SOURCE_REMOVAL_PLAN, **parameters))
+        ids = [record["element_id"] for record in records]
+        keys, edges = set(), set()
+        for record in records:
+            if "Repository" not in record["labels"]:
+                keys.add(node_key(record["labels"], record["id"]))
+            for edge in record["edges"]:
+                edges.add(
+                    f"{node_key(edge['source_labels'], edge['source_id'])}|{edge['type']}|{node_key(edge['target_labels'], edge['target_id'])}"
+                )
+        tx.run(
+            "MATCH (n {workspace_id: $workspace_id}) WHERE elementId(n) IN $ids DETACH DELETE n",
+            workspace_id=parameters["workspace_id"],
+            ids=ids,
+        ).consume()
+        return len(ids), sorted(keys), sorted(edges)
+
+    with driver.session() as graph:
+        count, node_keys, edge_keys = graph.execute_write(cleanup)
+    if count:
+        record_mutation(
+            MutationEvent(
+                str(workspace_id),
+                actor,
+                "source.graph_removed",
+                detail={
+                    "operation_id": operation_id,
+                    "kind": kind,
+                    "external_ref": ref,
+                    "channel_id": channel_id,
+                    "nodes_removed": count,
+                    "node_keys": node_keys,
+                    "edge_keys": edge_keys,
+                },
+            )
+        )
+    return count
+
+
+def record_source_removed(
+    workspace_id, *, actor, operation_id, kind, ref, channel_id, counts
+):
+    record_mutation(
+        MutationEvent(
+            str(workspace_id),
+            actor,
+            "source.removed",
+            detail={
+                "operation_id": operation_id,
+                "kind": kind,
+                "external_ref": ref,
+                "channel_id": channel_id,
+                **counts,
+            },
+        )
+    )

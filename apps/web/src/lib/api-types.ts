@@ -337,3 +337,15 @@ export type CommentActivity = {
   total: number;
   unseen: number;
 };
+
+
+export type SourceOption = {
+  kind: "github" | "upload" | "slack" | "discord";
+  available: boolean;
+  reason: string | null;
+};
+
+export type SourceOptions = {
+  can_manage_sources: boolean;
+  providers: SourceOption[];
+};

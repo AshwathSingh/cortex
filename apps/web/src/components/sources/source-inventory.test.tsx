@@ -1,4 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -84,10 +90,23 @@ function jsonResponse(body: unknown, status = 200) {
  * be read once, so a single object silently fails the second reader -- and the
  * page makes two requests now that T-12.2 polls for failures as well.
  */
+const SOURCE_OPTIONS = {
+  can_manage_sources: true,
+  providers: ["github", "upload", "slack", "discord"].map((kind) => ({
+    kind,
+    available: true,
+    reason: null,
+  })),
+};
+
 function mockFetch(status: number, body: unknown) {
   const fn = vi.fn((input: RequestInfo | URL) =>
     Promise.resolve(
-      String(input).endsWith("/sources") ? jsonResponse(body, status) : jsonResponse([]),
+      String(input).endsWith("/sources")
+        ? jsonResponse(body, status)
+        : jsonResponse(
+            String(input).endsWith("/sources/options") ? SOURCE_OPTIONS : [],
+          ),
     ),
   );
   vi.stubGlobal("fetch", fn);
@@ -104,19 +123,28 @@ const INGESTED = { repo: "openai/cortex", pull_requests: 8, issues: 3 };
  */
 function mockApi(
   pages: WorkspaceSource[][],
-  onIngest: () => Promise<Response> = () => Promise.resolve(jsonResponse(INGESTED)),
+  onIngest: () => Promise<Response> = () =>
+    Promise.resolve(jsonResponse(INGESTED)),
 ) {
   let reads = 0;
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === "POST") return onIngest();
     if (String(input).endsWith("/uploads")) {
       return Promise.resolve(
-        jsonResponse({ filename: "prd.md", format: "text", sections: 1, replaced: false }),
+        jsonResponse({
+          filename: "prd.md",
+          format: "text",
+          sections: 1,
+          replaced: false,
+        }),
       );
     }
+    if (String(input).endsWith("/sources/options"))
+      return Promise.resolve(jsonResponse(SOURCE_OPTIONS));
     // Everything else the page reads -- chat connections, failure polling --
     // answers empty; each has tests of its own.
-    if (!String(input).endsWith("/sources")) return Promise.resolve(jsonResponse([]));
+    if (!String(input).endsWith("/sources"))
+      return Promise.resolve(jsonResponse([]));
     const page = pages[Math.min(reads, pages.length - 1)];
     reads += 1;
     return Promise.resolve(jsonResponse(page));
@@ -146,17 +174,34 @@ describe("SourceInventory", () => {
     await screen.findByText(/connect your first source/i);
     // Found rather than indexed: the page also polls for failures (T-12.2) and
     // the order the two effects run in is React's business, not this test's.
-    expect(
-      fetchFn.mock.calls.map(([url]) => String(url)),
-    ).toContain(`/api/workspaces/${WORKSPACE_ID}/sources`);
+    expect(fetchFn.mock.calls.map(([url]) => String(url))).toContain(
+      `/api/workspaces/${WORKSPACE_ID}/sources`,
+    );
   });
 
   it("shows connected repositories and their indexed counts", async () => {
     mockFetch(200, [source()]);
     renderInventory();
-    const repository = await screen.findByRole("link", { name: /openai\/cortex/i });
-    expect(repository).toHaveAttribute("href", "https://github.com/openai/cortex");
+    const repository = await screen.findByRole("link", {
+      name: /openai\/cortex/i,
+    });
+    expect(repository).toHaveAttribute(
+      "href",
+      "https://github.com/openai/cortex",
+    );
     expect(screen.getByText("1 source · 11 items indexed")).toBeInTheDocument();
+
+    const row = repository.closest("li");
+    expect(row).toHaveClass(
+      "lg:grid-cols-[minmax(0,1fr)_auto]",
+      "lg:items-center",
+    );
+    expect(row).not.toHaveClass("sm:grid-cols-[minmax(0,1fr)_auto]");
+
+    const actions = screen.getByRole("button", {
+      name: /re-sync openai\/cortex/i,
+    }).parentElement;
+    expect(actions).toHaveClass("flex-wrap", "lg:justify-end");
   });
 
   // US-10 acceptance criteria.
@@ -203,12 +248,18 @@ describe("SourceInventory", () => {
     renderInventory();
 
     expect(await screen.findByText("Needs attention")).toBeInTheDocument();
-    expect(screen.getByText("Synced 3 days ago by Ashwath")).toBeInTheDocument();
+    expect(
+      screen.getByText("Synced 3 days ago by Ashwath"),
+    ).toBeInTheDocument();
   });
 
   it("shows an in-progress source as syncing", async () => {
     mockFetch(200, [
-      source({ status: "PENDING", last_synced_at: null, last_synced_by_name: null }),
+      source({
+        status: "PENDING",
+        last_synced_at: null,
+        last_synced_by_name: null,
+      }),
     ]);
     renderInventory();
 
@@ -233,16 +284,24 @@ describe("SourceInventory", () => {
   it("offers repository ingestion in an empty workspace", async () => {
     mockFetch(200, []);
     renderInventory();
-    expect(await screen.findByRole("link", { name: /add github repository/i })).toHaveAttribute("href", `/workspaces/${WORKSPACE_ID}/ingest`);
+    expect(
+      await screen.findByRole("link", { name: /add repository/i }),
+    ).toHaveAttribute("href", `/workspaces/${WORKSPACE_ID}/ingest`);
   });
 
   it("keeps repository actions read-only for viewers", async () => {
     mockFetch(200, []);
     renderInventory("VIEWER");
 
-    expect(await screen.findByText(/no indexed sources yet/i)).toBeInTheDocument();
-    expect(screen.getByText(/ask a workspace owner or editor/i)).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /add repository/i })).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(/no indexed sources yet/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/ask a member with source management access/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /add repository/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows access errors and can retry", async () => {
@@ -252,7 +311,11 @@ describe("SourceInventory", () => {
     let listReads = 0;
     const fetchFn = vi.fn((input: RequestInfo | URL) => {
       if (!String(input).endsWith("/sources")) {
-        return Promise.resolve(jsonResponse([]));
+        return Promise.resolve(
+          jsonResponse(
+            String(input).endsWith("/sources/options") ? SOURCE_OPTIONS : [],
+          ),
+        );
       }
       listReads += 1;
       return Promise.resolve(
@@ -264,9 +327,13 @@ describe("SourceInventory", () => {
     vi.stubGlobal("fetch", fetchFn);
     const user = userEvent.setup();
     renderInventory();
-    expect(await screen.findByRole("alert")).toHaveTextContent(/access denied/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /access denied/i,
+    );
     await user.click(screen.getByRole("button", { name: /try again/i }));
-    expect(await screen.findByText(/connect your first source/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/connect your first source/i),
+    ).toBeInTheDocument();
     expect(listReads).toBe(2);
   });
 
@@ -294,7 +361,9 @@ describe("SourceInventory", () => {
     expect(screen.getByText("Messages")).toBeInTheDocument();
     expect(screen.queryByText("Pull requests")).not.toBeInTheDocument();
     // Slack has no addressable team URL, so the title is not a link.
-    expect(screen.queryByRole("link", { name: /Acme/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Acme/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers Re-sync only for repositories", async () => {
@@ -335,7 +404,9 @@ describe("SourceInventory", () => {
     expect(screen.getByText("Sections")).toBeInTheDocument();
     expect(screen.queryByText("Pull requests")).not.toBeInTheDocument();
     // The file was read and discarded, so the title is not a link.
-    expect(screen.queryByRole("link", { name: /prd\.md/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /prd\.md/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("offers Re-sync only for repositories", async () => {
@@ -380,7 +451,9 @@ describe("SourceInventory", () => {
     const fetchFn = mockApi([[source()]]);
     renderInventory();
 
-    fireEvent.click(await screen.findByRole("button", { name: /re-sync openai\/cortex/i }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /re-sync openai\/cortex/i }),
+    );
 
     await waitFor(() =>
       expect(fetchFn).toHaveBeenCalledWith(
@@ -416,13 +489,17 @@ describe("SourceInventory", () => {
 
     finish?.();
 
-    expect(await screen.findByText("Synced just now by Ashwath")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Synced just now by Ashwath"),
+    ).toBeInTheDocument();
     expect(sourceReads(fetchFn)).toHaveLength(2);
     expect(screen.getByRole("button", { name: /re-sync/i })).toBeEnabled();
   });
 
   it("surfaces a re-sync that never reached the server", async () => {
-    mockApi([[source()]], () => Promise.reject(new TypeError("Failed to fetch")));
+    mockApi([[source()]], () =>
+      Promise.reject(new TypeError("Failed to fetch")),
+    );
     renderInventory();
 
     fireEvent.click(await screen.findByRole("button", { name: /re-sync/i }));
@@ -437,7 +514,9 @@ describe("SourceInventory", () => {
     renderInventory("VIEWER");
 
     await screen.findByRole("link", { name: /openai\/cortex/i });
-    expect(screen.queryByRole("button", { name: /re-sync/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /re-sync/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("polls while a source is mid-ingestion and stops once it settles", async () => {
@@ -485,4 +564,134 @@ describe("SourceInventory", () => {
     renderInventory();
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/login"));
   });
+});
+
+it("opens source removal and restores focus on cancel", async () => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value() {
+      this.setAttribute("open", "");
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value() {
+      this.removeAttribute("open");
+    },
+  });
+  mockFetch(200, [source()]);
+  renderInventory();
+  const trigger = await screen.findByRole("button", {
+    name: "Remove openai/cortex",
+  });
+  await userEvent.click(trigger);
+  expect(screen.getByRole("dialog", { name: "Remove source?" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await waitFor(() => expect(trigger).toHaveFocus());
+});
+it("offers no removal controls without sources.write", async () => {
+  mockFetch(200, [
+    source(),
+    source({ kind: "slack", repo: "T123", display_name: "Team" }),
+  ]);
+  renderInventory("VIEWER");
+  await screen.findByText("openai/cortex");
+  expect(
+    screen.queryByRole("button", { name: /Remove/ }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Manage channels" }),
+  ).not.toBeInTheDocument();
+});
+it("removes a source and announces success", async () => {
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value() {
+      this.setAttribute("open", "");
+    },
+  });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", {
+    configurable: true,
+    value() {
+      this.removeAttribute("open");
+    },
+  });
+  let deleted = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        deleted = true;
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return Promise.resolve(
+        jsonResponse(
+          String(input).endsWith("/sources")
+            ? deleted
+              ? []
+              : [source()]
+            : String(input).endsWith("/sources/options")
+              ? SOURCE_OPTIONS
+              : [],
+        ),
+      );
+    }),
+  );
+  renderInventory();
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Remove openai/cortex" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Remove source" }));
+  expect(
+    await screen.findByText("openai/cortex was removed from this workspace."),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Remove openai/cortex" }),
+  ).not.toBeInTheDocument();
+  expect(routerMock.refresh).toHaveBeenCalled();
+});
+
+it("uses the unified chooser as the primary Add source destination", async () => {
+  mockFetch(200, [source()]);
+  renderInventory();
+  expect(
+    await screen.findByRole("link", { name: "Add source" }),
+  ).toHaveAttribute("href", `/workspaces/${WORKSPACE_ID}/sources/new`);
+});
+
+it("presents repositories, documents and both chat providers when empty", async () => {
+  mockFetch(200, []);
+  renderInventory();
+  expect(
+    await screen.findByRole("link", { name: "Upload a document" }),
+  ).toBeVisible();
+  for (const name of [
+    "GitHub repository",
+    "Document upload",
+    "Slack",
+    "Discord",
+  ]) {
+    expect(screen.getByRole("heading", { name })).toBeVisible();
+  }
+});
+
+it("focuses the requested source control after asynchronous loading", async () => {
+  const scroll = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: scroll,
+  });
+  window.history.replaceState(null, "", "#documents");
+  try {
+    mockFetch(200, []);
+    renderInventory();
+    await waitFor(() =>
+      expect(document.getElementById("documents")).toHaveFocus(),
+    );
+    expect(scroll).toHaveBeenCalled();
+  } finally {
+    window.history.replaceState(null, "", window.location.pathname);
+    delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+  }
 });
